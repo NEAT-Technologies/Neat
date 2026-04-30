@@ -1,6 +1,6 @@
 
 <p style="color:red;"><strong>Note:</strong> This repository is currently a Work In Progress of an MVP. All systems & code design decisions where made for development speed.</p>            
-# NEAT
+#NEAT
 
 [![CI](https://github.com/neat-tools/Neat/actions/workflows/copilot-swe-agent/copilot/badge.svg)](https://github.com/neat-tools/Neat/actions/workflows/copilot-swe-agent/copilot)
 [![License](https://img.shields.io/github/license/neat-tools/Neat)](https://github.com/neat-tools/Neat)
