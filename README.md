@@ -2,9 +2,9 @@
 
 # NEAT
 
-![CI](https://img.shields.io/github/actions/workflow/status/neat-tools/Neat/ci.yml)
-![License](https://img.shields.io/github/license/neat-tools/Neat)
-![Release](https://img.shields.io/github/v/release/neat-tools/Neat)
+[![CI](https://github.com/neat-tools/Neat/actions/workflows/copilot-swe-agent/copilot/badge.svg)](https://github.com/neat-tools/Neat/actions/workflows/copilot-swe-agent/copilot)
+[![License](https://img.shields.io/github/license/neat-tools/Neat)](https://github.com/neat-tools/Neat)
+[![Release](https://img.shields.io/github/v/release/neat-tools/Neat)](https://github.com/neat-tools/Neat/releases)
 
 Production intelligence platform that maintains a live semantic graph of software systems, queryable by AI agents over MCP.
 
