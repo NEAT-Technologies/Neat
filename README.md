@@ -9,11 +9,13 @@
 
 A unified runtime that maintains a live semantic graph of your codebase, infrastructure, and production. Query it. Assert policies against it. Run agents against it.
 
+Read my story here: https://neat.is/blog/architecture-is-all-you-need
+
 ---
 
 ## What it does
 
-NEAT continuously builds a graph of your system from two sources:
+NEAT continuously builds a dynamic model of your system from two sources:
 
 - **Static analysis** of source files, `package.json`, and yaml/env config.
 - **Runtime telemetry** from OpenTelemetry spans.
