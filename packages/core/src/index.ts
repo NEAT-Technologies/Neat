@@ -25,3 +25,4 @@ export {
   startStalenessLoop,
   type IngestContext,
 } from './ingest.js'
+export { getRootCause } from './traverse.js'
