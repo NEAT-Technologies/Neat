@@ -3,12 +3,15 @@ import cors from '@fastify/cors'
 import type { GraphEdge, GraphNode } from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
+import { readErrorEvents } from './ingest.js'
 
 export interface BuildApiOptions {
   graph: NeatGraph
   startedAt?: number
   // Path the POST /graph/scan endpoint should re-extract from. Optional for tests.
   scanPath?: string
+  // ndjson path the /incidents endpoints read from. Optional for tests.
+  errorsPath?: string
 }
 
 interface SerializedGraph {
@@ -62,15 +65,18 @@ export async function buildApi(opts: BuildApiOptions): Promise<FastifyInstance> 
     return { inbound, outbound }
   })
 
-  // Incidents come online with M2 (OTel ingest). Stub the routes so clients can
-  // wire against the final URL shape today.
-  app.get('/incidents', async () => [])
+  app.get('/incidents', async () => {
+    if (!opts.errorsPath) return []
+    return readErrorEvents(opts.errorsPath)
+  })
   app.get<{ Params: { nodeId: string } }>('/incidents/:nodeId', async (req, reply) => {
     const { nodeId } = req.params
     if (!graph.hasNode(nodeId)) {
       return reply.code(404).send({ error: 'node not found', id: nodeId })
     }
-    return []
+    if (!opts.errorsPath) return []
+    const events = await readErrorEvents(opts.errorsPath)
+    return events.filter((e) => e.affectedNode === nodeId || e.service === nodeId.replace(/^service:/, ''))
   })
 
   app.get<{ Querystring: { q?: string } }>('/search', async (req, reply) => {
