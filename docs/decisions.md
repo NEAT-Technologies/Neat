@@ -94,3 +94,60 @@ Commit messages, PR bodies, code comments, and docs read like a colleague wrote 
 `demo/service-a` and `demo/service-b` exist as source files only during M0/M1. The static extractor reads their `package.json` directly from disk; it doesn't need their deps resolved. Listing them as workspaces would force npm to resolve pg, express, and the OTel SDK — ~80 transitive packages — for no current benefit.
 
 M2 brings them back into workspaces when docker-compose actually launches the services.
+
+---
+
+## ADR-010 — Node and edge ID conventions
+
+**Date:** 2026-05-01
+**Status:** Active.
+
+Node ids are typed prefixes joined to a stable name:
+
+- `service:<package.name>` for `ServiceNode`s. The package name is what the discovery phase reads from `package.json`, so it survives directory renames and matches what humans (and the MCP tools) will type.
+- `database:<host>` for `DatabaseNode`s. The host comes from `db-config.yaml`; it's the same value services reach the database with, which makes deduplication trivial when multiple services connect to the same db.
+
+Edge ids are `${type}:${source}->${target}`. This makes edges deterministic — two extracts that see the same relationship produce the same key, so re-running `extractFromDirectory` is idempotent without needing a separate dedup pass.
+
+**Why it matters:** every traversal (M3) and every MCP tool argument (M4) keys off these ids. Changing the format breaks the contract with everything downstream. If a new node type appears, give it a new prefix (`config:`, `infra:`); don't repurpose existing ones.
+
+---
+
+## ADR-011 — Snapshot envelope with schemaVersion
+
+**Date:** 2026-05-01
+**Status:** Active.
+
+`saveGraphToDisk` doesn't write the raw `graphology.export()` blob. It wraps it:
+
+```json
+{ "schemaVersion": 1, "exportedAt": "2026-05-01T...", "graph": <export> }
+```
+
+`loadGraphFromDisk` rejects mismatched `schemaVersion` rather than trying to migrate silently. The first time the graph shape changes incompatibly (new required attribute, edge type rename, etc.), bump to `schemaVersion: 2` and add a migration branch in `loadGraphFromDisk`.
+
+The write itself is atomic: `<path>.tmp` first, then `fs.rename`. A crash mid-write leaves the previous snapshot intact rather than half-truncating the active file.
+
+---
+
+## ADR-012 — tree-sitter scope for M1: URL substring matching only
+
+**Date:** 2026-05-01
+**Status:** Active for M1. Revisit if M3+ traversal needs richer call graphs.
+
+The M1 extractor uses tree-sitter only to walk the AST and collect string literals; it then searches those literals for URLs containing a known service hostname. That's enough for the demo (`axios.get('http://service-b:3001/...')`).
+
+What it deliberately does **not** do: full import-graph analysis, dynamic-URL inference, or following config objects. Those would multiply the surface area of what the extractor can be wrong about, and the failure cases the design doc cares about don't need them.
+
+If a future demo case requires richer call-graph extraction, that's a deliberate scope expansion — write tests against the new failure mode first, then extend `extract.ts`.
+
+---
+
+## ADR-013 — Compat threshold semantics: under-flag rather than over-flag
+
+**Date:** 2026-05-01
+**Status:** Active.
+
+`compat.json` carries a `minEngineVersion` per pair. The driver constraint only fires once the engine reaches that major or higher — so `pg 7.4.0 / postgresql 13` returns `compatible: true` because PG 13 still supports md5 auth.
+
+Driver versions go through `semver.coerce` so `"v7.4.0"` and `"7.4"` both work. If a version string is unparseable (a git SHA, a build label, etc.), the function returns `compatible: true`. We'd rather miss a real incompatibility than fabricate a false positive on input we genuinely can't reason about — false positives erode trust in everything else the system says.

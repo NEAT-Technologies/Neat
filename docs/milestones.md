@@ -10,6 +10,28 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ---
 
+## 🚩 Pick up here
+
+**Last session ended:** 2026-05-01, M0 + M1 both VERIFIED.
+
+**Next session starts at M2 — OTel layer.** Recommended order (it's the seed plan's order — services first, then transport, then receiver):
+
+1. `#22` `docker-compose.yml` — bring up `service-a`, `service-b`, `payments-db` (`postgres:15-alpine`), `otel-collector`, and `core`. Hitting `GET service-a:3000/data` should produce a 500 from the pg/PG 15 mismatch, with OTel spans flowing somewhere observable.
+2. `#23` OTel collector config — receive OTLP/HTTP on `:4318`, forward to core's ingest endpoint (also OTLP/HTTP).
+3. `#7` OTel span receiver in `@neat/core` — accept the OTLP wire format, decode spans.
+4. `#8` Span → edge mapper — turn each span into an `OBSERVED` edge between the corresponding service nodes (or service → database for db spans), with `confidence` and `lastObserved`. Stale detection demotes edges not seen in N seconds.
+
+**Before M2 also (project-management cleanup, not code):**
+- Manually close GitHub issues for the M0+M1 work that's now merged: #1, #2, #3, #4, #5, #6, #9, #13, #24, #27. Leave #21 open — it's "partial" until M2 brings up docker-compose.
+- Relabel the dashboard issues #28–#31 as `post-mvp-enhance` and remove them from milestone M5 (per ADR-004).
+
+**Gotchas a fresh session would benefit from:**
+- The npm migration is the reason the seed plan and some issue bodies still mention pnpm. Ignore those — see ADR-007. We're on `npm@11.11.0` with `workspaces: ["packages/*"]`.
+- `demo/*` is **not** in workspaces yet (ADR-009). M2 puts it back when docker-compose actually runs the services — that means the next session will need to add `demo/*` to root `workspaces` and probably regenerate the lockfile.
+- M1 implementation intricacies (id formats, why extraction is 3 phases, why persist loads before extract) live in `docs/architecture.md` under "M1 implementation notes". Read that before touching anything in `packages/core/src/`.
+
+---
+
 ## M0 — Monorepo scaffolded, types defined, packages stubbed
 
 **End state:** `npm install && npx turbo build test lint` green from a clean checkout. CI green on a pushed branch. Every `@neat/*` package builds (ESM + CJS + DTS). `import { ServiceNodeSchema } from '@neat/types'` resolves from any package.
