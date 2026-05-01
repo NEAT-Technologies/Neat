@@ -3,6 +3,7 @@ import { getGraph } from './graph.js'
 import { buildApi } from './api.js'
 import { extractFromDirectory } from './extract.js'
 import { loadGraphFromDisk, startPersistLoop } from './persist.js'
+import { buildOtelReceiver, logSpanHandler } from './otel.js'
 
 async function main(): Promise<void> {
   const graph = getGraph()
@@ -22,13 +23,21 @@ async function main(): Promise<void> {
 
   startPersistLoop(graph, outPath)
 
-  const app = await buildApi({ graph, scanPath })
-  const port = Number(process.env.PORT ?? 8080)
   const host = process.env.HOST ?? '0.0.0.0'
+  const port = Number(process.env.PORT ?? 8080)
+  const otelPort = Number(process.env.OTEL_PORT ?? 4318)
+
+  const app = await buildApi({ graph, scanPath })
   await app.listen({ port, host })
   console.log(`neat-core listening on http://${host}:${port}`)
   console.log(`  scan path:     ${scanPath}`)
   console.log(`  snapshot path: ${outPath}`)
+
+  // Span handler defaults to a one-line log — DoD for #7. The graph mutation
+  // handler comes online with #8.
+  const otelApp = await buildOtelReceiver({ onSpan: logSpanHandler })
+  await otelApp.listen({ port: otelPort, host })
+  console.log(`neat-core OTLP receiver on http://${host}:${otelPort}/v1/traces`)
 }
 
 main().catch((err) => {
