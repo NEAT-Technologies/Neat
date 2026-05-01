@@ -14,7 +14,7 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 **End state:** `npm install && npx turbo build test lint` green from a clean checkout. CI green on a pushed branch. Every `@neat/*` package builds (ESM + CJS + DTS). `import { ServiceNodeSchema } from '@neat/types'` resolves from any package.
 
-**Status:** IN_PROGRESS. Verified once PRs #36–#41 land on `main`.
+**Status:** VERIFIED 2026-05-01.
 
 **Issues / PRs:**
 
@@ -22,21 +22,21 @@ Source of truth for sprint status. Update this file at the end of every session.
 |-------|--------------------------------|-----|--------|
 | #1    | Scaffold monorepo              | #33 | merged |
 | #2    | Shared types (`@neat/types`)   | #34 | merged |
-| #3    | Scaffold `@neat/core`          | #36 | open   |
-| #13   | Scaffold `@neat/mcp`           | #38 | open   |
-| #27   | Scaffold `@neat/web`           | #39 | open   |
-| #24   | CI workflow                    | #40 | open   |
-| —     | pnpm → npm migration           | #37 | open   |
+| #3    | Scaffold `@neat/core`          | #43 | merged (replaces closed #36) |
+| #13   | Scaffold `@neat/mcp`           | #38 | merged |
+| #27   | Scaffold `@neat/web`           | #39 | merged |
+| #24   | CI workflow                    | #40 | merged |
+| —     | pnpm → npm migration           | #37 | merged |
 
 ### M0 verification gate
 
-- [ ] `rm -rf node_modules packages/*/node_modules package-lock.json && npm install` clean
-- [ ] `npx turbo build` exits 0 across all packages
-- [ ] `npx turbo test` exits 0
-- [ ] `npx turbo lint` exits 0
-- [ ] `import { ServiceNodeSchema } from '@neat/types'` resolves from `@neat/core`
-- [ ] CI green on `main` after PR #40 lands
-- [ ] All 6 M0 PRs merged
+- [x] `rm -rf node_modules packages/*/node_modules package-lock.json && npm install` clean
+- [x] `npx turbo build` exits 0 across all packages
+- [x] `npx turbo test` exits 0
+- [x] `npx turbo lint` exits 0
+- [x] `import { ServiceNodeSchema } from '@neat/types'` resolves from `@neat/core`
+- [x] CI green on `main` (#40 merged, badge resolves)
+- [x] All M0 PRs merged
 
 ---
 
@@ -44,27 +44,27 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 **End state:** `NEAT_SCAN_PATH=./demo npm run dev --workspace @neat/core` starts. `curl localhost:8080/graph` returns the right shape: a `ServiceNode` for `service-b` with `pgDriverVersion: "7.4.0"`, a `DatabaseNode` for `payments-db` with `engineVersion: "15"`, and a `DEPENDS_ON` edge tying them together. The compat unit test for `pg 7.4.0 / postgresql 15` returns `compatible: false`.
 
-**Status:** IN_PROGRESS — scaffold + demo source files in flight; implementations not yet started.
+**Status:** VERIFIED 2026-05-01.
 
 **Issues / PRs:**
 
 | Issue | Title                                | PR  | Status |
 |-------|--------------------------------------|-----|--------|
-| #21   | Demo source files (partial)          | #41 | open   |
-| #5    | Compat matrix                        | —   | not started — depends on #3 |
-| #4    | tree-sitter AST extraction           | —   | not started — depends on #3 |
-| #6    | Graph persistence                    | —   | not started — depends on #3 |
-| #9    | REST API with Fastify (M1 routes)    | —   | not started — depends on #3 |
+| #21   | Demo source files (partial)          | #41 | merged |
+| #5    | Compat matrix                        | #44 | merged |
+| #4    | tree-sitter AST extraction           | #45 | merged |
+| #6    | Graph persistence                    | #46 | merged |
+| #9    | REST API with Fastify (M1 routes)    | #47 | merged |
 
 ### M1 verification gate
 
-- [ ] `npm run dev --workspace @neat/core` starts with `NEAT_SCAN_PATH=./demo`
-- [ ] `curl localhost:8080/health` returns `{ uptime, nodeCount, edgeCount, lastUpdated }`
-- [ ] `curl localhost:8080/graph` returns ≥ 3 nodes and ≥ 2 edges
-- [ ] In `/graph` response: `ServiceNode` for `service-b` has `pgDriverVersion: "7.4.0"`
-- [ ] In `/graph` response: `DatabaseNode` for `payments-db` has `engineVersion: "15"` and a `compatibleDrivers` entry for pg ≥ 8.0.0
-- [ ] `checkCompatibility('pg', '7.4.0', 'postgresql', '15')` → `{ compatible: false, ... }` (unit test)
-- [ ] After SIGTERM, `neat-out/graph.json` exists and is valid JSON; restart loads it
+- [x] `npm run dev --workspace @neat/core` starts with `NEAT_SCAN_PATH=./demo`
+- [x] `curl localhost:8080/health` returns `{ uptime, nodeCount, edgeCount, lastUpdated }`
+- [x] `curl localhost:8080/graph` returns ≥ 3 nodes and ≥ 2 edges (3 nodes, 2 edges on the demo)
+- [x] In `/graph` response: `ServiceNode` for `service-b` has `pgDriverVersion: "7.4.0"` and an `incompatibilities[0]` entry naming pg 7.4.0 vs PG 15
+- [x] In `/graph` response: `DatabaseNode` for `payments-db` has `engineVersion: "15"` and a `compatibleDrivers` entry for pg ≥ 8.0.0
+- [x] `checkCompatibility('pg', '7.4.0', 'postgresql', '15')` → `{ compatible: false, ... }` (unit test in `packages/core/test/compat.test.ts`)
+- [x] After SIGTERM, `neat-out/graph.json` exists and is valid JSON; restart loads it (smoked locally + covered by `persist.test.ts`)
 
 ---
 
