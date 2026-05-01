@@ -1,0 +1,99 @@
+# Runbook
+
+How to do the things you'll do over and over.
+
+## First-time setup
+
+```bash
+nvm use                                  # honors .nvmrc → Node 20
+npm install                              # one-shot, hoists everything
+npx turbo build test lint                # confirms the workspace is healthy
+```
+
+If `npm install` fails with a tsup-not-found error, you've got leftover `packages/*/node_modules/` from a previous pnpm setup. `rm -rf node_modules packages/*/node_modules` and try again.
+
+## Run core locally against the demo
+
+```bash
+NEAT_SCAN_PATH=./demo \
+  npm run dev --workspace @neat/core
+# → http://localhost:8080
+```
+
+Defaults: `PORT=8080`, `HOST=0.0.0.0`, snapshot path `./neat-out/graph.json`. Override any of those with env vars.
+
+## Verify M1 (once #4, #5, #6, #9 land)
+
+```bash
+# in one terminal
+NEAT_SCAN_PATH=./demo npm run dev --workspace @neat/core
+
+# in another
+curl -s localhost:8080/health | jq
+curl -s localhost:8080/graph  | jq '.nodes[] | select(.id | contains("service-b"))'
+# → should have pgDriverVersion: "7.4.0"
+
+curl -s localhost:8080/graph | jq '.nodes[] | select(.type == "DatabaseNode")'
+# → payments-db with engineVersion: "15", compatibleDrivers including pg ≥ 8.0.0
+```
+
+## Add a compat rule
+
+`packages/core/compat.json` is the data. Edit it, restart core, re-scan:
+
+```json
+{
+  "pairs": [
+    { "driver": "pg", "engine": "postgresql",
+      "minDriverVersion": "8.0.0", "engineVersions": ["14", "15", "16"],
+      "reason": "scram-sha-256 auth required from PostgreSQL 14+" }
+  ]
+}
+```
+
+No code change needed. The lookup is data-driven by design.
+
+## Run tests
+
+```bash
+npx turbo test                         # all packages
+npm test --workspace @neat/types       # one package
+npm run build --workspace @neat/core   # build only one
+```
+
+`@neat/mcp` and `@neat/web` use `vitest run --passWithNoTests` until real test files land.
+
+## Smoke-test the MCP server
+
+```bash
+npm run build --workspace @neat/mcp
+
+(printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'; sleep 1) \
+  | node packages/mcp/dist/index.cjs
+```
+
+You should see two JSON-RPC responses: `serverInfo` from `initialize`, then a tool list with all six tools.
+
+## Common failure modes
+
+- **`tsup` build fails with `Cannot find module '.../packages/<pkg>/node_modules/tsup/dist/cli-default.js'`** — leftover per-package node_modules from a different package manager. Wipe and reinstall (see "First-time setup").
+- **`npx turbo build` says `Could not resolve workspaces. Missing packageManager field in package.json`** — the root `package.json` lost its `"packageManager": "npm@x.y.z"` line. Turbo 2.x requires it.
+- **README CI badge 404s** — the workflow path changed. The badge URL must match `/.github/workflows/<file>.yml`.
+- **`npm install` adds 80 packages out of nowhere** — someone added `demo/*` back into root `workspaces` before M2 is ready. Drop it again until docker-compose actually launches the services.
+
+## Branch / commit / PR flow
+
+- One issue → one branch `<num>-<slug>` → one PR.
+- `Refs #N` in the PR body, not `Closes #N`. User closes issues manually after verifying.
+- No `Co-Authored-By: Claude` trailers.
+- Plain-English commit messages — colleague tone, not release notes.
+
+## Milestone end-of-session checklist
+
+1. Update `docs/milestones.md` — flip status, tick verification boxes, add date.
+2. Add an ADR to `docs/decisions.md` for any decision that wasn't already there.
+3. Make sure `CLAUDE.md` references are still accurate.
+4. Open PRs ready for human review — don't merge automatically.
