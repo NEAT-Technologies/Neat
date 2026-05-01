@@ -9,7 +9,7 @@
 [![Release](https://img.shields.io/github/v/release/neat-tools/Neat)](https://github.com/neat-tools/Neat/releases)
 [![Website](https://img.shields.io/badge/website-neat.is-black)](https://neat.is)
 
-A unified runtime that maintains a live semantic graph of your codebase, infrastructure, and production.
+A unified runtime that maintains a live semantic model of your codebase, infrastructure, and production.
 
 Query it. Assert policies against it. Emit IaC from it. Run agents against it.
 
