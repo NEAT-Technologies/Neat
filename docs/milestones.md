@@ -162,6 +162,11 @@ Source of truth for sprint status. Update this file at the end of every session.
 - Re-run the M2 verification gate. The OBSERVED CALLS stays. The OBSERVED CONNECTS_TO disappears, and an INFERRED CONNECTS_TO with confidence 0.6 should take its place. Update the M2 gate text above to reflect that `CONNECTS_TO` is INFERRED in the live demo.
 - Verify `getRootCause("database:payments-db")` lands on `pgDriverVersion: "7.4.0"` with confidence 0.7 (one INFERRED hop).
 
+**Bring along when M3 lands:**
+
+- Implement the trace stitcher (see ADR-014). When an upstream span errors, walk the static graph from that service along EXTRACTED edges and write INFERRED edges with `confidence: 0.6`. This closes the gap the manual span in `demo/service-b/index.js` is currently filling.
+- Once the stitcher is producing INFERRED `CONNECTS_TO` edges, **delete `tracedQuery` and the `@opentelemetry/api` import in `demo/service-b/index.js`**, drop the `@opentelemetry/api` dep in `demo/service-b/package.json`, and re-run M2's verification gate. CONNECTS_TO will be INFERRED rather than OBSERVED in the live demo; update the gate wording to match.
+
 ---
 
 ## M4 — MCP tools working against live graph
