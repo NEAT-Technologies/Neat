@@ -1,0 +1,16 @@
+# Drop heavy + irrelevant paths from the build context the core Dockerfile sees.
+.git
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+**/.next
+**/coverage
+neat-out
+# demo/ stays in context so the core Dockerfile can copy demo/*/package.json
+# for the workspace install. Demo source is not needed inside the core image —
+# at runtime it's mounted via docker-compose volumes.
+.github
+docs
+README.md
+*.log
