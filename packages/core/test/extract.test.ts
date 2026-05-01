@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resetGraph, getGraph } from '../src/graph.js'
 import { extractFromDirectory } from '../src/extract.js'
-import type { DatabaseNode, ServiceNode } from '@neat/types'
+import type { ConfigNode, DatabaseNode, ServiceNode } from '@neat/types'
 
 // repoRoot/demo
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -77,6 +77,26 @@ describe('extractFromDirectory against demo/', () => {
     )
     expect(callEdges.length).toBeGreaterThanOrEqual(1)
     expect(callEdges.map((e) => graph.target(e))).toContain('service:service-b')
+  })
+
+  it('emits a ConfigNode for service-b/db-config.yaml with a CONFIGURED_BY edge', async () => {
+    const graph = getGraph()
+    await extractFromDirectory(graph, DEMO_PATH)
+
+    const id = 'config:service-b/db-config.yaml'
+    expect(graph.hasNode(id)).toBe(true)
+    const node = graph.getNodeAttributes(id) as ConfigNode
+    expect(node.type).toBe('ConfigNode')
+    expect(node.fileType).toBe('yaml')
+    expect(node.path).toBe('service-b/db-config.yaml')
+    expect(node.name).toBe('db-config.yaml')
+
+    const edges = graph.outboundEdges('service:service-b')
+    const configuredBy = edges.filter(
+      (e) => graph.getEdgeAttribute(e, 'type') === 'CONFIGURED_BY',
+    )
+    expect(configuredBy).toHaveLength(1)
+    expect(graph.target(configuredBy[0]!)).toBe(id)
   })
 
   it('all extracted edges have provenance EXTRACTED', async () => {

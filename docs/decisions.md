@@ -172,6 +172,47 @@ When M3 ships:
 
 ---
 
+## ADR-015 — Root-cause traversal is matrix-driven, not pg-specific
+
+**Date:** 2026-05-01
+**Status:** Active. Supersedes the temporary pg-only path in `traverse.ts` from M3.
+
+`getRootCause` originally read `ServiceNode.pgDriverVersion` and called `checkCompatibility` with a hardcoded `driver: 'pg'`. That made the rest of `compat.json` (mysql2/mysql, mongoose/mongo) decorative — the data was indexed but never consulted.
+
+M5 generalises the traversal: filter `compatPairs()` to the target database's engine once, then walk each `ServiceNode` in the path checking every `dependencies[driver]` declaration against the matched pairs. The first incompatibility wins, and the fix recommendation cites the driver name from the matched pair.
+
+**Why this shape and not a per-engine handler:** The per-engine fan-out is what `compat.json` already encodes. Pulling that table into TypeScript would duplicate it. The matrix is the schema; traversal just executes against it.
+
+**`pgDriverVersion` stays on the schema** as a UI/lookup convenience but is no longer load-bearing — the dependencies map is the source of truth. Future schema work can drop it once nothing else reads it.
+
+---
+
+## ADR-016 — `ConfigNode`s record file existence, not contents
+
+**Date:** 2026-05-01
+**Status:** Active.
+
+Phase 3 of `extractFromDirectory` walks each service directory for `*.yaml`, `*.yml`, and `.env`-shaped files; each one becomes a `ConfigNode` with `id: config:<scan-relative-path>` and a `CONFIGURED_BY` edge from the owning service. The node carries `name`, `path`, and `fileType` — nothing from inside the file.
+
+**Why no contents:** `.env` files routinely carry secrets (database passwords, API keys); pulling them into a graph that gets snapshotted to disk and queried by AI agents over MCP is exactly the wrong default. The graph needs to *know* the file exists so policy queries ("which services are configured by `.env.production`?", "which configs feed into the failing service?") can resolve, but it does not need the values.
+
+`db-config.yaml` is the exception only in the sense that phase 2 already parses it for connection details to build `DatabaseNode`s. Phase 3 adds it back in the catalog as a `ConfigNode`; the two readings coexist because they answer different questions.
+
+**ID format:** `config:<relative-path>` keeps the node deterministic across re-extracts and lets two services that legitimately share a config file converge on the same node. Matches ADR-010's "typed prefix joined to a stable name".
+
+---
+
+## ADR-017 — `neat init` writes its snapshot under the scanned path by default
+
+**Date:** 2026-05-01
+**Status:** Active.
+
+`neat init <path>` saves the snapshot to `<path>/neat-out/graph.json` unless `NEAT_OUT_PATH` overrides it. The alternative would have been a fixed `~/.neat/<hash>/graph.json` cache.
+
+The local default keeps the snapshot near the code it describes — easy to find, easy to gitignore (the demo already does), easy to delete by `rm -rf neat-out`. A user-home cache would be friendlier to multi-project workflows but adds a directory the user has to learn about and clean. The CLI is a M5 deliverable, not a daemon; the local-default trade-off can be revisited if `neat watch` lands later.
+
+---
+
 ## ADR-018 — Railway deployment is documented, not codified
 
 **Date:** 2026-05-01

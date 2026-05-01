@@ -34,6 +34,7 @@ function newDemoGraph(): NeatGraph {
       name: 'service-b',
       language: 'javascript',
       pgDriverVersion: '7.4.0',
+      dependencies: { pg: '7.4.0' },
     }),
   )
   g.addNode(
@@ -174,6 +175,7 @@ describe('getRootCause', () => {
       name: 'happy',
       language: 'javascript',
       pgDriverVersion: '8.11.0',
+      dependencies: { pg: '8.11.0' },
     })
     g.addNode('database:payments-db', {
       id: 'database:payments-db',
@@ -196,6 +198,81 @@ describe('getRootCause', () => {
       },
     )
     expect(getRootCause(g, 'database:payments-db')).toBeNull()
+  })
+
+  it('finds a mysql2 / MySQL 8 incompatibility — second failure scenario, no code change required', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:orders', {
+      id: 'service:orders',
+      type: NodeType.ServiceNode,
+      name: 'orders',
+      language: 'javascript',
+      dependencies: { mysql2: '1.7.0' },
+    })
+    g.addNode('database:orders-db', {
+      id: 'database:orders-db',
+      type: NodeType.DatabaseNode,
+      name: 'orders',
+      engine: 'mysql',
+      engineVersion: '8',
+      compatibleDrivers: [{ name: 'mysql2', minVersion: '3.0.0' }],
+    })
+    g.addEdgeWithKey(
+      'CONNECTS_TO:service:orders->database:orders-db',
+      'service:orders',
+      'database:orders-db',
+      {
+        id: 'CONNECTS_TO:service:orders->database:orders-db',
+        source: 'service:orders',
+        target: 'database:orders-db',
+        type: EdgeType.CONNECTS_TO,
+        provenance: Provenance.EXTRACTED,
+      },
+    )
+
+    const result = getRootCause(g, 'database:orders-db')
+    expect(result).not.toBeNull()
+    expect(result!.rootCauseNode).toBe('service:orders')
+    expect(result!.rootCauseReason).toMatch(/mysql|caching_sha2/i)
+    expect(result!.fixRecommendation).toMatch(/mysql2/)
+    expect(result!.fixRecommendation).toMatch(/3\.0\.0/)
+  })
+
+  it('reads driver versions out of dependencies, not just the legacy pgDriverVersion field', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:reports', {
+      id: 'service:reports',
+      type: NodeType.ServiceNode,
+      name: 'reports',
+      language: 'javascript',
+      // No pgDriverVersion here — purely declared via dependencies.
+      dependencies: { pg: '7.4.0' },
+    })
+    g.addNode('database:reports-db', {
+      id: 'database:reports-db',
+      type: NodeType.DatabaseNode,
+      name: 'reports',
+      engine: 'postgresql',
+      engineVersion: '15',
+      compatibleDrivers: [{ name: 'pg', minVersion: '8.0.0' }],
+    })
+    g.addEdgeWithKey(
+      'CONNECTS_TO:service:reports->database:reports-db',
+      'service:reports',
+      'database:reports-db',
+      {
+        id: 'CONNECTS_TO:service:reports->database:reports-db',
+        source: 'service:reports',
+        target: 'database:reports-db',
+        type: EdgeType.CONNECTS_TO,
+        provenance: Provenance.EXTRACTED,
+      },
+    )
+
+    const result = getRootCause(g, 'database:reports-db')
+    expect(result).not.toBeNull()
+    expect(result!.rootCauseNode).toBe('service:reports')
+    expect(result!.fixRecommendation).toMatch(/pg/)
   })
 })
 
