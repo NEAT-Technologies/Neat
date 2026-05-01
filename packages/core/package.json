@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
-    "@neat/types": "workspace:*",
+    "@neat/types": "*",
     "fastify": "^5.0.0",
     "graphology": "^0.25.4",
     "graphology-shortest-path": "^2.1.0",

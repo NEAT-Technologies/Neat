@@ -3,14 +3,12 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
-
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY package.json package-lock.json ./
 COPY packages/types ./packages/types
 COPY packages/core ./packages/core
 
-RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @neat/core build
+RUN npm ci --workspaces --include-workspace-root
+RUN npm run build --workspace @neat/core
 
 ENV PORT=8080
 EXPOSE 8080 4318
