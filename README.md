@@ -1,109 +1,154 @@
 # NEAT
 
-> **⚠️ Work in Progress**
-> This repository is currently an MVP under active development.
-> Many architectural and code design decisions were intentionally optimised for development speed.
+> **⚠️ Work in progress.** This repository is an MVP under active development. Many architectural decisions were intentionally optimised for development speed.
 
 [![CI](https://github.com/neat-tools/Neat/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/neat-tools/Neat/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/neat-tools/Neat)](https://github.com/neat-tools/Neat)
 [![Release](https://img.shields.io/github/v/release/neat-tools/Neat)](https://github.com/neat-tools/Neat/releases)
 [![Website](https://img.shields.io/badge/website-neat.is-black)](https://neat.is)
 
-A unified runtime that maintains a live semantic model of your codebase, infrastructure, and production.
-
-Query it. Assert policies against it. Emit IaC from it. Run agents against it.
+A unified runtime that maintains a live semantic graph of your codebase, infrastructure, and production. Query it. Assert policies against it. Run agents against it.
 
 ---
 
-## Statement
+## What it does
 
-**Architecture is the first decision.**  
-Everything else follows from it.
+NEAT continuously builds a graph of your system from two sources:
 
-Modern tooling gives developers:
-- dashboards
-- logs
-- alerts
-- traces
+- **Static analysis** of source files, `package.json`, and yaml/env config.
+- **Runtime telemetry** from OpenTelemetry spans.
 
-But these are fragments.
+Every edge carries a `provenance` (EXTRACTED, INFERRED, OBSERVED, STALE) so consumers know how much weight to put on each claim. See [`PROVENANCE.md`](./PROVENANCE.md) for the full model.
 
-NEAT builds a continuously updated semantic graph of your system by combining:
-
-- **Static analysis** of source code and configuration
-- **Runtime telemetry** from production systems
-
-This creates a live architecture model that can be queried by both humans and AI agents.
-
-With NEAT, you can:
-
-- inspect service and infrastructure dependencies
-- identify root causes across service boundaries
-- analyse blast radius before changes
-- assert architecture policies
-- expose your system as an AI-queryable runtime
+Six MCP tools expose the graph to AI agents: `get_root_cause`, `get_blast_radius`, `get_dependencies`, `get_observed_dependencies`, `get_incident_history`, `semantic_search`.
 
 ---
 
-## Features
+## Quickstart — reproduce the demo locally in under ten minutes
 
-- Live architecture graph
-- Tree-sitter powered code extraction
-- OpenTelemetry ingestion
-- Root cause traversal
-- Blast radius analysis
-- MCP server for AI agents
-- Infrastructure graph querying
+The demo runs two Node services against a Postgres 15 database. `service-b` is pinned to `pg` 7.4.0 — too old for SCRAM auth, so every call fails. The demo proves NEAT can trace that failure back to the version mismatch two graph hops away.
 
----
-
-## Quickstart
+### 1. Clone and install
 
 ```bash
+git clone https://github.com/neat-tools/Neat
+cd Neat
 npm install
 npm run build
-npm test
 ```
 
-Run the development environment:
+Requires Node 20.x. `nvm use` honours `.nvmrc`.
+
+### 2. Start the stack
 
 ```bash
-docker compose up
+docker compose up --build
 ```
+
+Boots five containers: `payments-db` (Postgres 15), `service-a`, `service-b`, `otel-collector`, and `neat-core`. The collector streams spans into core on `:4318`. Core's REST API is on `:8080`.
+
+### 3. Generate traffic
+
+```bash
+for i in {1..10}; do curl -s localhost:3000/data; done
+```
+
+Every request 500s — that's expected. The errors are what populate the graph.
+
+### 4. Confirm the graph saw it
+
+```bash
+curl -s localhost:8080/graph | jq '.edges[] | select(.id | contains("OBSERVED"))'
+curl -s localhost:8080/incidents | jq '.[0]'
+```
+
+You should see an `OBSERVED` `CALLS` edge from `service:service-a` to `service:service-b`, an `INFERRED` `CONNECTS_TO` edge from `service:service-b` to `database:payments-db` (the trace stitcher fills the auto-instrumentation gap — see `docs/decisions.md` ADR-014), and an incident attributed to `database:payments-db`.
+
+### 5. Wire NEAT into Claude Code
+
+```bash
+claude mcp add neat -- node "$(pwd)/packages/mcp/dist/index.cjs"
+```
+
+Or add it manually to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "neat": {
+      "command": "node",
+      "args": ["/absolute/path/to/Neat/packages/mcp/dist/index.cjs"],
+      "env": { "NEAT_CORE_URL": "http://localhost:8080" }
+    }
+  }
+}
+```
+
+### 6. Ask Claude
+
+In any Claude Code session:
+
+> **Why is payments-db failing?**
+
+Expected:
+
+```
+Root cause identified: service:service-b.
+PostgreSQL 14+ requires scram-sha-256 auth by default; pg < 8.0.0 only speaks md5.
+
+Traversal path: database:payments-db ← service:service-b ← service:service-a
+Edge provenances: INFERRED, OBSERVED
+Confidence: 0.70
+
+Recommended fix: Upgrade service-b pg driver to >= 8.0.0
+```
+
+The confidence is 0.7 because the `CONNECTS_TO` hop is INFERRED (pg 7.4.0 is too old for OTel's pg auto-instrumenter, so the trace stitcher fills it in from the static graph). With a modern driver every edge would be OBSERVED and confidence would be 1.0.
 
 ---
 
-## Repository Layout
+## CLI
+
+`neat init <path>` builds the static graph from a directory and writes a snapshot:
 
 ```bash
+node packages/core/dist/cli.cjs init ./demo
+```
+
+Prints node and edge counts by type plus any incompatibilities the compat matrix found. Snapshot goes to `<path>/neat-out/graph.json` unless `NEAT_OUT_PATH` overrides.
+
+---
+
+## Repository layout
+
+```
 packages/
-  types/   # Shared Zod schemas and types
-  core/    # Graph engine, tree-sitter extraction, OTel ingest, REST API
-  mcp/     # MCP server exposing graph queries to AI agents
-  web/     # Next.js web shell (dashboard WIP)
+  types/   shared Zod schemas — node, edge, event, result types
+  core/    graph engine, tree-sitter extraction, OTel ingest, REST API, neat CLI
+  mcp/     stdio MCP server exposing six tools to AI agents
+  web/     Next.js shell — wordmark + /api/health (dashboard is post-MVP)
 
 demo/
-  service-a/   # Node.js service calling service-b
-  service-b/   # Intentional pg/PostgreSQL mismatch for root-cause demo
+  service-a/      express + axios. Calls service-b.
+  service-b/      express + pg 7.4.0. Talks to payments-db (PG 15).
+  collector/      OpenTelemetry collector config.
 ```
 
 ---
 
 ## Documentation
 
-- `CLAUDE.md` — contributor and AI agent guide
-- `docs/` — architecture, milestones, decisions, and runbooks
-
----
-
-## Vision
-
-Software systems should be queryable as architecture, not just inspected as code and logs.
-
-NEAT turns your stack into a live semantic runtime.
+- [`PROVENANCE.md`](./PROVENANCE.md) — the four edge states and how confidence cascades.
+- [`CLAUDE.md`](./CLAUDE.md) — agent + contributor guide for this repo.
+- [`docs/architecture.md`](./docs/architecture.md) — pocket reference to package boundaries and data flow.
+- [`docs/decisions.md`](./docs/decisions.md) — ADR log.
+- [`docs/milestones.md`](./docs/milestones.md) — sprint status, source of truth for what's done.
+- [`docs/runbook.md`](./docs/runbook.md) — common commands and recovery recipes.
+- [`docs/railway.md`](./docs/railway.md) — deploy the demo to Railway.
+- [`packages/mcp/skill.md`](./packages/mcp/skill.md) — Claude Code skill metadata for the MCP tools.
 
 ---
 
 ## License
 
-Licensed under the Apache 2.0 License.
+Apache 2.0.

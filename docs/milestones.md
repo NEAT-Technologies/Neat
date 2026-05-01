@@ -189,8 +189,23 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## M6 — Demo on Railway
 
-**End state:** All demo services deployed; demo reproducible without running docker-compose locally.
+**End state:** All demo services deployable to Railway from this repo without copying or transforming any source. Quickstart README at the repo root walks an unfamiliar developer through the local demo end-to-end. PROVENANCE.md documents the four-state edge model.
 
-**Status:** NOT_STARTED.
+**Status:** IN_PROGRESS — code/docs are in place, the actual deploy has not been performed and verified. Flip to VERIFIED once a fresh Railway project boots from this guide and Claude Code returns the expected root cause against the deployed neat-core.
 
-**Issues:** #25 (Railway), #26 (quickstart README).
+**Issues / PRs:**
+
+| Issue | Title                                | PR  | Status |
+|-------|--------------------------------------|-----|--------|
+| #26   | Local quickstart README              | M6 branch | open |
+| #32   | PROVENANCE.md                        | M6 branch | open |
+| #25   | Deploy demo to Railway               | M6 branch | open (config + runbook in this PR; deploy is a manual follow-up) |
+
+### M6 verification gate
+
+- [x] `README.md` walks a fresh developer from clone to "Why is payments-db failing?" in Claude Code.
+- [x] `PROVENANCE.md` exists, covers the four states + confidence cascade, linked from README.md and `packages/mcp/skill.md`.
+- [x] `docs/railway.md` is a runnable deploy guide for all six services + the Postgres plugin, with concrete env values.
+- [x] `demo/collector/Dockerfile` lets the collector run on Railway (which can't volume-mount `config.yaml`); `demo/collector/config.railway.yaml` carries the Railway-flavoured collector config.
+- [ ] **Manual:** a Railway deploy following the guide produces a public service-a domain that responds to `/data`, a public neat-core domain whose `/graph` shows OBSERVED CALLS + INFERRED CONNECTS_TO edges, and a public neat-web domain.
+- [ ] **Manual:** `claude mcp add neat -- node packages/mcp/dist/index.cjs` with `NEAT_CORE_URL` pointing at the deployed core; Claude Code answers "Why is payments-db failing?" with confidence ≥ 0.7.

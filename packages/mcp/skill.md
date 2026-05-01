@@ -58,6 +58,10 @@ Free-text match across node ids and names. Keyword-only for the MVP; vector sear
 
 Inputs: `query`.
 
+## Provenance and confidence
+
+Every edge in the graph — and every result that comes out of these tools — carries a provenance: OBSERVED (live OTel traffic, confidence 1.0), INFERRED (derived from other edges, confidence 0.6), EXTRACTED (read from source, confidence 0.5), or STALE (was OBSERVED, hasn't been seen recently, confidence 0.3). Tools surface this in their text output so you can weight claims accordingly. See [PROVENANCE.md](../../PROVENANCE.md) at the repo root for the full model.
+
 ## Configuration
 
 Set `NEAT_CORE_URL` if `@neat/core` is not running on `http://localhost:8080`.

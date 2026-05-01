@@ -169,3 +169,18 @@ When M3 ships:
 - Remove `tracedQuery`, the `@opentelemetry/api` import, and the `@opentelemetry/api` dep in `demo/service-b/package.json`. Drop the call site back to `pool.query('SELECT now() …')`.
 - Re-run M2's verification gate. The OBSERVED CALLS edge should still appear; the OBSERVED CONNECTS_TO disappears, but an INFERRED CONNECTS_TO with confidence 0.6 should take its place.
 - Update M2's gate text in `milestones.md` to reflect that CONNECTS_TO is INFERRED, not OBSERVED, in the live demo.
+
+---
+
+## ADR-018 — Railway deployment is documented, not codified
+
+**Date:** 2026-05-01
+**Status:** Active for the MVP. Revisit if deploys become routine.
+
+The M6 deliverable for Railway is `docs/railway.md` plus a small set of supporting files (`demo/collector/Dockerfile`, `demo/collector/config.railway.yaml`). It is not a `railway.toml`-driven IaC setup, and it is not a one-button deploy.
+
+**Why no Railway IaC.** The MVP has six services, four of them backed by simple Dockerfiles, one Postgres plugin, and one Next.js auto-detect. The Railway config language adds another file format the team has to keep in sync with the docker-compose source of truth. For a one-shot demo deploy, a runbook is more honest about the manual steps (variables to wire, domains to generate, public/private toggles) than a `railway.toml` that elides them.
+
+**The collector earns its own Dockerfile** because docker-compose mounts `config.yaml` into the upstream image, and Railway can't. Two configs coexist: `config.yaml` for local docker-compose, `config.railway.yaml` for the deployed collector (it parameterises the neat-core hostname via env). The Dockerfile copies the local one in by default; the runbook tells the operator to swap it for the Railway variant.
+
+**When to revisit.** If a second deploy target lands, or if Railway deploys become routine enough that the runbook drift starts hurting, codify in `railway.toml` per service and lift the env wiring into Railway's variable references (it already supports `${{ payments-db.PGHOST }}`). Until then, prose + concrete commands beats config we don't actively maintain.

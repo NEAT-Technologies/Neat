@@ -1,0 +1,38 @@
+# Railway variant of demo/collector/config.yaml. Identical except the neat-core
+# endpoint references Railway's private-network DNS instead of the
+# docker-compose service name.
+#
+# When deploying, copy this to config.yaml in the collector service's build
+# context (or set this as the file the Dockerfile copies in). Local
+# docker-compose still uses config.yaml verbatim.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+
+exporters:
+  otlphttp/neat:
+    # Railway exposes services to siblings on PRIVATE_NETWORK. Set NEAT_CORE_HOST
+    # in the collector service to the neat-core service's private hostname (e.g.
+    # neat-core.railway.internal). The 4318 port is fixed by the receiver in
+    # @neat/core.
+    endpoint: http://${env:NEAT_CORE_HOST}:4318
+    encoding: json
+    compression: none
+    tls:
+      insecure: true
+  logging:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/neat, logging]
