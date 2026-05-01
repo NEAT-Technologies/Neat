@@ -12,23 +12,43 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-01, M0 + M1 both VERIFIED.
+**Last session ended:** 2026-05-01, M0 + M1 + M2 all VERIFIED.
 
-**Next session starts at M2 — OTel layer.** Recommended order (it's the seed plan's order — services first, then transport, then receiver):
+**Next session starts at M3 — Traversal, then M4 — MCP tools.** Two milestones in this chat per the standing convention. M3 unlocks M4 (the MCP tools call into the traversal functions), so the order is fixed.
 
-1. `#22` `docker-compose.yml` — bring up `service-a`, `service-b`, `payments-db` (`postgres:15-alpine`), `otel-collector`, and `core`. Hitting `GET service-a:3000/data` should produce a 500 from the pg/PG 15 mismatch, with OTel spans flowing somewhere observable.
-2. `#23` OTel collector config — receive OTLP/HTTP on `:4318`, forward to core's ingest endpoint (also OTLP/HTTP).
-3. `#7` OTel span receiver in `@neat/core` — accept the OTLP wire format, decode spans.
-4. `#8` Span → edge mapper — turn each span into an `OBSERVED` edge between the corresponding service nodes (or service → database for db spans), with `confidence` and `lastObserved`. Stale detection demotes edges not seen in N seconds.
+### M3 work order
 
-**Before M2 also (project-management cleanup, not code):**
-- Manually close GitHub issues for the M0+M1 work that's now merged: #1, #2, #3, #4, #5, #6, #9, #13, #24, #27. Leave #21 open — it's "partial" until M2 brings up docker-compose.
-- Relabel the dashboard issues #28–#31 as `post-mvp-enhance` and remove them from milestone M5 (per ADR-004).
+1. `#10` **`getRootCause`** in a new `packages/core/src/traverse.ts`. Walks incoming edges from the error node depth-first up to depth 5, prefers OBSERVED → INFERRED → EXTRACTED at each step, calls `checkCompatibility` at each `ServiceNode` against the target `DatabaseNode`, returns `RootCauseResult` (the type already exists in `@neat/types`). Confidence cascades by edge provenance: 1.0 all-OBSERVED, 0.7 any-INFERRED, 0.5 any-EXTRACTED-only. The verification target is `getRootCause("database:payments-db")` returning the pg-driver incompatibility with path `["database:payments-db", "service:service-b", "service:service-a"]`.
+2. `#11` **`getBlastRadius`** in the same `traverse.ts`. Outgoing edges, depth 10, distance + path per affected node. Uses `graphology-shortest-path` (already a dep). `BlastRadiusResult` type ready in `@neat/types`.
+3. `#12` **REST routes** for both — `GET /traverse/root-cause/:nodeId` and `GET /traverse/blast-radius/:nodeId`. Wire into `api.ts` next to `/graph` + `/incidents`.
+4. **Trace stitcher** (no issue yet — open one). When a span has `statusCode === 2`, walk the static graph from `service:<service>` along EXTRACTED edges depth ≤ 2 and write INFERRED edges (`${type}:INFERRED:...` id pattern by analogy with the OBSERVED one) with `confidence: 0.6` and `lastObserved` set. This is the systems fix for the pg 7.4.0 instrumentation gap (ADR-014). Once it's writing INFERRED `CONNECTS_TO`, delete the `tracedQuery` workaround in `demo/service-b/index.js` and the `@opentelemetry/api` dep in its `package.json`, and re-run the M2 gate.
 
-**Gotchas a fresh session would benefit from:**
-- The npm migration is the reason the seed plan and some issue bodies still mention pnpm. Ignore those — see ADR-007. We're on `npm@11.11.0` with `workspaces: ["packages/*"]`.
-- `demo/*` is **not** in workspaces yet (ADR-009). M2 puts it back when docker-compose actually runs the services — that means the next session will need to add `demo/*` to root `workspaces` and probably regenerate the lockfile.
-- M1 implementation intricacies (id formats, why extraction is 3 phases, why persist loads before extract) live in `docs/architecture.md` under "M1 implementation notes". Read that before touching anything in `packages/core/src/`.
+### M4 work order
+
+`#13` (`@neat/mcp` scaffold) is already merged — stubs exist. Each tool calls into core over HTTP using the routes above plus the existing `/graph`, `/incidents`, `/search`. Suggested order:
+
+1. `#14` `get_root_cause` (critical-path for the demo)
+2. `#15` `get_blast_radius`
+3. `#16` `get_dependencies`
+4. `#17` `get_observed_dependencies`
+5. `#18` `get_incident_history`
+6. `#19` `semantic_search` (keyword-only stub per the issue label `post-mvp-enhance`)
+7. `#20` `mcp/CLAUDE.md` + `skill.md`
+
+### Project-management cleanup carried over
+
+- Manually close GitHub issues for the merged M0/M1/M2 work: M0 — #1, #2, #3, #13, #24, #27; M1 — #4, #5, #6, #9; M2 — #7, #8, #21, #22, #23. (Per ADR-005 the user closes by hand after gate verification.)
+- Relabel dashboard issues #28–#31 as `post-mvp-enhance` and remove them from milestone M5 (per ADR-004). Still pending from before M2.
+
+### Gotchas a fresh session will benefit from
+
+- **OBSERVED edges live alongside EXTRACTED ones**, not on top. Edge ids: EXTRACTED `${type}:${source}->${target}` (current ADR-010), OBSERVED `${type}:OBSERVED:${source}->${target}`. INFERRED should follow the same shape: `${type}:INFERRED:${source}->${target}`. The graph is a `MultiDirectedGraph`, so multiple edges between the same pair coexist by design — traversal picks per provenance preference, doesn't need to dedup.
+- **`/incidents` reads from `errors.ndjson`**, written by `ingest.handleSpan` (see `packages/core/src/ingest.ts`). It's a flat append log keyed by `traceId:spanId`. M3 root-cause should accept an optional `errorEvent` argument and pass it through to colour the result (the M3 issue body asks for this).
+- **Manual pg span in service-b is debt.** `demo/service-b/index.js` hand-rolls a span around `pool.query` because `@opentelemetry/instrumentation-pg` doesn't speak pg < 8. ADR-014 + the bring-along note under M3 below say exactly what to delete once the trace stitcher writes INFERRED CONNECTS_TO. Don't generalise the workaround — it's a fixture.
+- **Collector → core uses JSON, no compression.** `demo/collector/config.yaml` has `encoding: json` and `compression: none` on the `otlphttp/neat` exporter. The receiver in `packages/core/src/otel.ts` is plain Fastify JSON; if you want gzip support, the collector exporter is where to start, not core.
+- **service-b connection timeout is 4s** (`connectionTimeoutMillis` in `Pool({...})`) so the SCRAM hang surfaces as a real error instead of waiting forever. Don't drop it without adding another timeout somewhere.
+- **`docker compose up --build` is the M2 gate**, not unit tests. Same applies for M3: the unit tests catch traversal bugs but only the live demo proves the graph is being populated correctly. Always run a `for i in {1..10}; do curl localhost:3000/data; done` after a rebuild.
+- **PR status as of handoff**: M2 runtime fixes are in PR #55 (`m2-runtime-fixes` → `main`). Verify it's merged before relying on the OBSERVED `CONNECTS_TO` edge being there — the four feature PRs (#50/#51/#52/#54) alone don't produce it, the runtime fixes do.
 
 ---
 
@@ -94,24 +114,53 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 **End state:** Demo services emit OTel spans. `core` receives them and writes `OBSERVED` edges into the graph with `confidence` and `lastObserved`. Stale detection demotes edges not seen in N seconds.
 
-**Status:** NOT_STARTED.
+**Status:** VERIFIED 2026-05-01.
 
-**Issues:** #7 (OTel span receiver), #8 (span→edge mapper), #22 (docker-compose), #23 (OTel collector config).
+**Issues / PRs:**
+
+| Issue | Title                              | PR(s)        | Status |
+|-------|------------------------------------|--------------|--------|
+| #22   | docker-compose stack               | #50          | merged |
+| #23   | OTel collector config              | #51          | merged |
+| #7    | OTel span receiver                 | #52          | merged |
+| #8    | span → edge mapper                 | #53 → #54    | merged (#53 auto-closed when its base branch was deleted; reopened as #54) |
+| —     | M2 runtime fixes (compression, manual pg span, pg timeout) | #55 | merged |
+
+### M2 verification gate
+
+- [x] `docker compose up --build` boots the five-service stack cleanly; all health checks pass within 30s
+- [x] `curl localhost:3000/data` produces a 500 from the pg 7.4.0 / PG 15 mismatch; `service-b` logs the SCRAM-flavoured connection timeout
+- [x] `docker compose logs otel-collector` shows spans flowing
+- [x] After ~10 hits + 5s wait, `/graph` contains `CALLS:OBSERVED:service:service-a->service:service-b` with `callCount > 0`
+- [x] After ~10 hits + 5s wait, `/graph` contains `CONNECTS_TO:OBSERVED:service:service-b->database:payments-db` with `callCount > 0`
+- [x] `/incidents` returns the pg connection-timeout events attributed to `database:payments-db`
+- [x] Stale detection: `markStaleEdges` covered in `packages/core/test/ingest.test.ts`; live demotion verified via shortened threshold in tests, not in the live demo
+
+### M2 known debt
+
+- `demo/service-b/index.js` hand-rolls a `pg.query` span because `@opentelemetry/instrumentation-pg` doesn't support pg < 8.x. Tracking ADR-014; deletion gated on M3 trace stitching. See M3 bring-along below.
 
 ---
 
 ## M3 — Traversal
 
-**End state:** `getRootCause` and `getBlastRadius` traverse the live graph. `/traverse/*` REST routes work.
+**End state:** `getRootCause` and `getBlastRadius` traverse the live graph. `/traverse/*` REST routes work. INFERRED edges are populated by a trace stitcher so root-cause traversal can produce confidence-0.7 results in environments with patchy auto-instrumentation (the demo, today).
 
 **Status:** NOT_STARTED.
 
-**Issues:** #10 (root-cause traversal), #11 (blast-radius traversal), #12 (traverse routes).
+**Issues:** #10 (root-cause traversal), #11 (blast-radius traversal), #12 (traverse routes), plus a follow-up issue (open one) for the trace stitcher.
 
-**Bring along when M3 lands:**
+### Suggested file layout
 
-- Implement the trace stitcher (see ADR-014). When an upstream span errors, walk the static graph from that service along EXTRACTED edges and write INFERRED edges with `confidence: 0.6`. This closes the gap the manual span in `demo/service-b/index.js` is currently filling.
-- Once the stitcher is producing INFERRED `CONNECTS_TO` edges, **delete `tracedQuery` and the `@opentelemetry/api` import in `demo/service-b/index.js`**, drop the `@opentelemetry/api` dep in `demo/service-b/package.json`, and re-run M2's verification gate. CONNECTS_TO will be INFERRED rather than OBSERVED in the live demo; update the gate wording to match.
+- `packages/core/src/traverse.ts` — `getRootCause(errorNodeId, errorEvent?)`, `getBlastRadius(nodeId, depth = 10)`. Helpers shared between the two (provenance-priority edge picker, depth-bounded BFS) live here.
+- `packages/core/src/ingest.ts` — extend with `stitchTrace(span, ctx)` called from `handleSpan` when `statusCode === 2`. Walks the static graph and writes INFERRED edges. Reuses the existing `upsertObservedEdge` shape with a different id prefix (`${type}:INFERRED:...`) and `confidence: 0.6`.
+- `packages/core/src/api.ts` — wire `GET /traverse/root-cause/:nodeId` (optional `?errorId=` to scope to a specific incident) and `GET /traverse/blast-radius/:nodeId`.
+
+### Bring-along when M3 lands
+
+- Once the stitcher is producing INFERRED `CONNECTS_TO` edges, **delete `tracedQuery` and the `@opentelemetry/api` import in `demo/service-b/index.js`** and drop the `@opentelemetry/api` dep in `demo/service-b/package.json`. Keep the `connectionTimeoutMillis: 4000` line — that's separate from the instrumentation gap; it's there because pg 7.4.0 hangs on SCRAM regardless of whether anyone's watching.
+- Re-run the M2 verification gate. The OBSERVED CALLS stays. The OBSERVED CONNECTS_TO disappears, and an INFERRED CONNECTS_TO with confidence 0.6 should take its place. Update the M2 gate text above to reflect that `CONNECTS_TO` is INFERRED in the live demo.
+- Verify `getRootCause("database:payments-db")` lands on `pgDriverVersion: "7.4.0"` with confidence 0.7 (one INFERRED hop).
 
 ---
 
