@@ -1,0 +1,7 @@
+# Connection target for service-b. The extractor reads this in M5 (yaml/env file
+# extraction) to emit a ConfigNode and a CONFIGURED_BY edge into the graph.
+host: payments-db
+port: 5432
+database: payments
+engine: postgresql
+engineVersion: "15"
