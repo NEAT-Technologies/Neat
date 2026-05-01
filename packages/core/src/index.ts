@@ -17,3 +17,11 @@ export {
   type BuildOtelReceiverOptions,
   type OtlpTracesRequest,
 } from './otel.js'
+export {
+  handleSpan,
+  makeSpanHandler,
+  markStaleEdges,
+  readErrorEvents,
+  startStalenessLoop,
+  type IngestContext,
+} from './ingest.js'
