@@ -160,19 +160,24 @@ describe('REST API (fastify.inject)', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json()
     expect(body.origin).toBe('service:service-a')
-    expect(body.totalAffected).toBe(2)
-    expect(body.affectedNodes).toEqual([
-      {
-        nodeId: 'service:service-b',
-        distance: 1,
-        edgeProvenance: 'EXTRACTED',
-      },
-      {
-        nodeId: 'database:payments-db',
-        distance: 2,
-        edgeProvenance: 'EXTRACTED',
-      },
-    ])
+    // service-b sits at distance 1; payments-db and the db-config.yaml ConfigNode
+    // are both reachable from service-b at distance 2.
+    expect(body.totalAffected).toBe(3)
+    expect(body.affectedNodes).toContainEqual({
+      nodeId: 'service:service-b',
+      distance: 1,
+      edgeProvenance: 'EXTRACTED',
+    })
+    expect(body.affectedNodes).toContainEqual({
+      nodeId: 'database:payments-db',
+      distance: 2,
+      edgeProvenance: 'EXTRACTED',
+    })
+    expect(body.affectedNodes).toContainEqual({
+      nodeId: 'config:service-b/db-config.yaml',
+      distance: 2,
+      edgeProvenance: 'EXTRACTED',
+    })
   })
 
   it('GET /traverse/blast-radius/:nodeId returns 404 for an unknown node', async () => {

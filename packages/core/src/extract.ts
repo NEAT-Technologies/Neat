@@ -4,6 +4,7 @@ import Parser from 'tree-sitter'
 import JavaScript from 'tree-sitter-javascript'
 import { parse as parseYaml } from 'yaml'
 import type {
+  ConfigNode,
   DatabaseNode,
   GraphEdge,
   GraphNode,
@@ -41,7 +42,35 @@ interface DiscoveredService {
 }
 
 const SERVICE_FILE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx'])
+const CONFIG_FILE_EXTENSIONS = new Set(['.yaml', '.yml'])
 const IGNORED_DIRS = new Set(['node_modules', '.git', '.turbo', 'dist', 'build', '.next'])
+
+function isConfigFile(name: string): { match: boolean; fileType: string } {
+  const ext = path.extname(name)
+  if (CONFIG_FILE_EXTENSIONS.has(ext)) return { match: true, fileType: ext.slice(1) }
+  // .env, .env.local, .env.production, etc. Match the bare filename and any
+  // dotted suffix variant; skip .env-shaped folder names by relying on
+  // walkConfigFiles only inspecting files.
+  if (name === '.env' || name.startsWith('.env.')) return { match: true, fileType: 'env' }
+  return { match: false, fileType: '' }
+}
+
+async function walkConfigFiles(dir: string): Promise<string[]> {
+  const out: string[] = []
+  async function walk(current: string): Promise<void> {
+    const entries = await fs.readdir(current, { withFileTypes: true })
+    for (const entry of entries) {
+      const full = path.join(current, entry.name)
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRS.has(entry.name)) await walk(full)
+      } else if (entry.isFile() && isConfigFile(entry.name).match) {
+        out.push(full)
+      }
+    }
+  }
+  await walk(dir)
+  return out
+}
 
 // Strip semver range prefixes (^, ~, >=, etc.) and bare "v" so the extracted
 // version is usable for compat checks. We don't try to resolve ranges to actual
@@ -245,7 +274,39 @@ export async function extractFromDirectory(
     graph.replaceNodeAttributes(service.node.id, service.node as unknown as GraphNode)
   }
 
-  // Phase 3 — service-to-service CALLS via tree-sitter scan of every source
+  // Phase 3 — yaml/env config files in each service dir become ConfigNodes
+  // with a CONFIGURED_BY edge from the owning service. We don't read file
+  // contents (env files routinely carry secrets) — just record path and type.
+  for (const service of services) {
+    const configFiles = await walkConfigFiles(service.dir)
+    for (const file of configFiles) {
+      const relPath = path.relative(scanPath, file)
+      const node: ConfigNode = {
+        id: `config:${relPath}`,
+        type: NodeType.ConfigNode,
+        name: path.basename(file),
+        path: relPath,
+        fileType: isConfigFile(path.basename(file)).fileType,
+      }
+      if (!graph.hasNode(node.id)) {
+        graph.addNode(node.id, node)
+        result.nodesAdded++
+      }
+      const edge: GraphEdge = {
+        id: makeEdgeId(service.node.id, node.id, EdgeType.CONFIGURED_BY),
+        source: service.node.id,
+        target: node.id,
+        type: EdgeType.CONFIGURED_BY,
+        provenance: Provenance.EXTRACTED,
+      }
+      if (!graph.hasEdge(edge.id)) {
+        graph.addEdgeWithKey(edge.id, edge.source, edge.target, edge)
+        result.edgesAdded++
+      }
+    }
+  }
+
+  // Phase 4 — service-to-service CALLS via tree-sitter scan of every source
   // file in each service directory.
   const parser = new Parser()
   parser.setLanguage(JavaScript)
