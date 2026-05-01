@@ -23,6 +23,7 @@ export {
   markStaleEdges,
   readErrorEvents,
   startStalenessLoop,
+  stitchTrace,
   type IngestContext,
 } from './ingest.js'
 export { getBlastRadius, getRootCause } from './traverse.js'
