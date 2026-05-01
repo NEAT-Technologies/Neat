@@ -9,7 +9,7 @@ import {
   type GraphNode,
 } from '@neat/types'
 import type { NeatGraph } from '../src/graph.js'
-import { getRootCause } from '../src/traverse.js'
+import { getBlastRadius, getRootCause } from '../src/traverse.js'
 
 function makeNode(id: string, attrs: GraphNode): GraphNode {
   return { ...attrs, id }
@@ -196,5 +196,127 @@ describe('getRootCause', () => {
       },
     )
     expect(getRootCause(g, 'database:payments-db')).toBeNull()
+  })
+})
+
+describe('getBlastRadius', () => {
+  it('returns service-b and payments-db downstream of service-a on the demo graph', () => {
+    const g = newDemoGraph()
+    addEdge(g, callsEdge(Provenance.EXTRACTED))
+    addEdge(g, connectsEdge(Provenance.EXTRACTED))
+
+    const result = getBlastRadius(g, 'service:service-a')
+    expect(result.origin).toBe('service:service-a')
+    expect(result.totalAffected).toBe(2)
+    expect(result.affectedNodes).toEqual([
+      {
+        nodeId: 'service:service-b',
+        distance: 1,
+        edgeProvenance: Provenance.EXTRACTED,
+      },
+      {
+        nodeId: 'database:payments-db',
+        distance: 2,
+        edgeProvenance: Provenance.EXTRACTED,
+      },
+    ])
+  })
+
+  it('reports OBSERVED provenance when an OBSERVED edge sits alongside the EXTRACTED one', () => {
+    const g = newDemoGraph()
+    addEdge(g, callsEdge(Provenance.EXTRACTED))
+    addEdge(g, callsEdge(Provenance.OBSERVED))
+    addEdge(g, connectsEdge(Provenance.EXTRACTED))
+    addEdge(g, connectsEdge(Provenance.OBSERVED))
+
+    const result = getBlastRadius(g, 'service:service-a')
+    expect(result.affectedNodes.find((n) => n.nodeId === 'service:service-b')!.edgeProvenance).toBe(
+      Provenance.OBSERVED,
+    )
+    expect(
+      result.affectedNodes.find((n) => n.nodeId === 'database:payments-db')!.edgeProvenance,
+    ).toBe(Provenance.OBSERVED)
+  })
+
+  it('returns nothing for a node with no outgoing edges', () => {
+    const g = newDemoGraph()
+    addEdge(g, callsEdge(Provenance.EXTRACTED))
+    addEdge(g, connectsEdge(Provenance.EXTRACTED))
+
+    const result = getBlastRadius(g, 'database:payments-db')
+    expect(result.affectedNodes).toEqual([])
+    expect(result.totalAffected).toBe(0)
+    expect(result.origin).toBe('database:payments-db')
+  })
+
+  it('returns an empty result for a node that does not exist', () => {
+    const g = newDemoGraph()
+    const result = getBlastRadius(g, 'service:nope')
+    expect(result.affectedNodes).toEqual([])
+    expect(result.totalAffected).toBe(0)
+    expect(result.origin).toBe('service:nope')
+  })
+
+  it('respects the depth limit', () => {
+    const g = newDemoGraph()
+    addEdge(g, callsEdge(Provenance.EXTRACTED))
+    addEdge(g, connectsEdge(Provenance.EXTRACTED))
+
+    const result = getBlastRadius(g, 'service:service-a', 1)
+    expect(result.affectedNodes).toEqual([
+      {
+        nodeId: 'service:service-b',
+        distance: 1,
+        edgeProvenance: Provenance.EXTRACTED,
+      },
+    ])
+  })
+
+  it('records the BFS-shortest distance when two paths reach the same node', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', {
+      id: 'service:a',
+      type: NodeType.ServiceNode,
+      name: 'a',
+      language: 'javascript',
+    })
+    g.addNode('service:b', {
+      id: 'service:b',
+      type: NodeType.ServiceNode,
+      name: 'b',
+      language: 'javascript',
+    })
+    g.addNode('service:c', {
+      id: 'service:c',
+      type: NodeType.ServiceNode,
+      name: 'c',
+      language: 'javascript',
+    })
+    // a -> c (direct, distance 1) and a -> b -> c (distance 2). Direct should win.
+    g.addEdgeWithKey('CALLS:service:a->service:c', 'service:a', 'service:c', {
+      id: 'CALLS:service:a->service:c',
+      source: 'service:a',
+      target: 'service:c',
+      type: EdgeType.CALLS,
+      provenance: Provenance.EXTRACTED,
+    })
+    g.addEdgeWithKey('CALLS:service:a->service:b', 'service:a', 'service:b', {
+      id: 'CALLS:service:a->service:b',
+      source: 'service:a',
+      target: 'service:b',
+      type: EdgeType.CALLS,
+      provenance: Provenance.EXTRACTED,
+    })
+    g.addEdgeWithKey('CALLS:service:b->service:c', 'service:b', 'service:c', {
+      id: 'CALLS:service:b->service:c',
+      source: 'service:b',
+      target: 'service:c',
+      type: EdgeType.CALLS,
+      provenance: Provenance.EXTRACTED,
+    })
+
+    const result = getBlastRadius(g, 'service:a')
+    const c = result.affectedNodes.find((n) => n.nodeId === 'service:c')
+    expect(c!.distance).toBe(1)
   })
 })
