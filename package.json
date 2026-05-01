@@ -4,10 +4,10 @@
   "private": true,
   "description": "NEAT — production intelligence platform with a live semantic graph queryable via MCP",
   "engines": {
-    "node": ">=20",
-    "pnpm": ">=9"
+    "node": ">=20"
   },
-  "packageManager": "pnpm@9.12.0",
+  "packageManager": "npm@11.11.0",
+  "workspaces": ["packages/*", "demo/*"],
   "scripts": {
     "build": "turbo build",
     "test": "turbo test",
