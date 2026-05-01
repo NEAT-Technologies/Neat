@@ -1,9 +1,10 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
-import type { GraphEdge, GraphNode } from '@neat/types'
+import type { ErrorEvent, GraphEdge, GraphNode } from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
 import { readErrorEvents } from './ingest.js'
+import { getBlastRadius, getRootCause } from './traverse.js'
 
 export interface BuildApiOptions {
   graph: NeatGraph
@@ -78,6 +79,42 @@ export async function buildApi(opts: BuildApiOptions): Promise<FastifyInstance> 
     const events = await readErrorEvents(opts.errorsPath)
     return events.filter((e) => e.affectedNode === nodeId || e.service === nodeId.replace(/^service:/, ''))
   })
+
+  app.get<{ Params: { nodeId: string }; Querystring: { errorId?: string } }>(
+    '/traverse/root-cause/:nodeId',
+    async (req, reply) => {
+      const { nodeId } = req.params
+      if (!graph.hasNode(nodeId)) {
+        return reply.code(404).send({ error: 'node not found', id: nodeId })
+      }
+      let errorEvent: ErrorEvent | undefined
+      if (req.query.errorId && opts.errorsPath) {
+        const events = await readErrorEvents(opts.errorsPath)
+        errorEvent = events.find((e) => e.id === req.query.errorId)
+        if (!errorEvent) {
+          return reply.code(404).send({ error: 'error event not found', id: req.query.errorId })
+        }
+      }
+      const result = getRootCause(graph, nodeId, errorEvent)
+      if (!result) return reply.code(404).send({ error: 'no root cause found', id: nodeId })
+      return result
+    },
+  )
+
+  app.get<{ Params: { nodeId: string }; Querystring: { depth?: string } }>(
+    '/traverse/blast-radius/:nodeId',
+    async (req, reply) => {
+      const { nodeId } = req.params
+      if (!graph.hasNode(nodeId)) {
+        return reply.code(404).send({ error: 'node not found', id: nodeId })
+      }
+      const depth = req.query.depth ? Number(req.query.depth) : undefined
+      if (depth !== undefined && (!Number.isFinite(depth) || depth < 0)) {
+        return reply.code(400).send({ error: 'depth must be a non-negative number' })
+      }
+      return getBlastRadius(graph, nodeId, depth)
+    },
+  )
 
   app.get<{ Querystring: { q?: string } }>('/search', async (req, reply) => {
     const q = (req.query.q ?? '').trim().toLowerCase()
