@@ -11,7 +11,7 @@ import type {
 } from '@neat/types'
 import { NodeType, Provenance } from '@neat/types'
 import type { NeatGraph } from './graph.js'
-import { checkCompatibility } from './compat.js'
+import { checkCompatibility, compatPairs } from './compat.js'
 
 const PROV_RANK: Record<ProvenanceValue, number> = {
   OBSERVED: 3,
@@ -101,9 +101,11 @@ export function getRootCause(
   if (!graph.hasNode(errorNodeId)) return null
 
   const startAttrs = graph.getNodeAttributes(errorNodeId) as GraphNode
-  // Today the only failure mode the compat matrix catches is driver/engine, so
-  // we only walk in if the error surfaced at a database. Other root-cause
-  // shapes (config drift, version skew between services) come with M5.
+  // Driver/engine mismatches are still the only shape the compat matrix
+  // describes, so root-cause traversal only fires when the error surfaces at
+  // a database node. Other root-cause shapes (config drift, version skew
+  // between services) would key off different node types and live behind a
+  // separate dispatch.
   if (startAttrs.type !== NodeType.DatabaseNode) return null
   const targetDb = startAttrs as DatabaseNode
 
@@ -113,24 +115,33 @@ export function getRootCause(
   let rootCauseReason: string | null = null
   let fixRecommendation: string | undefined
 
-  for (const id of walk.path) {
+  // Pairs that could possibly hit on this engine — narrowed once outside the
+  // walk so we don't re-scan the matrix for every service we visit.
+  const candidatePairs = compatPairs().filter((p) => p.engine === targetDb.engine)
+  if (candidatePairs.length === 0) return null
+
+  outer: for (const id of walk.path) {
     const attrs = graph.getNodeAttributes(id) as GraphNode
     if (attrs.type !== NodeType.ServiceNode) continue
     const svc = attrs as ServiceNode
-    if (!svc.pgDriverVersion) continue
-    const result = checkCompatibility(
-      'pg',
-      svc.pgDriverVersion,
-      targetDb.engine,
-      targetDb.engineVersion,
-    )
-    if (!result.compatible) {
-      rootCauseNode = id
-      rootCauseReason = result.reason ?? 'incompatible driver'
-      if (result.minDriverVersion) {
-        fixRecommendation = `Upgrade ${svc.name} pg driver to >= ${result.minDriverVersion}`
+    const deps = svc.dependencies ?? {}
+    for (const pair of candidatePairs) {
+      const declared = deps[pair.driver]
+      if (!declared) continue
+      const result = checkCompatibility(
+        pair.driver,
+        declared,
+        targetDb.engine,
+        targetDb.engineVersion,
+      )
+      if (!result.compatible) {
+        rootCauseNode = id
+        rootCauseReason = result.reason ?? 'incompatible driver'
+        if (result.minDriverVersion) {
+          fixRecommendation = `Upgrade ${svc.name} ${pair.driver} driver to >= ${result.minDriverVersion}`
+        }
+        break outer
       }
-      break
     }
   }
 
