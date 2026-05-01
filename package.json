@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "packageManager": "npm@11.11.0",
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/*", "demo/*"],
   "scripts": {
     "build": "turbo build",
     "test": "turbo test",

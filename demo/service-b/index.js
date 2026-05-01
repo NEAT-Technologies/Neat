@@ -4,13 +4,9 @@ const { Pool } = require('pg')
 const app = express()
 const port = Number(process.env.PORT ?? 3001)
 
-const pool = new Pool({
-  host: process.env.DB_HOST ?? 'payments-db',
-  port: Number(process.env.DB_PORT ?? 5432),
-  user: process.env.DB_USER ?? 'postgres',
-  password: process.env.DB_PASSWORD ?? 'postgres',
-  database: process.env.DB_NAME ?? 'payments',
-})
+// Connection params come from the standard PG* env vars (PGHOST, PGUSER,
+// PGPASSWORD, PGDATABASE, PGPORT) which pg reads automatically.
+const pool = new Pool()
 
 app.get('/query', async (_req, res) => {
   try {

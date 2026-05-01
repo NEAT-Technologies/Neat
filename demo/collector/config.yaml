@@ -1,0 +1,34 @@
+# OTel collector config for the M2 demo. Sits between the instrumented demo
+# services and neat-core: receives OTLP/HTTP on :4318, batches, then fans out
+# to neat-core's own OTLP receiver and to a verbose stdout exporter so spans
+# are observable from `docker compose logs otel-collector` without needing the
+# core ingest path to be working yet.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+
+exporters:
+  # Forward to neat-core's receiver as JSON over HTTP. Protobuf is the OTLP
+  # default, but JSON keeps core's receiver (#7) free of a proto decoder while
+  # the wire shape is still settling.
+  otlphttp/neat:
+    endpoint: http://neat-core:4318
+    encoding: json
+    tls:
+      insecure: true
+  logging:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/neat, logging]
