@@ -210,3 +210,18 @@ Phase 3 of `extractFromDirectory` walks each service directory for `*.yaml`, `*.
 `neat init <path>` saves the snapshot to `<path>/neat-out/graph.json` unless `NEAT_OUT_PATH` overrides it. The alternative would have been a fixed `~/.neat/<hash>/graph.json` cache.
 
 The local default keeps the snapshot near the code it describes — easy to find, easy to gitignore (the demo already does), easy to delete by `rm -rf neat-out`. A user-home cache would be friendlier to multi-project workflows but adds a directory the user has to learn about and clean. The CLI is a M5 deliverable, not a daemon; the local-default trade-off can be revisited if `neat watch` lands later.
+
+---
+
+## ADR-018 — Railway deployment is documented, not codified
+
+**Date:** 2026-05-01
+**Status:** Active for the MVP. Revisit if deploys become routine.
+
+The M6 deliverable for Railway is `docs/railway.md` plus a small set of supporting files (`demo/collector/Dockerfile`, `demo/collector/config.railway.yaml`). It is not a `railway.toml`-driven IaC setup, and it is not a one-button deploy.
+
+**Why no Railway IaC.** The MVP has six services, four of them backed by simple Dockerfiles, one Postgres plugin, and one Next.js auto-detect. The Railway config language adds another file format the team has to keep in sync with the docker-compose source of truth. For a one-shot demo deploy, a runbook is more honest about the manual steps (variables to wire, domains to generate, public/private toggles) than a `railway.toml` that elides them.
+
+**The collector earns its own Dockerfile** because docker-compose mounts `config.yaml` into the upstream image, and Railway can't. Two configs coexist: `config.yaml` for local docker-compose, `config.railway.yaml` for the deployed collector (it parameterises the neat-core hostname via env). The Dockerfile copies the local one in by default; the runbook tells the operator to swap it for the Railway variant.
+
+**When to revisit.** If a second deploy target lands, or if Railway deploys become routine enough that the runbook drift starts hurting, codify in `railway.toml` per service and lift the env wiring into Railway's variable references (it already supports `${{ payments-db.PGHOST }}`). Until then, prose + concrete commands beats config we don't actively maintain.
