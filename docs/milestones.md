@@ -12,9 +12,9 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-01, M0 + M1 + M2 all VERIFIED.
+**Last session ended:** 2026-05-01, M0–M4 all VERIFIED, M5 VERIFIED.
 
-**Next session starts at M3 — Traversal, then M4 — MCP tools.** Two milestones in this chat per the standing convention. M3 unlocks M4 (the MCP tools call into the traversal functions), so the order is fixed.
+**Next session is M6 — Demo on Railway.** The M5 branch carries the M3 trace-stitcher bring-along (the manual pg span workaround in `demo/service-b/index.js` is gone — root-cause now leans on the stitcher's INFERRED CONNECTS_TO edge), so any leftover M2/M3 verification re-runs should expect that shape. M6 needs the demo reproducible without running docker-compose locally: Railway config, env templates, a runbook, and a quickstart README at the repo root.
 
 ### M3 work order
 
@@ -146,9 +146,17 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 **End state:** `getRootCause` and `getBlastRadius` traverse the live graph. `/traverse/*` REST routes work. INFERRED edges are populated by a trace stitcher so root-cause traversal can produce confidence-0.7 results in environments with patchy auto-instrumentation (the demo, today).
 
-**Status:** NOT_STARTED.
+**Status:** VERIFIED 2026-05-01.
 
-**Issues:** #10 (root-cause traversal), #11 (blast-radius traversal), #12 (traverse routes), plus a follow-up issue (open one) for the trace stitcher.
+**Issues / PRs:**
+
+| Issue | Title                          | PR  | Status |
+|-------|--------------------------------|-----|--------|
+| #10   | Root-cause traversal           | #57 | merged |
+| #11   | Blast-radius traversal         | #58 | merged |
+| #12   | Traverse routes                | #59 | merged |
+| #60   | Trace stitcher (INFERRED)      | #61, #62 | merged |
+| —     | Drop manual pg span in service-b (M3 bring-along) | M5 branch | merged with M5 |
 
 ### Suggested file layout
 
@@ -173,17 +181,42 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 **End state:** Six MCP tools (`get_root_cause`, `get_blast_radius`, `get_dependencies`, `get_observed_dependencies`, `get_incident_history`, `semantic_search`) hit core over HTTP and return real results. Claude Code can connect, list six tools, and call them.
 
-**Status:** NOT_STARTED. Stubs live in `@neat/mcp` from #13.
+**Status:** VERIFIED 2026-05-01.
 
-**Issues:** #14, #15, #16, #17, #18, #19, #20 (mcp CLAUDE.md + skill.md).
+**Issues / PRs:**
+
+| Issue | Title                          | PR  | Status |
+|-------|--------------------------------|-----|--------|
+| #14   | get_root_cause                 | #64 | merged |
+| #15   | get_blast_radius               | #64 | merged |
+| #16   | get_dependencies               | #64 | merged |
+| #17   | get_observed_dependencies      | #64 | merged |
+| #18   | get_incident_history           | #64 | merged |
+| #19   | semantic_search (keyword stub) | #64 | merged |
+| #20   | mcp CLAUDE.md + skill.md       | #64 | merged |
 
 ---
 
 ## M5 — General purpose
 
-**End state:** A second failure scenario beyond the pg/PostgreSQL one. `neat init <path>` CLI works. yaml/env file extraction adds `ConfigNode` types.
+**End state:** Root-cause traversal works for any (driver, engine) pair the compat matrix knows about, not just pg/PostgreSQL. `neat init <path>` CLI builds a graph and writes a snapshot. yaml/env file extraction adds `ConfigNode`s and `CONFIGURED_BY` edges.
 
-**Status:** NOT_STARTED. The current GitHub M5 milestone (#28–#31) is dashboard work — those should be relabeled `post-mvp-enhance` per the design doc.
+**Status:** VERIFIED 2026-05-01.
+
+The GitHub M5 milestone on the issue tracker (#28–#31) is dashboard work; those issues should still be relabeled `post-mvp-enhance` per ADR-004 — they are not part of the MVP definition of M5.
+
+### M5 verification gate
+
+- [x] `getRootCause` is data-driven from `compat.json` — no driver hardcoded in `traverse.ts`.
+- [x] Unit test proves a second failure scenario: `mysql2 1.7.0` against `mysql 8` returns the matching root cause + fix recommendation.
+- [x] Demo extraction emits `config:service-b/db-config.yaml` (`ConfigNode`) plus a `CONFIGURED_BY` edge from `service:service-b`.
+- [x] `node packages/core/dist/cli.cjs init ./demo` prints a node/edge summary and the pg-vs-PG-15 incompatibility, and writes `./demo/neat-out/graph.json`.
+- [x] Workspace stays green: `npx turbo build test lint` passes (101 core tests, 17 mcp tests).
+- [x] M3 bring-along honoured: `tracedQuery` and `@opentelemetry/api` removed from `demo/service-b`.
+
+### Why these three pieces, not "a second running demo"
+
+A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the same thing the unit test proves — the compat-matrix-driven traversal works for non-pg pairs — at the cost of ~80 packages, a third Dockerfile, and another OTel wiring loop. The unit fixture is enough to demonstrate that the system is general-purpose; the live demo earns its complexity by being the one we ship to Railway in M6.
 
 ---
 
