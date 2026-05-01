@@ -1,4 +1,6 @@
 import type {
+  BlastRadiusAffectedNode,
+  BlastRadiusResult,
   DatabaseNode,
   ErrorEvent,
   GraphEdge,
@@ -20,6 +22,7 @@ const PROV_RANK: Record<ProvenanceValue, number> = {
 }
 
 const ROOT_CAUSE_MAX_DEPTH = 5
+const BLAST_RADIUS_DEFAULT_DEPTH = 10
 
 // Multiple edges between the same pair coexist by provenance (EXTRACTED next to
 // OBSERVED next to INFERRED). Traversal walks the system as the graph "sees it
@@ -31,6 +34,18 @@ function bestEdgeBySource(graph: NeatGraph, edgeIds: string[]): Map<string, Grap
     const cur = best.get(e.source)
     if (!cur || PROV_RANK[e.provenance] > PROV_RANK[cur.provenance]) {
       best.set(e.source, e)
+    }
+  }
+  return best
+}
+
+function bestEdgeByTarget(graph: NeatGraph, edgeIds: string[]): Map<string, GraphEdge> {
+  const best = new Map<string, GraphEdge>()
+  for (const id of edgeIds) {
+    const e = graph.getEdgeAttributes(id) as GraphEdge
+    const cur = best.get(e.target)
+    if (!cur || PROV_RANK[e.provenance] > PROV_RANK[cur.provenance]) {
+      best.set(e.target, e)
     }
   }
   return best
@@ -132,5 +147,56 @@ export function getRootCause(
     edgeProvenances: walk.edges.map((e) => e.provenance),
     confidence: confidenceFromMix(walk.edges),
     fixRecommendation,
+  }
+}
+
+// BFS along outgoing edges from origin. Records each reachable node with the
+// shortest distance back to origin and the provenance of the edge that brought
+// us to it. Best-provenance edge selection per pair mirrors getRootCause.
+export function getBlastRadius(
+  graph: NeatGraph,
+  nodeId: string,
+  maxDepth = BLAST_RADIUS_DEFAULT_DEPTH,
+): BlastRadiusResult {
+  if (!graph.hasNode(nodeId)) {
+    return { origin: nodeId, affectedNodes: [], totalAffected: 0 }
+  }
+
+  interface Frame {
+    nodeId: string
+    distance: number
+    edge: GraphEdge | null
+  }
+
+  const seen = new Map<string, BlastRadiusAffectedNode>()
+  const queue: Frame[] = [{ nodeId, distance: 0, edge: null }]
+  const enqueued = new Set<string>([nodeId])
+
+  while (queue.length > 0) {
+    const frame = queue.shift()!
+    if (frame.distance > 0 && frame.edge) {
+      seen.set(frame.nodeId, {
+        nodeId: frame.nodeId,
+        distance: frame.distance,
+        edgeProvenance: frame.edge.provenance,
+      })
+    }
+    if (frame.distance >= maxDepth) continue
+
+    const outgoing = bestEdgeByTarget(graph, graph.outboundEdges(frame.nodeId))
+    for (const [tgtId, edge] of outgoing) {
+      if (enqueued.has(tgtId)) continue
+      enqueued.add(tgtId)
+      queue.push({ nodeId: tgtId, distance: frame.distance + 1, edge })
+    }
+  }
+
+  const affectedNodes = [...seen.values()].sort(
+    (a, b) => a.distance - b.distance || a.nodeId.localeCompare(b.nodeId),
+  )
+  return {
+    origin: nodeId,
+    affectedNodes,
+    totalAffected: affectedNodes.length,
   }
 }
