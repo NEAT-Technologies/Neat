@@ -1,0 +1,25 @@
+{
+  "pairs": [
+    {
+      "driver": "pg",
+      "engine": "postgresql",
+      "minDriverVersion": "8.0.0",
+      "minEngineVersion": "14",
+      "reason": "PostgreSQL 14+ requires scram-sha-256 auth by default; pg < 8.0.0 only speaks md5."
+    },
+    {
+      "driver": "mysql2",
+      "engine": "mysql",
+      "minDriverVersion": "3.0.0",
+      "minEngineVersion": "8",
+      "reason": "MySQL 8 defaults to caching_sha2_password; mysql2 < 3.0.0 doesn't negotiate it."
+    },
+    {
+      "driver": "mongoose",
+      "engine": "mongodb",
+      "minDriverVersion": "7.0.0",
+      "minEngineVersion": "7",
+      "reason": "MongoDB 7 drops legacy wire-protocol opcodes that mongoose < 7.0.0 still emits."
+    }
+  ]
+}
