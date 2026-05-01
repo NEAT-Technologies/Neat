@@ -4,7 +4,7 @@
 > This repository is currently an MVP under active development.
 > Many architectural and code design decisions were intentionally optimised for development speed.
 
-[![CI](https://github.com/neat-tools/Neat/actions/workflows/copilot-swe-agent/copilot/badge.svg)](https://github.com/neat-tools/Neat/actions/workflows/copilot-swe-agent/copilot)
+[![CI](https://github.com/neat-tools/Neat/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/neat-tools/Neat/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/neat-tools/Neat)](https://github.com/neat-tools/Neat)
 [![Release](https://img.shields.io/github/v/release/neat-tools/Neat)](https://github.com/neat-tools/Neat/releases)
 [![Website](https://img.shields.io/badge/website-neat.is-black)](https://neat.is)
