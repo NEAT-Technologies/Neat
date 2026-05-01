@@ -60,9 +60,9 @@ With NEAT, you can:
 ## Quickstart
 
 ```bash
-pnpm install
-pnpm build
-pnpm test
+npm install
+npm run build
+npm test
 ```
 
 Run the development environment:
