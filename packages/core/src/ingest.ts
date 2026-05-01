@@ -59,6 +59,13 @@ function makeObservedEdgeId(type: EdgeTypeValue, source: string, target: string)
   return `${type}:OBSERVED:${source}->${target}`
 }
 
+function makeInferredEdgeId(type: EdgeTypeValue, source: string, target: string): string {
+  return `${type}:INFERRED:${source}->${target}`
+}
+
+const INFERRED_CONFIDENCE = 0.6
+const STITCH_MAX_DEPTH = 2
+
 function resolveServiceId(graph: NeatGraph, host: string): string | null {
   const direct = `service:${host}`
   if (graph.hasNode(direct)) return direct
@@ -117,6 +124,63 @@ function upsertObservedEdge(
   return { edge, created: true }
 }
 
+// When a span errors, the system is exercising its dependencies right now even
+// if some of them aren't auto-instrumented (pg 7.4.0 in the demo, see ADR-014).
+// Walk EXTRACTED edges out from the erroring service for a couple of hops and
+// promote them to INFERRED twins so traversal can prefer them over the bare
+// static edges without claiming OBSERVED-grade certainty.
+function stitchTrace(graph: NeatGraph, sourceServiceId: string, ts: string): void {
+  if (!graph.hasNode(sourceServiceId)) return
+
+  const visited = new Set<string>([sourceServiceId])
+  const queue: { nodeId: string; depth: number }[] = [{ nodeId: sourceServiceId, depth: 0 }]
+
+  while (queue.length > 0) {
+    const { nodeId, depth } = queue.shift()!
+    if (depth >= STITCH_MAX_DEPTH) continue
+
+    const outbound = graph.outboundEdges(nodeId)
+    for (const edgeId of outbound) {
+      const edge = graph.getEdgeAttributes(edgeId) as GraphEdge
+      if (edge.provenance !== Provenance.EXTRACTED) continue
+
+      upsertInferredEdge(graph, edge.type, edge.source, edge.target, ts)
+
+      if (!visited.has(edge.target)) {
+        visited.add(edge.target)
+        queue.push({ nodeId: edge.target, depth: depth + 1 })
+      }
+    }
+  }
+}
+
+function upsertInferredEdge(
+  graph: NeatGraph,
+  type: EdgeTypeValue,
+  source: string,
+  target: string,
+  ts: string,
+): void {
+  const id = makeInferredEdgeId(type, source, target)
+  if (graph.hasEdge(id)) {
+    const existing = graph.getEdgeAttributes(id) as GraphEdge
+    const updated: GraphEdge = { ...existing, lastObserved: ts }
+    graph.replaceEdgeAttributes(id, updated)
+    return
+  }
+
+  const edge: GraphEdge = {
+    id,
+    source,
+    target,
+    type,
+    provenance: Provenance.INFERRED,
+    confidence: INFERRED_CONFIDENCE,
+    lastObserved: ts,
+  }
+  graph.addEdgeWithKey(id, source, target, edge)
+}
+
 async function appendErrorEvent(ctx: IngestContext, ev: ErrorEvent): Promise<void> {
   await fs.mkdir(path.dirname(ctx.errorsPath), { recursive: true })
   await fs.appendFile(ctx.errorsPath, JSON.stringify(ev) + '\n', 'utf8')
@@ -150,6 +214,7 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
   }
 
   if (span.statusCode === 2) {
+    stitchTrace(ctx.graph, sourceId, ts)
     const ev: ErrorEvent = {
       id: `${span.traceId}:${span.spanId}`,
       timestamp: ts,
@@ -162,6 +227,8 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     await appendErrorEvent(ctx, ev)
   }
 }
+
+export { stitchTrace }
 
 export function makeSpanHandler(ctx: IngestContext): (span: ParsedSpan) => Promise<void> {
   return (span) => handleSpan(ctx, span)

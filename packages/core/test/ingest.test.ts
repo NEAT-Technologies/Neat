@@ -15,6 +15,7 @@ import {
   handleSpan,
   markStaleEdges,
   readErrorEvents,
+  stitchTrace,
   type IngestContext,
 } from '../src/ingest.js'
 import type { ParsedSpan } from '../src/otel.js'
@@ -43,6 +44,33 @@ function newGraph(): NeatGraph {
     compatibleDrivers: [],
   })
   return g
+}
+
+function addExtractedEdges(g: NeatGraph): void {
+  g.addEdgeWithKey(
+    'CALLS:service:service-a->service:service-b',
+    'service:service-a',
+    'service:service-b',
+    {
+      id: 'CALLS:service:service-a->service:service-b',
+      source: 'service:service-a',
+      target: 'service:service-b',
+      type: EdgeType.CALLS,
+      provenance: Provenance.EXTRACTED,
+    },
+  )
+  g.addEdgeWithKey(
+    'CONNECTS_TO:service:service-b->database:payments-db',
+    'service:service-b',
+    'database:payments-db',
+    {
+      id: 'CONNECTS_TO:service:service-b->database:payments-db',
+      source: 'service:service-b',
+      target: 'database:payments-db',
+      type: EdgeType.CONNECTS_TO,
+      provenance: Provenance.EXTRACTED,
+    },
+  )
 }
 
 function clientHttpSpan(overrides: Partial<ParsedSpan> = {}): ParsedSpan {
@@ -282,6 +310,135 @@ describe('readErrorEvents', () => {
   it('returns [] when the file does not exist yet', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-ingest-read-'))
     expect(await readErrorEvents(path.join(tmpDir, 'absent.ndjson'))).toEqual([])
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+})
+
+describe('stitchTrace', () => {
+  it('writes INFERRED twins of EXTRACTED outgoing edges within depth 2', () => {
+    const graph = newGraph()
+    addExtractedEdges(graph)
+    stitchTrace(graph, 'service:service-a', '2026-05-01T00:00:00.000Z')
+
+    const callsId = `${EdgeType.CALLS}:INFERRED:service:service-a->service:service-b`
+    const connectsId = `${EdgeType.CONNECTS_TO}:INFERRED:service:service-b->database:payments-db`
+    expect(graph.hasEdge(callsId)).toBe(true)
+    expect(graph.hasEdge(connectsId)).toBe(true)
+
+    const calls = graph.getEdgeAttributes(callsId) as GraphEdge
+    expect(calls.provenance).toBe(Provenance.INFERRED)
+    expect(calls.confidence).toBe(0.6)
+    expect(calls.lastObserved).toBe('2026-05-01T00:00:00.000Z')
+    const connects = graph.getEdgeAttributes(connectsId) as GraphEdge
+    expect(connects.confidence).toBe(0.6)
+  })
+
+  it('refreshes lastObserved on re-stitch without duplicating the edge', () => {
+    const graph = newGraph()
+    addExtractedEdges(graph)
+    stitchTrace(graph, 'service:service-b', '2026-05-01T00:00:00.000Z')
+    stitchTrace(graph, 'service:service-b', '2026-05-01T01:00:00.000Z')
+
+    const id = `${EdgeType.CONNECTS_TO}:INFERRED:service:service-b->database:payments-db`
+    const edge = graph.getEdgeAttributes(id) as GraphEdge
+    expect(edge.lastObserved).toBe('2026-05-01T01:00:00.000Z')
+
+    let count = 0
+    graph.forEachEdge((k) => {
+      if (k === id) count++
+    })
+    expect(count).toBe(1)
+  })
+
+  it('does not promote OBSERVED edges to INFERRED twins', () => {
+    const graph = newGraph()
+    graph.addEdgeWithKey(
+      'CALLS:OBSERVED:service:service-a->service:service-b',
+      'service:service-a',
+      'service:service-b',
+      {
+        id: 'CALLS:OBSERVED:service:service-a->service:service-b',
+        source: 'service:service-a',
+        target: 'service:service-b',
+        type: EdgeType.CALLS,
+        provenance: Provenance.OBSERVED,
+        confidence: 1.0,
+        lastObserved: '2026-05-01T00:00:00.000Z',
+        callCount: 5,
+      },
+    )
+    stitchTrace(graph, 'service:service-a', '2026-05-01T00:00:00.000Z')
+
+    expect(
+      graph.hasEdge(`${EdgeType.CALLS}:INFERRED:service:service-a->service:service-b`),
+    ).toBe(false)
+  })
+
+  it('respects the depth-2 ceiling', () => {
+    const graph = newGraph()
+    graph.addNode('service:service-c', {
+      id: 'service:service-c',
+      type: NodeType.ServiceNode,
+      name: 'service-c',
+      language: 'javascript',
+    })
+    addExtractedEdges(graph)
+    // service-b -> service-c extends the chain to depth 3 from service-a.
+    graph.addEdgeWithKey(
+      'CALLS:service:service-b->service:service-c',
+      'service:service-b',
+      'service:service-c',
+      {
+        id: 'CALLS:service:service-b->service:service-c',
+        source: 'service:service-b',
+        target: 'service:service-c',
+        type: EdgeType.CALLS,
+        provenance: Provenance.EXTRACTED,
+      },
+    )
+    stitchTrace(graph, 'service:service-a', '2026-05-01T00:00:00.000Z')
+
+    // Depth 1: service-a -> service-b. Depth 2: service-b -> service-c, service-b -> payments-db.
+    // Anything past service-b's outbound is depth >= 3 and shouldn't be stitched.
+    expect(
+      graph.hasEdge(`${EdgeType.CALLS}:INFERRED:service:service-a->service:service-b`),
+    ).toBe(true)
+    expect(
+      graph.hasEdge(`${EdgeType.CALLS}:INFERRED:service:service-b->service:service-c`),
+    ).toBe(true)
+    expect(
+      graph.hasEdge(`${EdgeType.CONNECTS_TO}:INFERRED:service:service-b->database:payments-db`),
+    ).toBe(true)
+  })
+
+  it('is a no-op for an unknown source service', () => {
+    const graph = newGraph()
+    addExtractedEdges(graph)
+    stitchTrace(graph, 'service:does-not-exist', '2026-05-01T00:00:00.000Z')
+
+    let inferred = 0
+    graph.forEachEdge((k) => {
+      if (k.includes(':INFERRED:')) inferred++
+    })
+    expect(inferred).toBe(0)
+  })
+
+  it('runs from handleSpan when a span has statusCode === 2', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-stitch-'))
+    const graph = newGraph()
+    addExtractedEdges(graph)
+    const ctx: IngestContext = {
+      graph,
+      errorsPath: path.join(tmpDir, 'errors.ndjson'),
+    }
+    await handleSpan(
+      ctx,
+      dbSpan({ statusCode: 2, errorMessage: 'SASL: SCRAM-SERVER-FIRST-MESSAGE' }),
+    )
+
+    expect(
+      graph.hasEdge(`${EdgeType.CONNECTS_TO}:INFERRED:service:service-b->database:payments-db`),
+    ).toBe(true)
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 })
