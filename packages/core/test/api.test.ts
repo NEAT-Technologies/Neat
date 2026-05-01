@@ -117,4 +117,88 @@ describe('REST API (fastify.inject)', () => {
     const res = await app.inject({ method: 'POST', url: '/graph/scan' })
     expect(res.statusCode).toBe(409)
   })
+
+  it('GET /traverse/root-cause/:nodeId returns the demo pg incompatibility', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/traverse/root-cause/database:payments-db',
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.rootCauseNode).toBe('service:service-b')
+    expect(body.traversalPath).toEqual([
+      'database:payments-db',
+      'service:service-b',
+      'service:service-a',
+    ])
+    expect(body.confidence).toBe(0.5)
+    expect(body.fixRecommendation).toMatch(/8\.0\.0/)
+  })
+
+  it('GET /traverse/root-cause/:nodeId returns 404 for an unknown node', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/traverse/root-cause/database:nope',
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('GET /traverse/root-cause/:nodeId returns 404 when no root cause is found', async () => {
+    // service:service-a is a service node, not a database — getRootCause bails out.
+    const res = await app.inject({
+      method: 'GET',
+      url: '/traverse/root-cause/service:service-a',
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('GET /traverse/blast-radius/:nodeId returns downstream nodes with distances', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/traverse/blast-radius/service:service-a',
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.origin).toBe('service:service-a')
+    expect(body.totalAffected).toBe(2)
+    expect(body.affectedNodes).toEqual([
+      {
+        nodeId: 'service:service-b',
+        distance: 1,
+        edgeProvenance: 'EXTRACTED',
+      },
+      {
+        nodeId: 'database:payments-db',
+        distance: 2,
+        edgeProvenance: 'EXTRACTED',
+      },
+    ])
+  })
+
+  it('GET /traverse/blast-radius/:nodeId returns 404 for an unknown node', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/traverse/blast-radius/service:nope',
+    })
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('GET /traverse/blast-radius/:nodeId rejects a negative depth', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/traverse/blast-radius/service:service-a?depth=-1',
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('GET /traverse/blast-radius/:nodeId honours a custom depth', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/traverse/blast-radius/service:service-a?depth=1',
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.totalAffected).toBe(1)
+    expect(body.affectedNodes[0].nodeId).toBe('service:service-b')
+  })
 })
