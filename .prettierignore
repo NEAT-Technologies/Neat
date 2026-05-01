@@ -3,4 +3,4 @@ dist
 .next
 .turbo
 neat-out
-pnpm-lock.yaml
+package-lock.json
