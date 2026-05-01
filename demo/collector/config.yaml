@@ -15,8 +15,12 @@ processors:
     timeout: 1s
 
 exporters:
-  otlp/neat:
+  # Forward to neat-core's receiver as JSON over HTTP. Protobuf is the OTLP
+  # default, but JSON keeps core's receiver (#7) free of a proto decoder while
+  # the wire shape is still settling.
+  otlphttp/neat:
     endpoint: http://neat-core:4318
+    encoding: json
     tls:
       insecure: true
   logging:
@@ -27,4 +31,4 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/neat, logging]
+      exporters: [otlphttp/neat, logging]
