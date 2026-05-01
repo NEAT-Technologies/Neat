@@ -21,6 +21,10 @@ exporters:
   otlphttp/neat:
     endpoint: http://neat-core:4318
     encoding: json
+    # otlphttp gzip-compresses by default; core's Fastify receiver only does
+    # plain JSON, so spell out "no compression" here. Cheaper to keep the
+    # receiver simple than to plumb gzip handling through it.
+    compression: none
     tls:
       insecure: true
   logging:
