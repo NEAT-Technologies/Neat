@@ -12,36 +12,39 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-02. **v0.1.2-α is shipped on `main`.** Issues #67, #68, #80, and the M6 deploy issue #25 are closed; PRs #84, #85, #86, #87 merged. Workspace is green at HEAD: `npx turbo build test lint` clean, 104 core / 25 types / 17 mcp tests passing.
+**Last session ended:** 2026-05-02. **v0.1.2-β is shipped on `main`.** All five β PRs merged in one sequence (#89/#90/#91/#92/#93). Workspace is green at HEAD: `npx turbo build test lint` clean, 132 core / 25 types / 17 mcp tests passing. Issues #69, #70, #71, #72, #73 still open — they get closed by hand after you spot-verify the merged work.
 
-**Next session is v0.1.2-β — extraction breadth.** The release goal is dropping the Node-only assumption: by the end of v0.1.2 NEAT can extract from polyglot, multi-workspace, multi-DB, infra-aware codebases. β is the foundational chunk — γ and δ have very little to act on until β has landed.
+**Next session is v0.1.2-γ — graph correctness.** Confidence stops being a constant, compat grows beyond driver/engine pairs, FRONTIER nodes get populated, snapshot diffing lands. β gave γ a richer graph to reason about; γ's job is to make the reasoning sharper.
 
-### β work order (within v0.1.2-β)
+### γ work order (within v0.1.2-γ)
 
-Branch each issue off the latest `main`. Keep PRs small; later β issues build on the directory layout earlier ones produce.
+Branch each issue off the latest `main`. Keep PRs small; #76 will likely touch the edge schema, so co-ordinate snapshot bumps with #74.
 
-1. **#69 — recursive service discovery + workspaces.** Today `discoverServices` only scans immediate subdirectories of `scanPath`. Workspaces (npm/pnpm/yarn workspaces, monorepo nesting, multi-repo umbrellas) want a recursive walk plus a `package.json#workspaces` reader. This is foundational — #70/#71/#72 all assume the discovery walk reaches every service. Lives in `packages/core/src/extract/services.ts`.
-2. **#70 — generalised DB discovery** (.env, ORM configs, docker-compose). Drop the hardcoded `db-config.yaml` path; replace with a per-source-type module under `extract/databases/` (env vars, sequelize/prisma/typeorm/mongoose configs, docker-compose `depends_on`). Each source emits a `DatabaseNode` candidate; merge by host/port. Don't read `.env` *contents* unless the value is a connection string and the key is conventional (`DATABASE_URL`, `PG*`, `MONGO*`) — ADR-016 still applies.
-3. **#71 — calls beyond HTTP URL substrings** (gRPC, Kafka, Redis, AWS SDK). The current `callsFromSource` in `extract/calls.ts` only recognises `//host` and `//host:port` patterns. Each new transport gets its own detector module — `extract/calls/grpc.ts`, `extract/calls/kafka.ts`, etc. Edge type stays `CALLS`; consider adding a `transport` attribute to `GraphEdge` (snapshot bump).
-4. **#72 — Python service extraction.** New `extract/services/python.ts` module. Discovery looks for `pyproject.toml` + `requirements.txt` (no package.json). Use `tree-sitter-python` for the call walk. Add `language: 'python'` to `ServiceNode`. NEAT's toolchain stays TypeScript — we read Python source, we don't run Python.
-5. **#73 — infrastructure extraction** (docker-compose, Dockerfile, Terraform, k8s). Adds `infra:` node type prefix (reserved by ADR-010) and likely new edge types (`DEPLOYS`, `RUNS_IN`). Touches `@neat/types` — co-ordinate snapshot schema bump with #74 in γ.
+1. **#75 — OBSERVED-edge attribution + FRONTIER population.** OBSERVED edges record nothing about *who* drove the traffic that produced them; FRONTIER nodes are reserved in the enum but never written. Both are pre-requisites for the rest of γ. Lives mostly in `packages/core/src/ingest.ts` (the trace stitcher knows when it's filling a hole — that's the FRONTIER signal).
+2. **#77 — snapshot diffing endpoint + MCP tool.** `GET /graph/diff?since=<timestamp>` returns added/removed/changed nodes + edges relative to the named snapshot. Stand-alone — won't conflict with the schema work. The MCP side is a thin wrapper, parallel work.
+3. **#74 — compat matrix beyond drivers** (Node engines, package conflicts, deprecated APIs). The matrix shape grows: today it's `{driver, engine, minDriverVersion, minEngineVersion}`; γ adds `{kind: "engine"|"package-conflict"|"deprecated-api"}` so traversal can ask "what kind of incompatibility?" Touches `compat.json` schema + `compat.ts`. Snapshot stays compatible if we keep all new fields optional.
+4. **#76 — per-edge confidence signals** (span count, error rate, recency). Confidence today is one of `1.0 | 0.7 | 0.5 | 0.3`. γ replaces that with a continuous score derived from `callCount`, error rate, and `lastObserved` recency. The math lives in `packages/core/src/traverse.ts#confidenceFromMix`. Edge schema gains a few optional numeric fields — co-ordinate the snapshot bump with #74.
+5. **#78 — per-edge-type stale thresholds + stale event log.** Today `markStaleEdges` uses one global threshold (24h). γ moves that to a per-edge-type config (`CALLS` stale faster than `CONNECTS_TO`, etc.) and writes a stale-event log so consumers can replay transitions. New ADR likely.
 
-#69 first. After that, #70/#71/#72 can run in parallel across sessions; #73 is the schema-touching one and benefits from the others' signals being in the graph.
+#75 + #77 first, in parallel — neither depends on the other and neither touches the schema. #74 next; #76 third (touches edge schema — co-ordinate snapshot bump with #74); #78 last.
 
 ### M6 manual verification — DEFERRED TO POST-δ
 
-The two unchecked manual gates (live Railway deploy + Claude Code end-to-end against the deployed core) wait until α/β/γ/δ have all merged. Reasoning: a deploy after α only re-proves what `main` already does. A deploy after δ proves the v0.1.2 promise — that NEAT works on a polyglot codebase, on someone else's server, end to end. See PR #87 + the M6 section below for the full rationale.
+The two unchecked manual gates (live Railway deploy + Claude Code end-to-end against the deployed core) wait until γ + δ have also merged. Reasoning hasn't changed — see PR #87 + the M6 section below.
 
-### Gotchas a fresh β session will benefit from
+### Gotchas a fresh γ session will benefit from
 
-- **The α layout is already polyglot-ready.** `packages/core/src/extract/` has `services.ts`, `databases.ts`, `configs.ts`, `calls.ts`, `shared.ts`, `index.ts`. Each β issue extends one or more of these, or splits one further (`services.ts` → `services/{node,python}.ts` for #72). Don't fold logic back into `extract.ts` — that file is a one-line re-export shim now and should stay that way.
-- **`extract/index.ts` is the orchestrator and is 27 lines.** Each phase has its own `addXxx(graph, services, ...)` function that returns `{ nodesAdded, edgesAdded }`. Add a phase by writing the function and one line in the orchestrator, not by editing the orchestrator's body.
-- **Snapshot schema is at v2.** Any β change that adds attributes to existing node/edge types is forward-compatible (new optional Zod fields). Anything that *renames* or *restructures* (#73's `infra:` prefix is fine; renaming `CALLS` to `INVOKES` would not be) bumps to v3 — add a v2→v3 migration in `loadGraphFromDisk` per ADR-019's pattern.
-- **Compat is data-driven (ADR-015).** Driver/engine pairs live in `compat.json`. Don't add per-driver code paths; extend the matrix. #74 in γ generalises compat further; β work that adds new driver awareness should add JSON entries, not TypeScript branches.
-- **`.env` records existence, not contents (ADR-016).** #70 reads `DATABASE_URL` and `PG*`-style keys from `.env` for *DB discovery* but does not snapshot the values into `ConfigNode.attributes`. The contents go into a transient `DbConfig` for emission of the `DatabaseNode`, then are discarded. This is the security boundary; don't blur it.
-- **OTLP/gRPC is opt-in.** `NEAT_OTLP_GRPC=true` activates the listener (port `:4317`, override via `NEAT_OTLP_GRPC_PORT`). Default deployments are HTTP-only on `:4318` — β shouldn't change that default.
-- **Demo stays as it is.** β doesn't need to add Python/Kafka/Terraform services to `demo/`. Synthetic test fixtures under `packages/core/test/fixtures/` are enough to prove each new extractor; the demo's job is to stay the canonical pg-vs-PG-15 failure for the headline narrative.
-- **Manual pg span in service-b is gone.** Removed during M5 once the trace stitcher started producing INFERRED `CONNECTS_TO` edges (ADR-014). Don't reintroduce a manual span anywhere.
+- **β shipped a much richer graph.** `extract/` now has subdirs for every phase: `databases/{db-config-yaml,dotenv,prisma,drizzle,knex,ormconfig,typeorm,sequelize,docker-compose}`, `calls/{http,kafka,redis,aws,grpc}`, `infra/{docker-compose,dockerfile,terraform,k8s}`. Service discovery is recursive + workspace-aware + Python-capable. Same `extract/index.ts` orchestrator pattern — five phases, each returns `{nodesAdded, edgesAdded}`. Don't refactor that.
+- **`extract/index.ts` is now a 5-phase orchestrator.** Phases: services → databases → configs → calls → infra. Adding a γ phase (e.g. confidence backfill) means writing the function and one line in the orchestrator.
+- **Snapshot schema is still at v2.** Every β change was additive. Adding optional fields to existing schemas stays forward-compatible. Renaming or restructuring (e.g. flattening `incompatibilities`, repurposing `provenance`) bumps to v3 — add a v2→v3 migration in `loadGraphFromDisk` per ADR-019's pattern.
+- **Compat is data-driven (ADR-015).** Driver/engine pairs live in `compat.json`. #74 generalises this — new `kind` field on each pair, plus probably new top-level shapes. Don't add per-kind code paths; let the matrix carry the data.
+- **`.env` still records existence, not contents (ADR-016).** β's #70 reads `DATABASE_URL` etc. into transient `DbConfig`s for DB discovery — values never reach a `ConfigNode`. Don't blur this in γ; if #76's confidence math wants per-edge metadata, attach it to the edge, not to a config.
+- **Edge evidence already exists.** #71 added optional `evidence: { file, line, snippet }` to `GraphEdgeSchema`. γ can extend it (e.g. `firstObservedAt`, `errorRate`) without restructuring.
+- **EdgeType enum has 7 values now** (CALLS, DEPENDS_ON, CONNECTS_TO, CONFIGURED_BY, PUBLISHES_TO, CONSUMES_FROM, RUNS_ON). NodeType still 4 (the `infra:<kind>:<name>` taxonomy lives inside `InfraNode.kind`, not as new top-level node types — see #73's commit). Both `packages/types/test/schemas.test.ts` and any tests counting types will need an update if you grow either.
+- **Demo extraction picks up Dockerfiles now.** `service:service-a` and `service:service-b` each emit a `RUNS_ON` edge to `infra:container-image:node:20-bookworm-slim`. Blast-radius from `service:service-a` is now 4 deep (was 3) and 2 at depth 1 (was 1). The api tests already reflect this — don't try to "fix" them back to the old numbers.
+- **OTLP/gRPC is opt-in.** `NEAT_OTLP_GRPC=true` activates the listener (port `:4317`, override via `NEAT_OTLP_GRPC_PORT`). Default deployments are HTTP-only on `:4318`.
+- **Manual pg span in service-b is gone.** Removed during M5; the trace stitcher fills the gap. Don't reintroduce one.
+- **Branching convention unchanged.** One issue → one branch `<num>-<slug>` → one PR (`Refs #N`, not `Closes #N`). Plain-English commits, no `Co-Authored-By: Claude`. Branch off the latest `main` — γ PRs stack on β's merged work, not on each other.
 
 ---
 
@@ -269,25 +272,25 @@ A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the sam
 
 **End state:** the graph stops being JS-and-pg-shaped. Recursive workspace discovery, generalised DB discovery beyond `db-config.yaml`, calls beyond HTTP URL substrings, Python service extraction, infrastructure files as first-class nodes. NEAT can `init` a polyglot multi-service repo and produce a credible graph.
 
-**Status:** NOT_STARTED.
+**Status:** VERIFIED 2026-05-02.
 
 **Issues / PRs:**
 
 | Issue | Title                                                       | PR  | Status |
 |-------|-------------------------------------------------------------|-----|--------|
-| #69   | Recursive service discovery with workspace support          | —   | open |
-| #70   | Generalised database discovery (.env, ORM configs, docker-compose) | — | open |
-| #71   | Call extraction beyond HTTP URL substrings (gRPC, Kafka, Redis, AWS SDK) | — | open |
-| #72   | Python service extraction                                   | —   | open |
-| #73   | Infrastructure extraction (docker-compose, Dockerfile, Terraform, k8s) | — | open |
+| #69   | Recursive service discovery with workspace support          | #89 | merged |
+| #70   | Generalised database discovery (.env, ORM configs, docker-compose) | #90 | merged |
+| #71   | Call extraction beyond HTTP URL substrings (gRPC, Kafka, Redis, AWS SDK) | #91 | merged |
+| #72   | Python service extraction                                   | #92 | merged |
+| #73   | Infrastructure extraction (docker-compose, Dockerfile, Terraform, k8s) | #93 | merged |
 
-### β verification gate (proposed)
+### β verification gate
 
-- [ ] Demo extraction unchanged: pg-vs-PG-15 demo still produces 4 nodes / 3 edges / one incompatibility.
-- [ ] A synthetic multi-language fixture under `packages/core/test/fixtures/polyglot/` extracts JS + Python services with their respective dependency manifests, plus a docker-compose'd Redis broker, plus an `infra:` node for the docker-compose file itself. Assertions live in per-source-type test files.
-- [ ] `.env` files contribute to DB discovery without their values landing in any snapshot. `ConfigNode.attributes` does not gain a `contents` field.
-- [ ] Snapshot schema bumps if `@neat/types` shape changes (most likely from #73). Migration path follows ADR-019's pattern.
-- [ ] One new ADR per non-obvious design choice (#72's Python toolchain decision is the likely candidate; #73's `infra:` taxonomy may want one too).
+- [x] Demo extraction still produces the headline pg-vs-PG-15 incompatibility — service-b / pg 7.4.0 / postgresql 15. Node and edge counts grew (Dockerfile parsing adds an `infra:container-image:node:20-bookworm-slim` node + RUNS_ON edges from each service) but every M1 assertion still holds.
+- [x] Polyglot fixture lives at `packages/core/test/fixtures/python/` (Python services with `requirements.txt` + `pyproject.toml`) plus per-extractor fixtures under `fixtures/db/`, `fixtures/calls/`, `fixtures/infra/`. Each is asserted in its own test file.
+- [x] `.env` parsing reads `DATABASE_URL` & friends into transient `DbConfig`s only; `ConfigNode` shape is unchanged. ADR-016 holds.
+- [x] Snapshot stays at v2. Every schema change was additive: `EdgeType` grew `PUBLISHES_TO` / `CONSUMES_FROM` / `RUNS_ON`; `GraphEdgeSchema` got optional `evidence`; `InfraNodeSchema` got optional `kind`. No migration needed.
+- [x] Workspace stays green: `npx turbo build test lint` clean (132 core / 25 types / 17 mcp tests).
 
 ---
 

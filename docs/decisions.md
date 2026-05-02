@@ -262,3 +262,43 @@ The OTLP/gRPC receiver lives in `packages/core/src/otel-grpc.ts` and is only sta
 **Why share `parseOtlpRequest`.** The HTTP and gRPC paths produce identical `ParsedSpan`s downstream. Anything past the receiver — `handleSpan`, `stitchTrace`, `upsertObservedEdge`, `markStaleEdges` — is transport-agnostic and stays that way. If the wire formats drift in a future OTLP rev, the divergence is contained in the receivers.
 
 **When to revisit.** If a third transport lands (gRPC over Unix socket? OTLP/Arrow?), the reshape step starts looking like an interface rather than a function, and we extract a `Decoded → ParsedSpan[]` adapter type. Until then, two transports calling one decoder is the simpler shape.
+
+---
+
+## ADR-021 — Python extraction reads source via tree-sitter; NEAT's toolchain stays Node-only
+
+**Date:** 2026-05-02
+**Status:** Active.
+
+v0.1.2-β #72 added Python service extraction. NEAT now reads `pyproject.toml`, `requirements.txt`, and Python source files (via `tree-sitter-python`), but the runtime stays pure Node 20 + TypeScript. No Python interpreter, no virtualenv, no `pip install`.
+
+**Why tree-sitter, not the Python AST.** The actual Python `ast` module is the canonical parser, but using it would require shelling out to a Python interpreter (or pulling Python into the runtime). tree-sitter's Python grammar covers the surface area we care about — string literals for URL extraction, top-level `import` statements if we ever need them — and runs in-process via the same native binding pattern we already use for JavaScript. The cost is: tree-sitter-python doesn't model semantic Python (no type info, no scope analysis), but extraction never needed those.
+
+**Why TOML via `smol-toml`.** `pyproject.toml` is the modern Python manifest and we need to read both PEP 621 `[project]` tables and the older Poetry `[tool.poetry.dependencies]` shape. `smol-toml` is a small, dep-free, spec-compliant parser. The alternative — regex — works for trivial cases but breaks on multi-line arrays and quoted keys; the dep is worth it.
+
+**Why deps live in the same `dependencies` map.** `ServiceNode.dependencies` is `Record<string, string>` regardless of language. Python deps from `requirements.txt` (`name==version`) and pyproject (`name = "version"` or `["name==version", ...]`) get normalised into the same map. The compat matrix runs against both — `pg` checks JS services, `psycopg2` checks Python services — without per-language branching. `language: "javascript" | "python"` on the node is metadata, not a dispatch key.
+
+**Where this could go wrong.** Unpinned deps (`requests>=2.0`) or non-`==` constraints record an empty version. The semver coercer in `compat.ts` already treats unparseable versions as "can't reason → don't flag," so we under-flag rather than over-flag. If γ's #74 wants stricter Python compat, the parser shape stays — only the matching logic changes.
+
+**When to revisit.** When a third language lands (Go, Rust). At that point the per-language detector gets its own subdir like `extract/databases/` already does, and `services.ts` becomes a dispatcher. Two languages don't justify that split yet.
+
+---
+
+## ADR-022 — `infra:` taxonomy: one node type, kind-segmented ids
+
+**Date:** 2026-05-02
+**Status:** Active.
+
+v0.1.2-β #73 populated `InfraNode` from docker-compose, Dockerfile, Terraform, and k8s. Every infra node uses the same id format: `infra:<kind>:<name>` (e.g. `infra:postgres:postgres`, `infra:container-image:node:20`, `infra:aws_s3_bucket:uploads`, `infra:k8s-deployment:default/web`).
+
+**Why one node type, not many.** ADR-010 reserved the `infra:` prefix for a single `InfraNode` discriminant. The alternative — adding `Pg11Node`, `RedisNode`, `S3BucketNode`, etc. as separate top-level Zod variants — would duplicate the `id`/`name`/`provider` fields N times and force every traversal call site to know which variant to expect. A single `InfraNode` with an optional `kind: string` keeps `GraphNodeSchema`'s discriminated union at four members and lets sub-typing live in one place.
+
+**Why `kind` is a free string, not an enum.** New infra sources land regularly (the four in #73 already span four different vocabularies — `postgres` from compose, `container-image` from Dockerfiles, `aws_s3_bucket` from Terraform, `k8s-deployment` from k8s). Locking `kind` to an enum would either (a) become stale instantly or (b) force every detector to register a new enum value before it can ship. A free string lets each detector pick its own naming, and the id format keeps it deterministic.
+
+**Why the id segments matter.** Three pieces, in order: the prefix (`infra:`) so traversal can dispatch; the kind so consumers can group similar nodes (`get_dependencies` could filter "show only k8s objects"); the name so two services that both depend on `infra:postgres:postgres` collapse to the same node. ADR-010's "typed prefix joined to a stable name" generalises naturally — kind is just a sub-type within the prefix.
+
+**Why no `DEPLOYS` / `RUNS_IN` edge types yet.** The issue floated those names. `RUNS_ON` (service → image) covers the Dockerfile case clearly; `DEPENDS_ON` (already in the enum) covers compose's `depends_on:` lists. Neither k8s nor Terraform needed new edge types in this pass — they emit cataloguing nodes only. If a later feature wants service-to-Deployment wiring, that's a new edge then, not now.
+
+**Coexistence with DatabaseNode.** A docker-compose declaring Postgres produces both an `infra:postgres:<compose-name>` (from #73) and possibly a `database:<host>` (if a service's #70 parser reads that compose). They describe the same physical thing from different perspectives — the compose topology vs. the service's connection target — and they coexist. γ's #75 (FRONTIER population) is the natural place to deduplicate if it ever becomes a problem; right now it isn't.
+
+**When to revisit.** If a `kind` value's vocabulary needs validation (e.g. compat reasoning that says "if `kind === 'postgres'` then..."), promote it to a constant set. The schema can stay a free string and just typecheck the values that matter.
