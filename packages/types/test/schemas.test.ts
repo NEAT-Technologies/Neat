@@ -4,6 +4,7 @@ import {
   DatabaseNodeSchema,
   ConfigNodeSchema,
   InfraNodeSchema,
+  FrontierNodeSchema,
   GraphEdgeSchema,
   ProvenanceSchema,
   EdgeTypeSchema,
@@ -22,8 +23,8 @@ describe('runtime constants', () => {
   it('EdgeType has 7 values', () => {
     expect(Object.values(EdgeType)).toHaveLength(7)
   })
-  it('NodeType has 4 values', () => {
-    expect(Object.values(NodeType)).toHaveLength(4)
+  it('NodeType has 5 values', () => {
+    expect(Object.values(NodeType)).toHaveLength(5)
   })
 })
 
@@ -96,6 +97,29 @@ describe('InfraNodeSchema', () => {
       region: 'us-east-1',
     }
     expect(InfraNodeSchema.parse(node)).toEqual(node)
+  })
+})
+
+describe('FrontierNodeSchema', () => {
+  it('accepts a valid FrontierNode', () => {
+    const node = {
+      id: 'frontier:payments-api.cluster.local',
+      type: 'FrontierNode' as const,
+      name: 'payments-api.cluster.local',
+      host: 'payments-api.cluster.local',
+    }
+    expect(FrontierNodeSchema.parse(node)).toEqual(node)
+  })
+  it('accepts firstObserved/lastObserved timestamps', () => {
+    const node = {
+      id: 'frontier:x',
+      type: 'FrontierNode' as const,
+      name: 'x',
+      host: 'x',
+      firstObserved: new Date().toISOString(),
+      lastObserved: new Date().toISOString(),
+    }
+    expect(FrontierNodeSchema.parse(node)).toEqual(node)
   })
 })
 

@@ -302,3 +302,24 @@ v0.1.2-β #73 populated `InfraNode` from docker-compose, Dockerfile, Terraform, 
 **Coexistence with DatabaseNode.** A docker-compose declaring Postgres produces both an `infra:postgres:<compose-name>` (from #73) and possibly a `database:<host>` (if a service's #70 parser reads that compose). They describe the same physical thing from different perspectives — the compose topology vs. the service's connection target — and they coexist. γ's #75 (FRONTIER population) is the natural place to deduplicate if it ever becomes a problem; right now it isn't.
 
 **When to revisit.** If a `kind` value's vocabulary needs validation (e.g. compat reasoning that says "if `kind === 'postgres'` then..."), promote it to a constant set. The schema can stay a free string and just typecheck the values that matter.
+
+---
+
+## ADR-023 — `FrontierNode` as a fifth top-level node type
+
+**Date:** 2026-05-02
+**Status:** Active.
+
+v0.1.2-γ #75 added a fifth member to `GraphNodeSchema`: `FrontierNode`. A frontier node is the placeholder ingest writes when an OTel span peer (`server.address`, `net.peer.name`, etc.) doesn't resolve to any known service. The id format is `frontier:<host>`. A later extraction round picks up the host as an alias on a real service, `promoteFrontierNodes` re-links the edges, and the placeholder goes away.
+
+**Why a new node type, not an `InfraNode` kind.** ADR-022 deliberately kept the discriminated union at four. Frontier nodes broke that ceiling because they aren't classified by *what they are* — they're classified by *what they don't yet know*. They have a distinct lifecycle (placeholder → promoted → deleted), they carry temporal fields (`firstObserved`, `lastObserved`) that don't make sense on infra catalog entries, and a frontier node is supposed to disappear once extraction catches up. Cramming that into `InfraNode.kind = "frontier"` would have meant teaching every consumer of `InfraNode` to filter out a special case, and would have leaked frontier semantics into a node type whose whole job is to be permanent.
+
+**Why a top-level type rather than a flag on `ServiceNode`.** A frontier doesn't have a language, dependencies, or a repo path — none of `ServiceNode`'s required fields apply. We considered making `ServiceNodeSchema` looser, but the schema's job is to fail loudly when something pretending to be a service isn't one. Promotion *converts* a frontier into the matching real service by re-linking edges and dropping the placeholder; the two never coexist as the same node.
+
+**Why provenance `FRONTIER` already existed but the node type didn't.** The provenance enum has carried `FRONTIER` since M0 (it shipped in `@neat/types`'s constants). The original intent was always "we observed something but can't fully attribute it." γ #75 finally wired up the producer (ingest) and the consumer (extract's promotion phase). The provenance is set on the edge between the source service and the placeholder; once promoted, those edges flip to `OBSERVED` because the call certainty is real — only the target identity was the unknown.
+
+**Aliases live on `ServiceNode`, not as a new edge type.** The alternative was an explicit `ALIASED_AS` edge from a service to each hostname. That would have grown the edge count linearly with cluster-DNS variants (`<name>`, `<name>.<ns>`, `<name>.<ns>.svc`, `<name>.<ns>.svc.cluster.local`) for every service every k8s manifest mentions. Storing them as a `string[]` on the service keeps the resolve path one map lookup and keeps the graph topology focused on real relationships.
+
+**Where promotion runs.** At the end of every `extractFromDirectory` pass, after services + databases + configs + calls + infra. Promotion needs the full alias state from the latest extraction round, so it has to run last. Re-running ingest doesn't trigger promotion directly — it just keeps pinning frontier `lastObserved` — which is fine because the next extraction round will sweep them up.
+
+**When to revisit.** If frontier nodes start sticking around (a host that never resolves no matter how many rounds pass), they become a UX signal: "you have unknown peers." That's a γ #76 concern (per-edge confidence) or δ ergonomics, not this ADR. The placeholder will continue to do its job until then.

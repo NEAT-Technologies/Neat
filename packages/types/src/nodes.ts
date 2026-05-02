@@ -16,6 +16,11 @@ export const ServiceNodeSchema = z.object({
   dbConnectionTarget: z.string().optional(),
   repoPath: z.string().optional(),
   dependencies: z.record(z.string(), z.string()).optional(),
+  // Hostnames OTel spans might mention for this service: compose service
+  // names, k8s metadata.name (and the cluster-DNS variants), Dockerfile
+  // labels, etc. resolveServiceId in ingest.ts checks these before falling
+  // back to a FRONTIER placeholder.
+  aliases: z.array(z.string()).optional(),
   incompatibilities: z
     .array(
       z.object({
@@ -61,10 +66,24 @@ export const InfraNodeSchema = z.object({
 })
 export type InfraNode = z.infer<typeof InfraNodeSchema>
 
+// Placeholder for a span peer the ingest layer couldn't resolve to a known
+// ServiceNode. Lives at id `frontier:<host>` and gets replaced by the real
+// service once a later extraction round records that host as an alias.
+export const FrontierNodeSchema = z.object({
+  id: z.string(),
+  type: z.literal(NodeType.FrontierNode),
+  name: z.string(),
+  host: z.string(),
+  firstObserved: z.string().datetime().optional(),
+  lastObserved: z.string().datetime().optional(),
+})
+export type FrontierNode = z.infer<typeof FrontierNodeSchema>
+
 export const GraphNodeSchema = z.discriminatedUnion('type', [
   ServiceNodeSchema,
   DatabaseNodeSchema,
   ConfigNodeSchema,
   InfraNodeSchema,
+  FrontierNodeSchema,
 ])
 export type GraphNode = z.infer<typeof GraphNodeSchema>
