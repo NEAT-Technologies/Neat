@@ -26,7 +26,7 @@ MVP milestone summary for context:
 
 Work is scoped across three areas. Pick up from the open issues on GitHub, one issue per branch per the conventions below.
 
-**Extraction breadth** (#67–#73): recursive service discovery, generalised DB config parsing, call types beyond HTTP, Python support, infrastructure files, split `extract.ts` into modules. (#67 — drop the legacy `pgDriverVersion` field — landed on the v0.1.2-α track.)
+**Extraction breadth** (#67–#73): recursive service discovery, generalised DB config parsing, call types beyond HTTP, Python support, infrastructure files. (#67 — drop the legacy `pgDriverVersion` field — and #68 — split `extract.ts` into per-source modules under `packages/core/src/extract/` — landed on the v0.1.2-α track.)
 
 **Graph correctness** (#74–#78): expand the compat matrix beyond drivers, FRONTIER/OBSERVED attribution, per-edge confidence signals, snapshot diffing, stale thresholds.
 

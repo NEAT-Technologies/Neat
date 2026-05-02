@@ -1,0 +1,27 @@
+import type { NeatGraph } from '../graph.js'
+import { addServiceNodes, discoverServices } from './services.js'
+import { addDatabasesAndCompat } from './databases.js'
+import { addConfigNodes } from './configs.js'
+import { addCallEdges } from './calls.js'
+
+export interface ExtractResult {
+  nodesAdded: number
+  edgesAdded: number
+}
+
+export async function extractFromDirectory(
+  graph: NeatGraph,
+  scanPath: string,
+): Promise<ExtractResult> {
+  const services = await discoverServices(scanPath)
+
+  const phase1Nodes = addServiceNodes(graph, services)
+  const phase2 = await addDatabasesAndCompat(graph, services)
+  const phase3 = await addConfigNodes(graph, services, scanPath)
+  const phase4Edges = await addCallEdges(graph, services)
+
+  return {
+    nodesAdded: phase1Nodes + phase2.nodesAdded + phase3.nodesAdded,
+    edgesAdded: phase2.edgesAdded + phase3.edgesAdded + phase4Edges,
+  }
+}
