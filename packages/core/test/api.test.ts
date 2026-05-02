@@ -43,7 +43,7 @@ describe('REST API (fastify.inject)', () => {
     expect(body.edges.length).toBeGreaterThanOrEqual(2)
 
     const serviceB = body.nodes.find((n: { id: string }) => n.id === 'service:service-b')
-    expect(serviceB.pgDriverVersion).toBe('7.4.0')
+    expect(serviceB.dependencies.pg).toBe('7.4.0')
 
     const db = body.nodes.find((n: { id: string }) => n.id === 'database:payments-db')
     expect(db.engineVersion).toBe('15')
@@ -55,7 +55,7 @@ describe('REST API (fastify.inject)', () => {
   it('GET /graph/node/:id returns a single node', async () => {
     const res = await app.inject({ method: 'GET', url: '/graph/node/service:service-b' })
     expect(res.statusCode).toBe(200)
-    expect(res.json().pgDriverVersion).toBe('7.4.0')
+    expect(res.json().dependencies.pg).toBe('7.4.0')
   })
 
   it('GET /graph/node/:id returns 404 for an unknown node', async () => {

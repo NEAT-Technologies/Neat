@@ -2,12 +2,28 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { NeatGraph } from './graph.js'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 interface PersistedGraph {
   schemaVersion: number
   exportedAt: string
   graph: ReturnType<NeatGraph['export']>
+}
+
+// v1 → v2: ServiceNode shed `pgDriverVersion` (ADR-019). Compat traversal reads
+// `dependencies[driver]` instead. Strip the field from any v1 snapshot rather
+// than hard-failing — a stale snapshot on disk shouldn't cost a re-extract.
+function migrateV1ToV2(payload: PersistedGraph): PersistedGraph {
+  const nodes = (payload.graph as { nodes?: Array<{ attributes?: Record<string, unknown> }> })
+    .nodes
+  if (Array.isArray(nodes)) {
+    for (const node of nodes) {
+      if (node.attributes && 'pgDriverVersion' in node.attributes) {
+        delete node.attributes.pgDriverVersion
+      }
+    }
+  }
+  return { ...payload, schemaVersion: 2 }
 }
 
 async function ensureDir(filePath: string): Promise<void> {
@@ -36,7 +52,10 @@ export async function loadGraphFromDisk(graph: NeatGraph, outPath: string): Prom
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
     throw err
   }
-  const payload = JSON.parse(raw) as PersistedGraph
+  let payload = JSON.parse(raw) as PersistedGraph
+  if (payload.schemaVersion === 1) {
+    payload = migrateV1ToV2(payload)
+  }
   if (payload.schemaVersion !== SCHEMA_VERSION) {
     throw new Error(
       `persist: unsupported snapshot schemaVersion ${payload.schemaVersion} (expected ${SCHEMA_VERSION})`,

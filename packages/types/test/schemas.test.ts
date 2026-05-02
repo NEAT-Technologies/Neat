@@ -34,7 +34,7 @@ describe('ServiceNodeSchema', () => {
       type: 'ServiceNode' as const,
       name: 'service-b',
       language: 'javascript',
-      pgDriverVersion: '7.4.0',
+      dependencies: { pg: '7.4.0' },
     }
     expect(ServiceNodeSchema.parse(node)).toEqual(node)
   })

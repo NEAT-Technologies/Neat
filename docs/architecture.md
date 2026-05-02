@@ -97,7 +97,7 @@ Things that aren't load-bearing decisions but are non-obvious from reading the c
 
 - **Compat ignores garbage versions rather than erroring.** If `semver.coerce` can't make sense of a driver version string, `checkCompatibility` returns `{ compatible: true }`. Better to under-flag than to claim a known failure on input we can't reason about.
 
-- **`pgDriverVersion` lives on ServiceNode AND in `incompatibilities[]`.** The first is for cheap UI/lookup ("what version is this service on?"), the second is the audit trail ("here's what specifically is wrong"). Both are populated during extract phase 2.
+- **Driver versions live in `dependencies` and the audit trail in `incompatibilities[]`.** The first is whatever the service's `package.json` declares — the source of truth that compat traversal reads. The second is the audit trail ("here's what specifically is wrong"). Both are populated during extract phase 2.
 
 - **The yaml dependency is M1-scoped.** `db-config.yaml` is parsed today only because it's the cheapest path to `payments-db.engineVersion: "15"` for the demo. Full yaml/env extraction with first-class `ConfigNode` types and `CONFIGURED_BY` edges is M5. Don't expand the yaml parsing surface inside `extract.ts` — it goes to its own pass when M5 happens.
 

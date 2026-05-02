@@ -120,9 +120,6 @@ async function discoverServices(scanPath: string): Promise<DiscoveredService[]> 
       dependencies: deps,
       repoPath: path.relative(scanPath, dir),
     }
-    if (deps.pg) {
-      node.pgDriverVersion = cleanVersion(deps.pg)
-    }
     out.push({ pkg, dir, node })
   }
   return out

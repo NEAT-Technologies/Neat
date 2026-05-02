@@ -86,7 +86,7 @@ M6's two unchecked manual verification steps (live Railway deploy + Claude Code 
 
 ## M1 — Static graph working
 
-**End state:** `NEAT_SCAN_PATH=./demo npm run dev --workspace @neat/core` starts. `curl localhost:8080/graph` returns the right shape: a `ServiceNode` for `service-b` with `pgDriverVersion: "7.4.0"`, a `DatabaseNode` for `payments-db` with `engineVersion: "15"`, and a `DEPENDS_ON` edge tying them together. The compat unit test for `pg 7.4.0 / postgresql 15` returns `compatible: false`.
+**End state:** `NEAT_SCAN_PATH=./demo npm run dev --workspace @neat/core` starts. `curl localhost:8080/graph` returns the right shape: a `ServiceNode` for `service-b` with `dependencies.pg = "7.4.0"`, a `DatabaseNode` for `payments-db` with `engineVersion: "15"`, and a `DEPENDS_ON` edge tying them together. The compat unit test for `pg 7.4.0 / postgresql 15` returns `compatible: false`.
 
 **Status:** VERIFIED 2026-05-01.
 
@@ -105,7 +105,7 @@ M6's two unchecked manual verification steps (live Railway deploy + Claude Code 
 - [x] `npm run dev --workspace @neat/core` starts with `NEAT_SCAN_PATH=./demo`
 - [x] `curl localhost:8080/health` returns `{ uptime, nodeCount, edgeCount, lastUpdated }`
 - [x] `curl localhost:8080/graph` returns ≥ 3 nodes and ≥ 2 edges (3 nodes, 2 edges on the demo)
-- [x] In `/graph` response: `ServiceNode` for `service-b` has `pgDriverVersion: "7.4.0"` and an `incompatibilities[0]` entry naming pg 7.4.0 vs PG 15
+- [x] In `/graph` response: `ServiceNode` for `service-b` has `dependencies.pg = "7.4.0"` and an `incompatibilities[0]` entry naming pg 7.4.0 vs PG 15
 - [x] In `/graph` response: `DatabaseNode` for `payments-db` has `engineVersion: "15"` and a `compatibleDrivers` entry for pg ≥ 8.0.0
 - [x] `checkCompatibility('pg', '7.4.0', 'postgresql', '15')` → `{ compatible: false, ... }` (unit test in `packages/core/test/compat.test.ts`)
 - [x] After SIGTERM, `neat-out/graph.json` exists and is valid JSON; restart loads it (smoked locally + covered by `persist.test.ts`)
@@ -170,7 +170,7 @@ M6's two unchecked manual verification steps (live Railway deploy + Claude Code 
 
 - Once the stitcher is producing INFERRED `CONNECTS_TO` edges, **delete `tracedQuery` and the `@opentelemetry/api` import in `demo/service-b/index.js`** and drop the `@opentelemetry/api` dep in `demo/service-b/package.json`. Keep the `connectionTimeoutMillis: 4000` line — that's separate from the instrumentation gap; it's there because pg 7.4.0 hangs on SCRAM regardless of whether anyone's watching.
 - Re-run the M2 verification gate. The OBSERVED CALLS stays. The OBSERVED CONNECTS_TO disappears, and an INFERRED CONNECTS_TO with confidence 0.6 should take its place. Update the M2 gate text above to reflect that `CONNECTS_TO` is INFERRED in the live demo.
-- Verify `getRootCause("database:payments-db")` lands on `pgDriverVersion: "7.4.0"` with confidence 0.7 (one INFERRED hop).
+- Verify `getRootCause("database:payments-db")` lands on service-b (`dependencies.pg = "7.4.0"`) with confidence 0.7 (one INFERRED hop).
 
 **Bring along when M3 lands:**
 
