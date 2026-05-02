@@ -12,9 +12,11 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-01, M0–M4 all VERIFIED, M5 VERIFIED.
+**Last session ended:** 2026-05-02. M0–M6 all complete (code and docs). MVP sprint is done.
 
-**Next session is M6 — Demo on Railway.** The M5 branch carries the M3 trace-stitcher bring-along (the manual pg span workaround in `demo/service-b/index.js` is gone — root-cause now leans on the stitcher's INFERRED CONNECTS_TO edge), so any leftover M2/M3 verification re-runs should expect that shape. M6 needs the demo reproducible without running docker-compose locally: Railway config, env templates, a runbook, and a quickstart README at the repo root.
+**Next session is v0.1.2 — Ubiquity release.** Pick up from the open issues #67–#83 on GitHub. No prescribed order within the release, but extraction breadth (#67–#73) is generally foundational. See CLAUDE.md for the full breakdown.
+
+M6's two unchecked manual verification steps (live Railway deploy + Claude Code end-to-end against the deployed instance) are deferred to v0.1.2 testing — the runbook and config are in place, the environment is not yet stood up.
 
 ### M3 work order
 
@@ -224,7 +226,7 @@ A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the sam
 
 **End state:** All demo services deployable to Railway from this repo without copying or transforming any source. Quickstart README at the repo root walks an unfamiliar developer through the local demo end-to-end. PROVENANCE.md documents the four-state edge model.
 
-**Status:** IN_PROGRESS — code/docs are in place, the actual deploy has not been performed and verified. Flip to VERIFIED once a fresh Railway project boots from this guide and Claude Code returns the expected root cause against the deployed neat-core.
+**Status:** IN_PROGRESS — all code, config, and runbook are in place. The live Railway deploy is deferred to v0.1.2 testing (no environment stood up yet). Flip to VERIFIED once a Railway project is deployed following `docs/railway.md` and Claude Code confirms the root cause against the live instance.
 
 **Issues / PRs:**
 
