@@ -16,6 +16,7 @@ export const EdgeTypeSchema = z.enum([
   EdgeType.CONFIGURED_BY,
   EdgeType.PUBLISHES_TO,
   EdgeType.CONSUMES_FROM,
+  EdgeType.RUNS_ON,
 ])
 
 export const EdgeEvidenceSchema = z.object({

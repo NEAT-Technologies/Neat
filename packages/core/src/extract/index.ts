@@ -3,6 +3,7 @@ import { addServiceNodes, discoverServices } from './services.js'
 import { addDatabasesAndCompat } from './databases/index.js'
 import { addConfigNodes } from './configs.js'
 import { addCallEdges } from './calls/index.js'
+import { addInfra } from './infra/index.js'
 
 export interface ExtractResult {
   nodesAdded: number
@@ -19,9 +20,16 @@ export async function extractFromDirectory(
   const phase2 = await addDatabasesAndCompat(graph, services)
   const phase3 = await addConfigNodes(graph, services, scanPath)
   const phase4 = await addCallEdges(graph, services)
+  const phase5 = await addInfra(graph, scanPath, services)
 
   return {
-    nodesAdded: phase1Nodes + phase2.nodesAdded + phase3.nodesAdded + phase4.nodesAdded,
-    edgesAdded: phase2.edgesAdded + phase3.edgesAdded + phase4.edgesAdded,
+    nodesAdded:
+      phase1Nodes +
+      phase2.nodesAdded +
+      phase3.nodesAdded +
+      phase4.nodesAdded +
+      phase5.nodesAdded,
+    edgesAdded:
+      phase2.edgesAdded + phase3.edgesAdded + phase4.edgesAdded + phase5.edgesAdded,
   }
 }

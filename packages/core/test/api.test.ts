@@ -160,9 +160,10 @@ describe('REST API (fastify.inject)', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json()
     expect(body.origin).toBe('service:service-a')
-    // service-b sits at distance 1; payments-db and the db-config.yaml ConfigNode
-    // are both reachable from service-b at distance 2.
-    expect(body.totalAffected).toBe(3)
+    // service-b and the container-image both sit at distance 1; payments-db
+    // and the db-config.yaml ConfigNode are reachable from service-b at
+    // distance 2.
+    expect(body.totalAffected).toBe(4)
     expect(body.affectedNodes).toContainEqual({
       nodeId: 'service:service-b',
       distance: 1,
@@ -176,6 +177,11 @@ describe('REST API (fastify.inject)', () => {
     expect(body.affectedNodes).toContainEqual({
       nodeId: 'config:service-b/db-config.yaml',
       distance: 2,
+      edgeProvenance: 'EXTRACTED',
+    })
+    expect(body.affectedNodes).toContainEqual({
+      nodeId: 'infra:container-image:node:20-bookworm-slim',
+      distance: 1,
       edgeProvenance: 'EXTRACTED',
     })
   })
@@ -203,7 +209,11 @@ describe('REST API (fastify.inject)', () => {
     })
     expect(res.statusCode).toBe(200)
     const body = res.json()
-    expect(body.totalAffected).toBe(1)
-    expect(body.affectedNodes[0].nodeId).toBe('service:service-b')
+    // service-b via CALLS + container-image via RUNS_ON both sit at distance 1.
+    expect(body.totalAffected).toBe(2)
+    expect(body.affectedNodes.map((n: { nodeId: string }) => n.nodeId).sort()).toEqual([
+      'infra:container-image:node:20-bookworm-slim',
+      'service:service-b',
+    ])
   })
 })
