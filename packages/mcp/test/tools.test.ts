@@ -220,6 +220,29 @@ describe('getDependencies', () => {
     const res = await getDependencies(client, { nodeId: 'database:payments-db' })
     expect(res.content[0].text).toContain('no outgoing dependencies')
   })
+
+  it('surfaces signal numbers (spans, errors, age) when the edge carries them', async () => {
+    const { client } = clientFor({
+      '/graph/edges/service:service-a': {
+        inbound: [],
+        outbound: [
+          {
+            id: 'CALLS:OBSERVED:service:service-a->service:service-b',
+            source: 'service:service-a',
+            target: 'service:service-b',
+            type: EdgeType.CALLS,
+            provenance: Provenance.OBSERVED,
+            signal: { spanCount: 1247, errorCount: 3, lastObservedAgeMs: 5000 },
+          },
+        ],
+      },
+    })
+    const res = await getDependencies(client, { nodeId: 'service:service-a' })
+    const out = res.content[0].text
+    expect(out).toContain('spans=1247')
+    expect(out).toContain('errors=3')
+    expect(out).toContain('age=5s')
+  })
 })
 
 describe('getObservedDependencies', () => {

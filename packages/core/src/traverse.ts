@@ -9,7 +9,7 @@ import type {
   RootCauseResult,
   ServiceNode,
 } from '@neat/types'
-import { NodeType, Provenance } from '@neat/types'
+import { NodeType } from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import { checkCompatibility, compatPairs } from './compat.js'
 
@@ -51,11 +51,87 @@ function bestEdgeByTarget(graph: NeatGraph, edgeIds: string[]): Map<string, Grap
   return best
 }
 
-function confidenceFromMix(edges: GraphEdge[]): number {
+// Per-edge confidence is provenance × volume × recency × cleanliness.
+//   * provenance gives a ceiling: OBSERVED 1.0, INFERRED 0.7, EXTRACTED 0.5,
+//     STALE/FRONTIER 0.3.
+//   * volume: log-scaled span count, saturating quickly so 1 span ≈ 0.55 and
+//     ~1k spans ≈ 1.0.
+//   * recency: 1.0 within an hour; decays toward 0.5 by 24h, toward 0.3 past.
+//   * cleanliness: error rate above ~10% pulls the score down — a flapping
+//     edge with thousands of spans shouldn't outrank a clean low-traffic one.
+// Bounded to [0, 1]. Walks of multiple edges multiply per-edge confidences.
+const PROVENANCE_CEILING: Record<string, number> = {
+  OBSERVED: 1.0,
+  INFERRED: 0.7,
+  EXTRACTED: 0.5,
+  STALE: 0.3,
+  FRONTIER: 0.3,
+}
+
+function volumeWeight(spanCount: number | undefined): number {
+  if (!spanCount || spanCount <= 0) return 0.5
+  // log10 saturating around ~1000 spans → ~1.0.
+  const w = 0.5 + Math.log10(spanCount + 1) / 3
+  return Math.min(1, w)
+}
+
+function recencyWeight(ageMs: number | undefined): number {
+  if (ageMs === undefined) return 0.8
+  const hour = 60 * 60 * 1000
+  if (ageMs <= hour) return 1.0
+  if (ageMs <= 24 * hour) {
+    const t = (ageMs - hour) / (23 * hour)
+    return 1.0 - 0.5 * t
+  }
+  return 0.3
+}
+
+function cleanlinessWeight(spanCount: number | undefined, errorCount: number | undefined): number {
+  if (!spanCount || spanCount <= 0) return 1
+  const rate = (errorCount ?? 0) / spanCount
+  if (rate <= 0.01) return 1
+  if (rate >= 0.5) return 0.3
+  return 1 - rate * 1.4
+}
+
+export function confidenceForEdge(edge: GraphEdge, now = Date.now()): number {
+  const ceiling = PROVENANCE_CEILING[edge.provenance] ?? 0.5
+
+  // No runtime signal yet → the provenance ceiling is all we have. This keeps
+  // EXTRACTED-only graphs returning the same coarse 0.3/0.5/0.7/1.0 ladder
+  // they always have, while letting OBSERVED edges with real OTel data move
+  // off the ceiling once ingest starts populating signal counters.
+  const spanCount = edge.signal?.spanCount ?? edge.callCount
+  const ageMs = edge.signal?.lastObservedAgeMs ?? lastObservedAge(edge, now)
+  if (spanCount === undefined && ageMs === undefined && edge.signal === undefined) {
+    return ceiling
+  }
+
+  const v = volumeWeight(spanCount)
+  const r = recencyWeight(ageMs)
+  const c = cleanlinessWeight(spanCount, edge.signal?.errorCount)
+  return Math.max(0, Math.min(1, ceiling * v * r * c))
+}
+
+function lastObservedAge(edge: GraphEdge, now: number): number | undefined {
+  if (!edge.lastObserved) return undefined
+  const t = Date.parse(edge.lastObserved)
+  if (!Number.isFinite(t)) return undefined
+  return Math.max(0, now - t)
+}
+
+// Path-level confidence is the bottleneck along the walk: the weakest edge
+// dictates the result. Multiplying would punish long-but-strong walks;
+// taking the min keeps the existing semantics while letting per-edge signal
+// pull the number down where it matters.
+function confidenceFromMix(edges: GraphEdge[], now = Date.now()): number {
   if (edges.length === 0) return 1.0
-  if (edges.every((e) => e.provenance === Provenance.OBSERVED)) return 1.0
-  if (edges.some((e) => e.provenance === Provenance.INFERRED)) return 0.7
-  return 0.5
+  let min = 1
+  for (const e of edges) {
+    const c = confidenceForEdge(e, now)
+    if (c < min) min = c
+  }
+  return Math.max(0, Math.min(1, min))
 }
 
 interface Walk {

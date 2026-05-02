@@ -144,6 +144,20 @@ describe('handleSpan', () => {
     expect(edge.lastObserved).toBeTruthy()
   })
 
+  it('populates edge.signal with span and error counts', async () => {
+    await handleSpan(ctx, clientHttpSpan())
+    await handleSpan(ctx, clientHttpSpan({ spanId: 'span-a2' }))
+    await handleSpan(
+      ctx,
+      clientHttpSpan({ spanId: 'span-a3', statusCode: 2, errorMessage: 'boom' }),
+    )
+    const id = `${EdgeType.CALLS}:OBSERVED:service:service-a->service:service-b`
+    const edge = ctx.graph.getEdgeAttributes(id) as GraphEdge
+    expect(edge.signal?.spanCount).toBe(3)
+    expect(edge.signal?.errorCount).toBe(1)
+    expect(edge.signal?.lastObservedAgeMs).toBe(0)
+  })
+
   it('increments callCount on repeat observations without duplicating the edge', async () => {
     await handleSpan(ctx, clientHttpSpan())
     await handleSpan(ctx, clientHttpSpan({ spanId: 'span-a2' }))
