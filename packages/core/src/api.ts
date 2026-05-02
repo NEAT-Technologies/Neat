@@ -5,6 +5,7 @@ import type { NeatGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
 import { readErrorEvents } from './ingest.js'
 import { getBlastRadius, getRootCause } from './traverse.js'
+import { computeGraphDiff, loadSnapshotForDiff } from './diff.js'
 
 export interface BuildApiOptions {
   graph: NeatGraph
@@ -127,6 +128,21 @@ export async function buildApi(opts: BuildApiOptions): Promise<FastifyInstance> 
       }
     })
     return { query: q, matches }
+  })
+
+  app.get<{ Querystring: { against?: string } }>('/graph/diff', async (req, reply) => {
+    const against = req.query.against
+    if (!against) {
+      return reply.code(400).send({ error: 'query parameter `against` is required' })
+    }
+    try {
+      const snapshot = await loadSnapshotForDiff(against)
+      return computeGraphDiff(graph, snapshot)
+    } catch (err) {
+      return reply
+        .code(400)
+        .send({ error: 'failed to load snapshot', against, detail: (err as Error).message })
+    }
   })
 
   app.post('/graph/scan', async (_req, reply) => {

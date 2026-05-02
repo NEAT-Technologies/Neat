@@ -249,3 +249,95 @@ export async function semanticSearch(
     return errorText(`Error talking to neat-core: ${(err as Error).message}`)
   }
 }
+
+export interface GraphDiffInput {
+  againstSnapshot: string
+}
+
+interface GraphDiffResponse {
+  base: { exportedAt?: string }
+  current: { exportedAt: string }
+  added: { nodes: GraphNode[]; edges: GraphEdge[] }
+  removed: { nodes: GraphNode[]; edges: GraphEdge[] }
+  changed: {
+    nodes: { id: string; before: GraphNode; after: GraphNode }[]
+    edges: { id: string; before: GraphEdge; after: GraphEdge }[]
+  }
+}
+
+export async function getGraphDiff(
+  client: HttpClient,
+  input: GraphDiffInput,
+): Promise<ToolResponse> {
+  try {
+    const result = await client.get<GraphDiffResponse>(
+      `/graph/diff?against=${encodeURIComponent(input.againstSnapshot)}`,
+    )
+    const total =
+      result.added.nodes.length +
+      result.added.edges.length +
+      result.removed.nodes.length +
+      result.removed.edges.length +
+      result.changed.nodes.length +
+      result.changed.edges.length
+    const baseLabel = result.base.exportedAt ?? 'unknown'
+    if (total === 0) {
+      return text(
+        `No differences between the current graph and ${input.againstSnapshot} (base exportedAt=${baseLabel}).`,
+      )
+    }
+    const lines = [
+      `Diff against ${input.againstSnapshot}:`,
+      `  base exportedAt:    ${baseLabel}`,
+      `  current exportedAt: ${result.current.exportedAt}`,
+      '',
+    ]
+    if (result.added.nodes.length || result.added.edges.length) {
+      lines.push('Added:')
+      for (const n of result.added.nodes) lines.push(`  + node ${n.id} (${n.type})`)
+      for (const e of result.added.edges)
+        lines.push(`  + edge ${e.id} — ${e.source} -> ${e.target} (${e.type}, ${e.provenance})`)
+      lines.push('')
+    }
+    if (result.removed.nodes.length || result.removed.edges.length) {
+      lines.push('Removed:')
+      for (const n of result.removed.nodes) lines.push(`  - node ${n.id} (${n.type})`)
+      for (const e of result.removed.edges)
+        lines.push(`  - edge ${e.id} — ${e.source} -> ${e.target} (${e.type}, ${e.provenance})`)
+      lines.push('')
+    }
+    if (result.changed.nodes.length || result.changed.edges.length) {
+      lines.push('Changed:')
+      for (const c of result.changed.nodes) {
+        lines.push(`  ~ node ${c.id} — ${summariseAttrDiff(c.before, c.after)}`)
+      }
+      for (const c of result.changed.edges) {
+        const provBit =
+          c.before.provenance !== c.after.provenance
+            ? `provenance ${c.before.provenance} → ${c.after.provenance}`
+            : summariseAttrDiff(c.before, c.after)
+        lines.push(`  ~ edge ${c.id} — ${provBit}`)
+      }
+    }
+    return text(lines.join('\n').trimEnd())
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 400) {
+      return errorText(`Could not load snapshot ${input.againstSnapshot}: ${err.message}`)
+    }
+    return errorText(`Error talking to neat-core: ${(err as Error).message}`)
+  }
+}
+
+function summariseAttrDiff(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): string {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)])
+  const changed: string[] = []
+  for (const k of keys) {
+    if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) changed.push(k)
+  }
+  return changed.length === 0
+    ? 'attributes differ'
+    : `fields changed: ${changed.sort().join(', ')}`
+}
