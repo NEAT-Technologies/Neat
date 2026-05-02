@@ -16,7 +16,7 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 **Next session is v0.1.2 — Ubiquity release.** Pick up from the open issues #67–#83 on GitHub. No prescribed order within the release, but extraction breadth (#67–#73) is generally foundational. See CLAUDE.md for the full breakdown.
 
-M6's two unchecked manual verification steps (live Railway deploy + Claude Code end-to-end against the deployed instance) are deferred to v0.1.2 testing — the runbook and config are in place, the environment is not yet stood up.
+M6's two unchecked manual verification steps (live Railway deploy + Claude Code end-to-end against the deployed instance) are deferred to **the end of the v0.1.2 cycle, after v0.1.2-δ lands**. The runbook and config are in place; the environment doesn't get stood up until the polyglot extraction (β), correctness signals (γ), and ergonomics work (δ) are all merged. Reasoning: a Railway deploy after α only re-proves what `main` already does. A Railway deploy after δ proves the v0.1.2 promise — that NEAT works on a polyglot codebase, on someone else's server, end to end.
 
 ### M3 work order
 
@@ -226,7 +226,7 @@ A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the sam
 
 **End state:** All demo services deployable to Railway from this repo without copying or transforming any source. Quickstart README at the repo root walks an unfamiliar developer through the local demo end-to-end. PROVENANCE.md documents the four-state edge model.
 
-**Status:** IN_PROGRESS — all code, config, and runbook are in place. The live Railway deploy is deferred to v0.1.2 testing (no environment stood up yet). Flip to VERIFIED once a Railway project is deployed following `docs/railway.md` and Claude Code confirms the root cause against the live instance.
+**Status:** IN_PROGRESS — all code, config, and runbook are in place. The live Railway deploy + Claude Code end-to-end check are now scheduled as **the closing gate of the v0.1.2 cycle**, run after v0.1.2-δ merges. Doing the deploy this late means the verification exercises every v0.1.2 deliverable (polyglot extraction from β, correctness signals from γ, the watch daemon / gRPC / multi-project work from δ) rather than re-proving the MVP. Flip M6 to VERIFIED once that Railway project is up and Claude Code confirms the root cause against the live instance.
 
 **Issues / PRs:**
 
@@ -242,5 +242,5 @@ A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the sam
 - [x] `PROVENANCE.md` exists, covers the four states + confidence cascade, linked from README.md and `packages/mcp/skill.md`.
 - [x] `docs/railway.md` is a runnable deploy guide for all six services + the Postgres plugin, with concrete env values.
 - [x] `demo/collector/Dockerfile` lets the collector run on Railway (which can't volume-mount `config.yaml`); `demo/collector/config.railway.yaml` carries the Railway-flavoured collector config.
-- [ ] **Manual:** a Railway deploy following the guide produces a public service-a domain that responds to `/data`, a public neat-core domain whose `/graph` shows OBSERVED CALLS + INFERRED CONNECTS_TO edges, and a public neat-web domain.
-- [ ] **Manual:** `claude mcp add neat -- node packages/mcp/dist/index.cjs` with `NEAT_CORE_URL` pointing at the deployed core; Claude Code answers "Why is payments-db failing?" with confidence ≥ 0.7.
+- [ ] **Manual (post-v0.1.2-δ):** a Railway deploy following the guide produces a public service-a domain that responds to `/data`, a public neat-core domain whose `/graph` shows OBSERVED CALLS + INFERRED CONNECTS_TO edges, and a public neat-web domain. Run after every v0.1.2 PR has merged, not before — that way the deploy proves the polyglot extraction, correctness signals, and ergonomics work end to end on a real server.
+- [ ] **Manual (post-v0.1.2-δ):** `claude mcp add neat -- node packages/mcp/dist/index.cjs` with `NEAT_CORE_URL` pointing at the deployed core; Claude Code answers "Why is payments-db failing?" with confidence ≥ 0.7. Bonus: pose a polyglot question (e.g. about a Python service from #72) to confirm the v0.1.2 surface area also works through the live MCP path.
