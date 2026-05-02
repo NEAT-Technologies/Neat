@@ -31,7 +31,7 @@ NEAT_SCAN_PATH=./demo npm run dev --workspace @neat/core
 # in another
 curl -s localhost:8080/health | jq
 curl -s localhost:8080/graph  | jq '.nodes[] | select(.id | contains("service-b"))'
-# → should have pgDriverVersion: "7.4.0"
+# → should have dependencies.pg: "7.4.0"
 
 curl -s localhost:8080/graph | jq '.nodes[] | select(.type == "DatabaseNode")'
 # → payments-db with engineVersion: "15", compatibleDrivers including pg ≥ 8.0.0

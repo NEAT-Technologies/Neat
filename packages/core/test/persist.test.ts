@@ -31,7 +31,7 @@ describe('persistence', () => {
 
     const raw = await fs.readFile(outPath, 'utf8')
     const parsed = JSON.parse(raw)
-    expect(parsed.schemaVersion).toBe(1)
+    expect(parsed.schemaVersion).toBe(2)
     expect(parsed.exportedAt).toBeTypeOf('string')
     expect(parsed.graph.nodes.length).toBeGreaterThanOrEqual(3)
     expect(parsed.graph.edges.length).toBeGreaterThanOrEqual(2)
@@ -54,7 +54,7 @@ describe('persistence', () => {
     expect(restored.hasNode('database:payments-db')).toBe(true)
   })
 
-  it('round-trips node attributes (pgDriverVersion preserved)', async () => {
+  it('round-trips node attributes (dependencies preserved)', async () => {
     const graph = getGraph()
     await extractFromDirectory(graph, DEMO_PATH)
     await saveGraphToDisk(graph, outPath)
@@ -64,9 +64,45 @@ describe('persistence', () => {
     await loadGraphFromDisk(restored, outPath)
 
     const serviceB = restored.getNodeAttributes('service:service-b') as {
-      pgDriverVersion?: string
+      dependencies?: Record<string, string>
     }
-    expect(serviceB.pgDriverVersion).toBe('7.4.0')
+    expect(serviceB.dependencies?.pg).toBe('7.4.0')
+  })
+
+  it('migrates a v1 snapshot on load — strips pgDriverVersion, leaves the rest intact', async () => {
+    await fs.mkdir(path.dirname(outPath), { recursive: true })
+    const v1Snapshot = {
+      schemaVersion: 1,
+      exportedAt: '2026-04-30T00:00:00.000Z',
+      graph: {
+        attributes: {},
+        options: { allowSelfLoops: false, multi: true, type: 'directed' },
+        nodes: [
+          {
+            key: 'service:service-b',
+            attributes: {
+              id: 'service:service-b',
+              type: 'ServiceNode',
+              name: 'service-b',
+              language: 'javascript',
+              pgDriverVersion: '7.4.0',
+              dependencies: { pg: '7.4.0' },
+            },
+          },
+        ],
+        edges: [],
+      },
+    }
+    await fs.writeFile(outPath, JSON.stringify(v1Snapshot))
+
+    resetGraph()
+    const restored = getGraph()
+    await loadGraphFromDisk(restored, outPath)
+
+    expect(restored.hasNode('service:service-b')).toBe(true)
+    const attrs = restored.getNodeAttributes('service:service-b') as Record<string, unknown>
+    expect(attrs.pgDriverVersion).toBeUndefined()
+    expect((attrs.dependencies as Record<string, string>).pg).toBe('7.4.0')
   })
 
   it('writes atomically — only the final file lands, no .tmp leftover', async () => {

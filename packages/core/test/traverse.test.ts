@@ -33,7 +33,6 @@ function newDemoGraph(): NeatGraph {
       type: NodeType.ServiceNode,
       name: 'service-b',
       language: 'javascript',
-      pgDriverVersion: '7.4.0',
       dependencies: { pg: '7.4.0' },
     }),
   )
@@ -174,7 +173,6 @@ describe('getRootCause', () => {
       type: NodeType.ServiceNode,
       name: 'happy',
       language: 'javascript',
-      pgDriverVersion: '8.11.0',
       dependencies: { pg: '8.11.0' },
     })
     g.addNode('database:payments-db', {
@@ -238,14 +236,13 @@ describe('getRootCause', () => {
     expect(result!.fixRecommendation).toMatch(/3\.0\.0/)
   })
 
-  it('reads driver versions out of dependencies, not just the legacy pgDriverVersion field', () => {
+  it('reads driver versions out of dependencies', () => {
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
     g.addNode('service:reports', {
       id: 'service:reports',
       type: NodeType.ServiceNode,
       name: 'reports',
       language: 'javascript',
-      // No pgDriverVersion here — purely declared via dependencies.
       dependencies: { pg: '7.4.0' },
     })
     g.addNode('database:reports-db', {

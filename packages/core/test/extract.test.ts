@@ -22,13 +22,13 @@ describe('extractFromDirectory against demo/', () => {
     expect(graph.size).toBeGreaterThanOrEqual(2)
   })
 
-  it('emits a service-b ServiceNode with pgDriverVersion = "7.4.0"', async () => {
+  it('emits a service-b ServiceNode that declares pg 7.4.0 in its dependencies', async () => {
     const graph = getGraph()
     await extractFromDirectory(graph, DEMO_PATH)
 
     expect(graph.hasNode('service:service-b')).toBe(true)
     const serviceB = graph.getNodeAttributes('service:service-b') as ServiceNode
-    expect(serviceB.pgDriverVersion).toBe('7.4.0')
+    expect(serviceB.dependencies?.pg).toBe('7.4.0')
   })
 
   it('emits a payments-db DatabaseNode with engineVersion = "15"', async () => {

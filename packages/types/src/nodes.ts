@@ -13,7 +13,6 @@ export const ServiceNodeSchema = z.object({
   name: z.string(),
   language: z.string(),
   version: z.string().optional(),
-  pgDriverVersion: z.string().optional(),
   dbConnectionTarget: z.string().optional(),
   repoPath: z.string().optional(),
   dependencies: z.record(z.string(), z.string()).optional(),

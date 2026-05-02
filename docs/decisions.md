@@ -183,7 +183,7 @@ M5 generalises the traversal: filter `compatPairs()` to the target database's en
 
 **Why this shape and not a per-engine handler:** The per-engine fan-out is what `compat.json` already encodes. Pulling that table into TypeScript would duplicate it. The matrix is the schema; traversal just executes against it.
 
-**`pgDriverVersion` stays on the schema** as a UI/lookup convenience but is no longer load-bearing — the dependencies map is the source of truth. Future schema work can drop it once nothing else reads it.
+**`pgDriverVersion` stayed on the schema** as a UI/lookup convenience after the M5 generalisation but was no longer load-bearing — the dependencies map became the source of truth. ADR-019 drops it.
 
 ---
 
@@ -225,3 +225,23 @@ The M6 deliverable for Railway is `docs/railway.md` plus a small set of supporti
 **The collector earns its own Dockerfile** because docker-compose mounts `config.yaml` into the upstream image, and Railway can't. Two configs coexist: `config.yaml` for local docker-compose, `config.railway.yaml` for the deployed collector (it parameterises the neat-core hostname via env). The Dockerfile copies the local one in by default; the runbook tells the operator to swap it for the Railway variant.
 
 **When to revisit.** If a second deploy target lands, or if Railway deploys become routine enough that the runbook drift starts hurting, codify in `railway.toml` per service and lift the env wiring into Railway's variable references (it already supports `${{ payments-db.PGHOST }}`). Until then, prose + concrete commands beats config we don't actively maintain.
+
+---
+
+## ADR-019 — Drop `pgDriverVersion` from `ServiceNode`; bump snapshot to v2
+
+**Date:** 2026-05-02
+**Status:** Active. Closes the loop ADR-015 left open.
+
+ADR-015 made `pgDriverVersion` non-load-bearing — `getRootCause` now reads `dependencies[driver]` for every driver in `compat.json`. The field stayed on `ServiceNodeSchema` as a UI/lookup convenience, but in practice it was a special case that only existed for one driver, and it would let a future contributor reintroduce pg-specific code paths without anyone noticing. v0.1.2-α removes it.
+
+**What changes.**
+
+- `pgDriverVersion` is gone from `ServiceNodeSchema` in `@neat/types`.
+- Phase 1 of `extractFromDirectory` no longer sets it — `dependencies` carries the raw `package.json` map and that's the only declaration we ship.
+- Snapshot `schemaVersion` bumps from `1` to `2`. `loadGraphFromDisk` migrates v1 snapshots in place by stripping `pgDriverVersion` from every node's attributes; the rest of the v1 payload flows through unchanged.
+- Tests that previously asserted `serviceB.pgDriverVersion === '7.4.0'` now read `serviceB.dependencies?.pg`.
+
+**Why migrate rather than hard-fail.** ADR-011 set the precedent that incompatible schema bumps throw on load; this bump is *forward-compatible*. Stripping a field that no consumer reads anymore is exactly the case where an automatic migration costs nothing and saves users a manual re-extract. The hard-fail path is reserved for genuinely incompatible changes (renaming an edge type, restructuring a node id format).
+
+**One-way door check.** Adding `pgDriverVersion` back later would be trivial — it'd be a Zod field plus an extract-phase write. Nothing about removing it now traps the schema. If the v0.1.2 compat work (#74) ends up wanting per-driver hot-fields on `ServiceNode`, that's a generalised mechanism, not a re-litigation of this one field.
