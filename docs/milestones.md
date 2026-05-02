@@ -12,45 +12,36 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-02. M0–M6 all complete (code and docs). MVP sprint is done.
+**Last session ended:** 2026-05-02. **v0.1.2-α is shipped on `main`.** Issues #67, #68, #80, and the M6 deploy issue #25 are closed; PRs #84, #85, #86, #87 merged. Workspace is green at HEAD: `npx turbo build test lint` clean, 104 core / 25 types / 17 mcp tests passing.
 
-**Next session is v0.1.2 — Ubiquity release.** Pick up from the open issues #67–#83 on GitHub. No prescribed order within the release, but extraction breadth (#67–#73) is generally foundational. See CLAUDE.md for the full breakdown.
+**Next session is v0.1.2-β — extraction breadth.** The release goal is dropping the Node-only assumption: by the end of v0.1.2 NEAT can extract from polyglot, multi-workspace, multi-DB, infra-aware codebases. β is the foundational chunk — γ and δ have very little to act on until β has landed.
 
-M6's two unchecked manual verification steps (live Railway deploy + Claude Code end-to-end against the deployed instance) are deferred to **the end of the v0.1.2 cycle, after v0.1.2-δ lands**. The runbook and config are in place; the environment doesn't get stood up until the polyglot extraction (β), correctness signals (γ), and ergonomics work (δ) are all merged. Reasoning: a Railway deploy after α only re-proves what `main` already does. A Railway deploy after δ proves the v0.1.2 promise — that NEAT works on a polyglot codebase, on someone else's server, end to end.
+### β work order (within v0.1.2-β)
 
-### M3 work order
+Branch each issue off the latest `main`. Keep PRs small; later β issues build on the directory layout earlier ones produce.
 
-1. `#10` **`getRootCause`** in a new `packages/core/src/traverse.ts`. Walks incoming edges from the error node depth-first up to depth 5, prefers OBSERVED → INFERRED → EXTRACTED at each step, calls `checkCompatibility` at each `ServiceNode` against the target `DatabaseNode`, returns `RootCauseResult` (the type already exists in `@neat/types`). Confidence cascades by edge provenance: 1.0 all-OBSERVED, 0.7 any-INFERRED, 0.5 any-EXTRACTED-only. The verification target is `getRootCause("database:payments-db")` returning the pg-driver incompatibility with path `["database:payments-db", "service:service-b", "service:service-a"]`.
-2. `#11` **`getBlastRadius`** in the same `traverse.ts`. Outgoing edges, depth 10, distance + path per affected node. Uses `graphology-shortest-path` (already a dep). `BlastRadiusResult` type ready in `@neat/types`.
-3. `#12` **REST routes** for both — `GET /traverse/root-cause/:nodeId` and `GET /traverse/blast-radius/:nodeId`. Wire into `api.ts` next to `/graph` + `/incidents`.
-4. **Trace stitcher** (no issue yet — open one). When a span has `statusCode === 2`, walk the static graph from `service:<service>` along EXTRACTED edges depth ≤ 2 and write INFERRED edges (`${type}:INFERRED:...` id pattern by analogy with the OBSERVED one) with `confidence: 0.6` and `lastObserved` set. This is the systems fix for the pg 7.4.0 instrumentation gap (ADR-014). Once it's writing INFERRED `CONNECTS_TO`, delete the `tracedQuery` workaround in `demo/service-b/index.js` and the `@opentelemetry/api` dep in its `package.json`, and re-run the M2 gate.
+1. **#69 — recursive service discovery + workspaces.** Today `discoverServices` only scans immediate subdirectories of `scanPath`. Workspaces (npm/pnpm/yarn workspaces, monorepo nesting, multi-repo umbrellas) want a recursive walk plus a `package.json#workspaces` reader. This is foundational — #70/#71/#72 all assume the discovery walk reaches every service. Lives in `packages/core/src/extract/services.ts`.
+2. **#70 — generalised DB discovery** (.env, ORM configs, docker-compose). Drop the hardcoded `db-config.yaml` path; replace with a per-source-type module under `extract/databases/` (env vars, sequelize/prisma/typeorm/mongoose configs, docker-compose `depends_on`). Each source emits a `DatabaseNode` candidate; merge by host/port. Don't read `.env` *contents* unless the value is a connection string and the key is conventional (`DATABASE_URL`, `PG*`, `MONGO*`) — ADR-016 still applies.
+3. **#71 — calls beyond HTTP URL substrings** (gRPC, Kafka, Redis, AWS SDK). The current `callsFromSource` in `extract/calls.ts` only recognises `//host` and `//host:port` patterns. Each new transport gets its own detector module — `extract/calls/grpc.ts`, `extract/calls/kafka.ts`, etc. Edge type stays `CALLS`; consider adding a `transport` attribute to `GraphEdge` (snapshot bump).
+4. **#72 — Python service extraction.** New `extract/services/python.ts` module. Discovery looks for `pyproject.toml` + `requirements.txt` (no package.json). Use `tree-sitter-python` for the call walk. Add `language: 'python'` to `ServiceNode`. NEAT's toolchain stays TypeScript — we read Python source, we don't run Python.
+5. **#73 — infrastructure extraction** (docker-compose, Dockerfile, Terraform, k8s). Adds `infra:` node type prefix (reserved by ADR-010) and likely new edge types (`DEPLOYS`, `RUNS_IN`). Touches `@neat/types` — co-ordinate snapshot schema bump with #74 in γ.
 
-### M4 work order
+#69 first. After that, #70/#71/#72 can run in parallel across sessions; #73 is the schema-touching one and benefits from the others' signals being in the graph.
 
-`#13` (`@neat/mcp` scaffold) is already merged — stubs exist. Each tool calls into core over HTTP using the routes above plus the existing `/graph`, `/incidents`, `/search`. Suggested order:
+### M6 manual verification — DEFERRED TO POST-δ
 
-1. `#14` `get_root_cause` (critical-path for the demo)
-2. `#15` `get_blast_radius`
-3. `#16` `get_dependencies`
-4. `#17` `get_observed_dependencies`
-5. `#18` `get_incident_history`
-6. `#19` `semantic_search` (keyword-only stub per the issue label `post-mvp-enhance`)
-7. `#20` `mcp/CLAUDE.md` + `skill.md`
+The two unchecked manual gates (live Railway deploy + Claude Code end-to-end against the deployed core) wait until α/β/γ/δ have all merged. Reasoning: a deploy after α only re-proves what `main` already does. A deploy after δ proves the v0.1.2 promise — that NEAT works on a polyglot codebase, on someone else's server, end to end. See PR #87 + the M6 section below for the full rationale.
 
-### Project-management cleanup carried over
+### Gotchas a fresh β session will benefit from
 
-- Manually close GitHub issues for the merged M0/M1/M2 work: M0 — #1, #2, #3, #13, #24, #27; M1 — #4, #5, #6, #9; M2 — #7, #8, #21, #22, #23. (Per ADR-005 the user closes by hand after gate verification.)
-- Relabel dashboard issues #28–#31 as `post-mvp-enhance` and remove them from milestone M5 (per ADR-004). Still pending from before M2.
-
-### Gotchas a fresh session will benefit from
-
-- **OBSERVED edges live alongside EXTRACTED ones**, not on top. Edge ids: EXTRACTED `${type}:${source}->${target}` (current ADR-010), OBSERVED `${type}:OBSERVED:${source}->${target}`. INFERRED should follow the same shape: `${type}:INFERRED:${source}->${target}`. The graph is a `MultiDirectedGraph`, so multiple edges between the same pair coexist by design — traversal picks per provenance preference, doesn't need to dedup.
-- **`/incidents` reads from `errors.ndjson`**, written by `ingest.handleSpan` (see `packages/core/src/ingest.ts`). It's a flat append log keyed by `traceId:spanId`. M3 root-cause should accept an optional `errorEvent` argument and pass it through to colour the result (the M3 issue body asks for this).
-- **Manual pg span in service-b is debt.** `demo/service-b/index.js` hand-rolls a span around `pool.query` because `@opentelemetry/instrumentation-pg` doesn't speak pg < 8. ADR-014 + the bring-along note under M3 below say exactly what to delete once the trace stitcher writes INFERRED CONNECTS_TO. Don't generalise the workaround — it's a fixture.
-- **Collector → core uses JSON, no compression.** `demo/collector/config.yaml` has `encoding: json` and `compression: none` on the `otlphttp/neat` exporter. The receiver in `packages/core/src/otel.ts` is plain Fastify JSON; if you want gzip support, the collector exporter is where to start, not core.
-- **service-b connection timeout is 4s** (`connectionTimeoutMillis` in `Pool({...})`) so the SCRAM hang surfaces as a real error instead of waiting forever. Don't drop it without adding another timeout somewhere.
-- **`docker compose up --build` is the M2 gate**, not unit tests. Same applies for M3: the unit tests catch traversal bugs but only the live demo proves the graph is being populated correctly. Always run a `for i in {1..10}; do curl localhost:3000/data; done` after a rebuild.
-- **PR status as of handoff**: M2 runtime fixes are in PR #55 (`m2-runtime-fixes` → `main`). Verify it's merged before relying on the OBSERVED `CONNECTS_TO` edge being there — the four feature PRs (#50/#51/#52/#54) alone don't produce it, the runtime fixes do.
+- **The α layout is already polyglot-ready.** `packages/core/src/extract/` has `services.ts`, `databases.ts`, `configs.ts`, `calls.ts`, `shared.ts`, `index.ts`. Each β issue extends one or more of these, or splits one further (`services.ts` → `services/{node,python}.ts` for #72). Don't fold logic back into `extract.ts` — that file is a one-line re-export shim now and should stay that way.
+- **`extract/index.ts` is the orchestrator and is 27 lines.** Each phase has its own `addXxx(graph, services, ...)` function that returns `{ nodesAdded, edgesAdded }`. Add a phase by writing the function and one line in the orchestrator, not by editing the orchestrator's body.
+- **Snapshot schema is at v2.** Any β change that adds attributes to existing node/edge types is forward-compatible (new optional Zod fields). Anything that *renames* or *restructures* (#73's `infra:` prefix is fine; renaming `CALLS` to `INVOKES` would not be) bumps to v3 — add a v2→v3 migration in `loadGraphFromDisk` per ADR-019's pattern.
+- **Compat is data-driven (ADR-015).** Driver/engine pairs live in `compat.json`. Don't add per-driver code paths; extend the matrix. #74 in γ generalises compat further; β work that adds new driver awareness should add JSON entries, not TypeScript branches.
+- **`.env` records existence, not contents (ADR-016).** #70 reads `DATABASE_URL` and `PG*`-style keys from `.env` for *DB discovery* but does not snapshot the values into `ConfigNode.attributes`. The contents go into a transient `DbConfig` for emission of the `DatabaseNode`, then are discarded. This is the security boundary; don't blur it.
+- **OTLP/gRPC is opt-in.** `NEAT_OTLP_GRPC=true` activates the listener (port `:4317`, override via `NEAT_OTLP_GRPC_PORT`). Default deployments are HTTP-only on `:4318` — β shouldn't change that default.
+- **Demo stays as it is.** β doesn't need to add Python/Kafka/Terraform services to `demo/`. Synthetic test fixtures under `packages/core/test/fixtures/` are enough to prove each new extractor; the demo's job is to stay the canonical pg-vs-PG-15 failure for the headline narrative.
+- **Manual pg span in service-b is gone.** Removed during M5 once the trace stitcher started producing INFERRED `CONNECTS_TO` edges (ADR-014). Don't reintroduce a manual span anywhere.
 
 ---
 
@@ -244,3 +235,87 @@ A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the sam
 - [x] `demo/collector/Dockerfile` lets the collector run on Railway (which can't volume-mount `config.yaml`); `demo/collector/config.railway.yaml` carries the Railway-flavoured collector config.
 - [ ] **Manual (post-v0.1.2-δ):** a Railway deploy following the guide produces a public service-a domain that responds to `/data`, a public neat-core domain whose `/graph` shows OBSERVED CALLS + INFERRED CONNECTS_TO edges, and a public neat-web domain. Run after every v0.1.2 PR has merged, not before — that way the deploy proves the polyglot extraction, correctness signals, and ergonomics work end to end on a real server.
 - [ ] **Manual (post-v0.1.2-δ):** `claude mcp add neat -- node packages/mcp/dist/index.cjs` with `NEAT_CORE_URL` pointing at the deployed core; Claude Code answers "Why is payments-db failing?" with confidence ≥ 0.7. Bonus: pose a polyglot question (e.g. about a Python service from #72) to confirm the v0.1.2 surface area also works through the live MCP path.
+
+---
+
+## v0.1.2-α — Foundations
+
+**End state:** legacy `pgDriverVersion` schema field removed (forward-compatible snapshot migration v1→v2). `extract.ts` split into per-source modules under `packages/core/src/extract/` — orchestrator is 27 lines, each phase independently importable. OTLP/gRPC receiver opt-in via `NEAT_OTLP_GRPC=true`. Workspace stays green.
+
+**Status:** VERIFIED 2026-05-02.
+
+**Issues / PRs:**
+
+| Issue | Title                                                | PR  | Status |
+|-------|------------------------------------------------------|-----|--------|
+| #67   | Drop pgDriverVersion from ServiceNode (schema migration) | #84 | merged |
+| #68   | Split extract.ts into per-source-type modules        | #85 | merged |
+| #80   | OTLP/gRPC receiver alongside HTTP                    | #86 | merged |
+| —     | Reschedule M6 manual gates to end of v0.1.2          | #87 | merged |
+
+### α verification gate
+
+- [x] `npx turbo build test lint` clean across all four packages (104 core tests / 25 types tests / 17 mcp tests).
+- [x] `pgDriverVersion` appears in zero source files outside the migration code + its test.
+- [x] `loadGraphFromDisk` migrates a synthesised v1 snapshot in place (covered by `persist.test.ts`).
+- [x] `node packages/core/dist/cli.cjs init ./demo` produces a `schemaVersion: 2` snapshot with the same node/edge counts as before.
+- [x] `packages/core/src/extract.ts` is a one-line re-export; phases live under `packages/core/src/extract/{services,databases,configs,calls,shared,index}.ts`. Orchestrator (`extract/index.ts`) is ≤ 80 lines.
+- [x] Three new gRPC tests (`otel-grpc.test.ts`) round-trip through a real `@grpc/grpc-js` client/server pair on an ephemeral port. With `NEAT_OTLP_GRPC` unset the gRPC port stays closed.
+- [x] ADR-019 (drop `pgDriverVersion`, snapshot v2) and ADR-020 (bundle OTLP protos in-tree, gRPC opt-in) added to `docs/decisions.md`.
+
+---
+
+## v0.1.2-β — Extraction breadth
+
+**End state:** the graph stops being JS-and-pg-shaped. Recursive workspace discovery, generalised DB discovery beyond `db-config.yaml`, calls beyond HTTP URL substrings, Python service extraction, infrastructure files as first-class nodes. NEAT can `init` a polyglot multi-service repo and produce a credible graph.
+
+**Status:** NOT_STARTED.
+
+**Issues / PRs:**
+
+| Issue | Title                                                       | PR  | Status |
+|-------|-------------------------------------------------------------|-----|--------|
+| #69   | Recursive service discovery with workspace support          | —   | open |
+| #70   | Generalised database discovery (.env, ORM configs, docker-compose) | — | open |
+| #71   | Call extraction beyond HTTP URL substrings (gRPC, Kafka, Redis, AWS SDK) | — | open |
+| #72   | Python service extraction                                   | —   | open |
+| #73   | Infrastructure extraction (docker-compose, Dockerfile, Terraform, k8s) | — | open |
+
+### β verification gate (proposed)
+
+- [ ] Demo extraction unchanged: pg-vs-PG-15 demo still produces 4 nodes / 3 edges / one incompatibility.
+- [ ] A synthetic multi-language fixture under `packages/core/test/fixtures/polyglot/` extracts JS + Python services with their respective dependency manifests, plus a docker-compose'd Redis broker, plus an `infra:` node for the docker-compose file itself. Assertions live in per-source-type test files.
+- [ ] `.env` files contribute to DB discovery without their values landing in any snapshot. `ConfigNode.attributes` does not gain a `contents` field.
+- [ ] Snapshot schema bumps if `@neat/types` shape changes (most likely from #73). Migration path follows ADR-019's pattern.
+- [ ] One new ADR per non-obvious design choice (#72's Python toolchain decision is the likely candidate; #73's `infra:` taxonomy may want one too).
+
+---
+
+## v0.1.2-γ — Graph correctness
+
+**End state:** confidence is a real signal, not a constant. Compat covers more than (driver, engine) pairs. FRONTIER nodes get populated. Snapshot diffing answers "what changed?".
+
+**Status:** NOT_STARTED.
+
+| Issue | Title |
+|-------|-------|
+| #74   | Compat matrix beyond drivers (Node engines, package conflicts, deprecated APIs) |
+| #75   | OBSERVED-edge attribution and FRONTIER node population |
+| #76   | Per-edge confidence signals (span count, error rate, recency) |
+| #77   | Snapshot diffing endpoint and MCP tool |
+| #78   | Per-edge-type stale thresholds + stale event log |
+
+---
+
+## v0.1.2-δ — Ergonomics
+
+**End state:** the daily-use surface is pleasant. `neat watch` re-extracts on save. MCP exposes Resources for graph nodes and the incident stream. Real semantic search. Multiple projects coexist in one core instance.
+
+**Status:** NOT_STARTED.
+
+| Issue | Title |
+|-------|-------|
+| #79   | neat watch daemon (live re-extraction) |
+| #81   | MCP Resources for graph nodes and incident stream |
+| #82   | semantic_search with real embeddings |
+| #83   | Multi-graph / multi-project support |
