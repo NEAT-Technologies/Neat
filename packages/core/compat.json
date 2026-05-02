@@ -1,6 +1,7 @@
 {
   "pairs": [
     {
+      "kind": "driver-engine",
       "driver": "pg",
       "engine": "postgresql",
       "minDriverVersion": "8.0.0",
@@ -8,6 +9,7 @@
       "reason": "PostgreSQL 14+ requires scram-sha-256 auth by default; pg < 8.0.0 only speaks md5."
     },
     {
+      "kind": "driver-engine",
       "driver": "mysql2",
       "engine": "mysql",
       "minDriverVersion": "3.0.0",
@@ -15,6 +17,7 @@
       "reason": "MySQL 8 defaults to caching_sha2_password; mysql2 < 3.0.0 doesn't negotiate it."
     },
     {
+      "kind": "driver-engine",
       "driver": "mongoose",
       "engine": "mongodb",
       "minDriverVersion": "7.0.0",
@@ -22,6 +25,7 @@
       "reason": "MongoDB 7 drops legacy wire-protocol opcodes that mongoose < 7.0.0 still emits."
     },
     {
+      "kind": "driver-engine",
       "driver": "psycopg2",
       "engine": "postgresql",
       "minDriverVersion": "2.9.0",
@@ -29,6 +33,7 @@
       "reason": "PostgreSQL 14+ requires scram-sha-256 auth by default; psycopg2 < 2.9.0 only speaks md5."
     },
     {
+      "kind": "driver-engine",
       "driver": "pymongo",
       "engine": "mongodb",
       "minDriverVersion": "4.0.0",
@@ -36,11 +41,80 @@
       "reason": "MongoDB 7 drops legacy wire-protocol opcodes that pymongo < 4.0.0 still emits."
     },
     {
+      "kind": "driver-engine",
       "driver": "mysql-connector-python",
       "engine": "mysql",
       "minDriverVersion": "8.0.0",
       "minEngineVersion": "8",
       "reason": "MySQL 8 defaults to caching_sha2_password; mysql-connector-python < 8.0.0 doesn't negotiate it."
+    }
+  ],
+  "nodeEngineConstraints": [
+    {
+      "kind": "node-engine",
+      "package": "vitest",
+      "packageMinVersion": "2.0.0",
+      "minNodeVersion": "18.0.0",
+      "reason": "vitest >= 2.0 drops Node 16 support; requires Node 18+."
+    },
+    {
+      "kind": "node-engine",
+      "package": "next",
+      "packageMinVersion": "14.0.0",
+      "minNodeVersion": "18.17.0",
+      "reason": "Next 14+ requires Node 18.17+ (uses APIs introduced in that minor)."
+    },
+    {
+      "kind": "node-engine",
+      "package": "@modelcontextprotocol/sdk",
+      "packageMinVersion": "1.0.0",
+      "minNodeVersion": "18.0.0",
+      "reason": "@modelcontextprotocol/sdk >= 1 requires Node 18+ (web-streams polyfill removed)."
+    }
+  ],
+  "packageConflicts": [
+    {
+      "kind": "package-conflict",
+      "package": "@tanstack/react-query",
+      "packageMinVersion": "5.0.0",
+      "requires": {
+        "name": "react",
+        "minVersion": "18.0.0"
+      },
+      "reason": "@tanstack/react-query 5+ uses useSyncExternalStore — only available in React 18+."
+    },
+    {
+      "kind": "package-conflict",
+      "package": "react-router-dom",
+      "packageMinVersion": "7.0.0",
+      "requires": {
+        "name": "react",
+        "minVersion": "18.0.0"
+      },
+      "reason": "react-router-dom 7+ requires React 18+."
+    },
+    {
+      "kind": "package-conflict",
+      "package": "next",
+      "packageMinVersion": "14.0.0",
+      "requires": {
+        "name": "react",
+        "minVersion": "18.2.0"
+      },
+      "reason": "Next.js 14+ requires React 18.2+."
+    }
+  ],
+  "deprecatedApis": [
+    {
+      "kind": "deprecated-api",
+      "package": "request",
+      "packageMaxVersion": "2.88.2",
+      "reason": "request is deprecated; use undici, node-fetch, or axios instead."
+    },
+    {
+      "kind": "deprecated-api",
+      "package": "node-uuid",
+      "reason": "node-uuid is deprecated; use the `uuid` package."
     }
   ]
 }

@@ -21,15 +21,50 @@ export const ServiceNodeSchema = z.object({
   // labels, etc. resolveServiceId in ingest.ts checks these before falling
   // back to a FRONTIER placeholder.
   aliases: z.array(z.string()).optional(),
+  // Optional. If set, services declare their `engines.node` here so γ #74's
+  // node-engine compat check has something to test against.
+  nodeEngine: z.string().optional(),
   incompatibilities: z
     .array(
-      z.object({
-        driver: z.string(),
-        driverVersion: z.string(),
-        engine: z.string(),
-        engineVersion: z.string(),
-        reason: z.string(),
-      }),
+      // Discriminated by `kind`. `driver-engine` is the original shape and
+      // stays default for backward compatibility — older snapshots without a
+      // `kind` field still parse via the union's `.optional()` discriminator
+      // fallback. New kinds came in with γ #74.
+      z.union([
+        z.object({
+          kind: z.literal('driver-engine').optional(),
+          driver: z.string(),
+          driverVersion: z.string(),
+          engine: z.string(),
+          engineVersion: z.string(),
+          reason: z.string(),
+        }),
+        z.object({
+          kind: z.literal('node-engine'),
+          package: z.string(),
+          packageVersion: z.string().optional(),
+          requiredNodeVersion: z.string(),
+          declaredNodeEngine: z.string().optional(),
+          reason: z.string(),
+        }),
+        z.object({
+          kind: z.literal('package-conflict'),
+          package: z.string(),
+          packageVersion: z.string().optional(),
+          requires: z.object({
+            name: z.string(),
+            minVersion: z.string(),
+          }),
+          foundVersion: z.string().optional(),
+          reason: z.string(),
+        }),
+        z.object({
+          kind: z.literal('deprecated-api'),
+          package: z.string(),
+          packageVersion: z.string().optional(),
+          reason: z.string(),
+        }),
+      ]),
     )
     .optional(),
 })

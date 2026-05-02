@@ -7,7 +7,16 @@ import type {
 } from '@neat/types'
 import { EdgeType, NodeType, Provenance } from '@neat/types'
 import type { NeatGraph } from '../../graph.js'
-import { checkCompatibility, compatPairs } from '../../compat.js'
+import {
+  checkCompatibility,
+  checkDeprecatedApi,
+  checkNodeEngineConstraint,
+  checkPackageConflict,
+  compatPairs,
+  deprecatedApis,
+  nodeEngineConstraints,
+  packageConflicts,
+} from '../../compat.js'
 import { cleanVersion, makeEdgeId, type DiscoveredService } from '../shared.js'
 import { dbConfigYamlParser } from './db-config-yaml.js'
 import { dotenvParser } from './dotenv.js'
@@ -65,10 +74,12 @@ export function attachIncompatibilities(
   service: DiscoveredService,
   configs: DbConfig[],
 ): void {
-  const deps = service.pkg.dependencies ?? {}
+  const deps = { ...(service.pkg.dependencies ?? {}), ...(service.pkg.devDependencies ?? {}) }
   const incompatibilities: NonNullable<ServiceNode['incompatibilities']> = []
   const seen = new Set<string>()
 
+  // 1. driver-engine — original behaviour. Per (db config, configured driver
+  // pair) check that the declared driver version meets the engine threshold.
   for (const config of configs) {
     for (const pair of compatPairs()) {
       if (pair.engine !== config.engine) continue
@@ -81,10 +92,11 @@ export function attachIncompatibilities(
         config.engineVersion,
       )
       if (!result.compatible && result.reason) {
-        const key = `${pair.driver}@${declaredVersion}|${config.engine}@${config.engineVersion}`
+        const key = `driver-engine|${pair.driver}@${declaredVersion}|${config.engine}@${config.engineVersion}`
         if (seen.has(key)) continue
         seen.add(key)
         incompatibilities.push({
+          kind: 'driver-engine',
           driver: pair.driver,
           driverVersion: declaredVersion,
           engine: config.engine,
@@ -92,6 +104,67 @@ export function attachIncompatibilities(
           reason: result.reason,
         })
       }
+    }
+  }
+
+  // 2. node-engine — service's `engines.node` vs each declared dep that has a
+  // matrix-recorded minimum.
+  const serviceNodeEngine = service.node.nodeEngine ?? service.pkg.engines?.node
+  for (const constraint of nodeEngineConstraints()) {
+    const declared = cleanVersion(deps[constraint.package])
+    if (!declared) continue
+    const result = checkNodeEngineConstraint(constraint, declared, serviceNodeEngine)
+    if (!result.compatible && result.reason) {
+      const key = `node-engine|${constraint.package}@${declared}|${serviceNodeEngine ?? ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      incompatibilities.push({
+        kind: 'node-engine',
+        package: constraint.package,
+        packageVersion: declared,
+        requiredNodeVersion: result.requiredNodeVersion ?? constraint.minNodeVersion,
+        ...(serviceNodeEngine ? { declaredNodeEngine: serviceNodeEngine } : {}),
+        reason: result.reason,
+      })
+    }
+  }
+
+  // 3. package-conflict — pair like react-query 5+ requiring react 18+.
+  for (const conflict of packageConflicts()) {
+    const declared = cleanVersion(deps[conflict.package])
+    if (!declared) continue
+    const requiredVersion = cleanVersion(deps[conflict.requires.name])
+    const result = checkPackageConflict(conflict, declared, requiredVersion)
+    if (!result.compatible && result.reason) {
+      const key = `package-conflict|${conflict.package}@${declared}|${conflict.requires.name}@${requiredVersion ?? 'missing'}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      incompatibilities.push({
+        kind: 'package-conflict',
+        package: conflict.package,
+        packageVersion: declared,
+        requires: conflict.requires,
+        ...(requiredVersion ? { foundVersion: requiredVersion } : {}),
+        reason: result.reason,
+      })
+    }
+  }
+
+  // 4. deprecated-api — flag presence of a known-deprecated package.
+  for (const rule of deprecatedApis()) {
+    const declared = cleanVersion(deps[rule.package])
+    if (declared === undefined) continue
+    const result = checkDeprecatedApi(rule, declared)
+    if (!result.compatible && result.reason) {
+      const key = `deprecated-api|${rule.package}@${declared}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      incompatibilities.push({
+        kind: 'deprecated-api',
+        package: rule.package,
+        packageVersion: declared,
+        reason: result.reason,
+      })
     }
   }
 
@@ -126,7 +199,6 @@ export async function addDatabasesAndCompat(
         if (!merged.has(config.host)) merged.set(config.host, config)
       }
     }
-    if (merged.size === 0) continue
 
     const allConfigs = [...merged.values()]
     for (const config of allConfigs) {
@@ -148,8 +220,20 @@ export async function addDatabasesAndCompat(
       }
     }
 
+    // Run all kinds of incompat checks even for services with no db connection
+    // — node-engine / package-conflict / deprecated-api don't depend on db.
     attachIncompatibilities(service, allConfigs)
-    graph.replaceNodeAttributes(service.node.id, service.node as unknown as GraphNode)
+    if (graph.hasNode(service.node.id)) {
+      // Merge with whatever's on the node already (aliases from γ #75 land
+      // before this phase), so the writeback doesn't drop fields populated by
+      // earlier passes.
+      const current = graph.getNodeAttributes(service.node.id) as ServiceNode
+      graph.replaceNodeAttributes(service.node.id, {
+        ...current,
+        ...(service.node as ServiceNode),
+        ...(current.aliases ? { aliases: current.aliases } : {}),
+      } as unknown as GraphNode)
+    }
   }
 
   return { nodesAdded, edgesAdded }

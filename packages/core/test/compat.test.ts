@@ -1,5 +1,16 @@
-import { describe, it, expect } from 'vitest'
-import { checkCompatibility, compatPairs } from '../src/compat.js'
+import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+import {
+  checkCompatibility,
+  checkDeprecatedApi,
+  checkNodeEngineConstraint,
+  checkPackageConflict,
+  compatPairs,
+  deprecatedApis,
+  ensureCompatLoaded,
+  nodeEngineConstraints,
+  packageConflicts,
+  resetCompatMatrix,
+} from '../src/compat.js'
 
 describe('checkCompatibility', () => {
   describe('pg / postgresql', () => {
@@ -94,5 +105,125 @@ describe('checkCompatibility', () => {
         'pymongo/mongodb',
       ])
     })
+  })
+})
+
+describe('checkNodeEngineConstraint', () => {
+  it('flags a service whose engines.node excludes the required version', () => {
+    const constraint = nodeEngineConstraints().find((c) => c.package === 'next')!
+    const r = checkNodeEngineConstraint(constraint, '14.2.0', '>=16')
+    expect(r.compatible).toBe(false)
+    expect(r.requiredNodeVersion).toBe('18.17.0')
+  })
+
+  it('passes when engines.node admits the required version', () => {
+    const constraint = nodeEngineConstraints().find((c) => c.package === 'next')!
+    expect(checkNodeEngineConstraint(constraint, '14.2.0', '>=20').compatible).toBe(true)
+  })
+
+  it('passes when the package version is below the constraint trigger', () => {
+    const constraint = nodeEngineConstraints().find((c) => c.package === 'next')!
+    expect(checkNodeEngineConstraint(constraint, '13.5.0', '>=16').compatible).toBe(true)
+  })
+
+  it('refuses to claim a conflict when engines.node is unset', () => {
+    const constraint = nodeEngineConstraints().find((c) => c.package === 'next')!
+    expect(checkNodeEngineConstraint(constraint, '14.2.0', undefined).compatible).toBe(true)
+  })
+})
+
+describe('checkPackageConflict', () => {
+  it('flags @tanstack/react-query 5+ paired with React 17', () => {
+    const conflict = packageConflicts().find(
+      (c) => c.package === '@tanstack/react-query',
+    )!
+    const r = checkPackageConflict(conflict, '5.0.0', '17.0.2')
+    expect(r.compatible).toBe(false)
+    expect(r.foundVersion).toBe('17.0.2')
+    expect(r.requires).toEqual({ name: 'react', minVersion: '18.0.0' })
+  })
+
+  it('flags @tanstack/react-query 5+ when the required peer is missing entirely', () => {
+    const conflict = packageConflicts().find(
+      (c) => c.package === '@tanstack/react-query',
+    )!
+    const r = checkPackageConflict(conflict, '5.0.0', undefined)
+    expect(r.compatible).toBe(false)
+  })
+
+  it('passes when both packages are above the threshold', () => {
+    const conflict = packageConflicts().find(
+      (c) => c.package === '@tanstack/react-query',
+    )!
+    expect(checkPackageConflict(conflict, '5.18.0', '18.2.0').compatible).toBe(true)
+  })
+})
+
+describe('checkDeprecatedApi', () => {
+  it('flags any declared version of a deprecated package without a max', () => {
+    const rule = deprecatedApis().find((d) => d.package === 'node-uuid')!
+    expect(checkDeprecatedApi(rule, '1.4.0').compatible).toBe(false)
+  })
+
+  it('respects packageMaxVersion when set', () => {
+    const rule = deprecatedApis().find((d) => d.package === 'request')!
+    expect(checkDeprecatedApi(rule, '2.88.0').compatible).toBe(false)
+    expect(checkDeprecatedApi(rule, '99.0.0').compatible).toBe(true)
+  })
+})
+
+describe('ensureCompatLoaded — NEAT_COMPAT_URL', () => {
+  const originalEnv = process.env.NEAT_COMPAT_URL
+  let originalFetch: typeof fetch
+
+  beforeEach(() => {
+    resetCompatMatrix()
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    if (originalEnv === undefined) delete process.env.NEAT_COMPAT_URL
+    else process.env.NEAT_COMPAT_URL = originalEnv
+    globalThis.fetch = originalFetch
+    resetCompatMatrix()
+  })
+
+  it('merges a remote extension into the bundled matrix', async () => {
+    process.env.NEAT_COMPAT_URL = 'https://example.test/compat-' + Date.now() + '.json'
+    globalThis.fetch = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        async json() {
+          return {
+            pairs: [
+              {
+                kind: 'driver-engine',
+                driver: 'redis',
+                engine: 'redis',
+                minDriverVersion: '4.0.0',
+                minEngineVersion: '7',
+                reason: 'redis 7 changed RESP3 negotiation; redis < 4 lacks the handshake.',
+              },
+            ],
+          }
+        },
+      }) as unknown as Response) as unknown as typeof fetch
+
+    await ensureCompatLoaded()
+    const pair = compatPairs().find((p) => p.driver === 'redis' && p.engine === 'redis')
+    expect(pair).toBeDefined()
+    expect(pair?.minDriverVersion).toBe('4.0.0')
+  })
+
+  it('falls back silently to the bundled matrix when fetch fails', async () => {
+    process.env.NEAT_COMPAT_URL = 'https://example.test/missing-' + Date.now() + '.json'
+    globalThis.fetch = (async () => {
+      throw new Error('network down')
+    }) as unknown as typeof fetch
+
+    await ensureCompatLoaded()
+    expect(compatPairs().length).toBeGreaterThanOrEqual(6)
   })
 })
