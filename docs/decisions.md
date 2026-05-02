@@ -245,3 +245,20 @@ ADR-015 made `pgDriverVersion` non-load-bearing — `getRootCause` now reads `de
 **Why migrate rather than hard-fail.** ADR-011 set the precedent that incompatible schema bumps throw on load; this bump is *forward-compatible*. Stripping a field that no consumer reads anymore is exactly the case where an automatic migration costs nothing and saves users a manual re-extract. The hard-fail path is reserved for genuinely incompatible changes (renaming an edge type, restructuring a node id format).
 
 **One-way door check.** Adding `pgDriverVersion` back later would be trivial — it'd be a Zod field plus an extract-phase write. Nothing about removing it now traps the schema. If the v0.1.2 compat work (#74) ends up wanting per-driver hot-fields on `ServiceNode`, that's a generalised mechanism, not a re-litigation of this one field.
+
+---
+
+## ADR-020 — Bundle OTLP `.proto` files in-tree; opt-in gRPC receiver
+
+**Date:** 2026-05-02
+**Status:** Active.
+
+The OTLP/gRPC receiver lives in `packages/core/src/otel-grpc.ts` and is only started when `NEAT_OTLP_GRPC=true`. It loads `.proto` files from `packages/core/proto/opentelemetry/proto/...` via `@grpc/proto-loader` at startup, decodes the binary wire format, reshapes the snake_case message into the same `OtlpTracesRequest` shape the HTTP receiver uses, and then reuses `parseOtlpRequest`.
+
+**Why bundle the protos.** `@opentelemetry/proto` isn't published as an npm package, and the alternatives — pulling in `@opentelemetry/otlp-grpc-exporter-base` (the wrong direction; it's an exporter), hand-rolling protobuf decoding with `protobufjs`, or generating TypeScript stubs at build time — each carry more weight than four short `.proto` files copied verbatim from the upstream OpenTelemetry repo. The protos are Apache-2.0 / CC0 and stable across OTLP versions.
+
+**Why opt-in.** Most NEAT installs run the HTTP path because that's what docker-compose's collector ships in this repo. Turning on a second listener by default would surprise existing operators and risk a port collision on `:4317`. `NEAT_OTLP_GRPC=true` is the explicit affordance; the documented flag means "I know I'm adding a transport." `NEAT_OTLP_GRPC_PORT` lets non-default deployments rebind.
+
+**Why share `parseOtlpRequest`.** The HTTP and gRPC paths produce identical `ParsedSpan`s downstream. Anything past the receiver — `handleSpan`, `stitchTrace`, `upsertObservedEdge`, `markStaleEdges` — is transport-agnostic and stays that way. If the wire formats drift in a future OTLP rev, the divergence is contained in the receivers.
+
+**When to revisit.** If a third transport lands (gRPC over Unix socket? OTLP/Arrow?), the reshape step starts looking like an interface rather than a function, and we extract a `Decoded → ParsedSpan[]` adapter type. Until then, two transports calling one decoder is the simpler shape.

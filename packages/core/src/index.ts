@@ -18,6 +18,11 @@ export {
   type OtlpTracesRequest,
 } from './otel.js'
 export {
+  startOtelGrpcReceiver,
+  type BuildOtelGrpcReceiverOptions,
+  type OtelGrpcReceiver,
+} from './otel-grpc.js'
+export {
   handleSpan,
   makeSpanHandler,
   markStaleEdges,

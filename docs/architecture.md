@@ -50,14 +50,18 @@ Live (M2+):
 
 ```
 demo services emit OTel spans
-       ↓ OTLP/HTTP :4318
+       ↓ OTLP/HTTP :4318  (or OTLP/gRPC :4317 with NEAT_OTLP_GRPC=true)
 @opentelemetry/collector
-       ↓ OTLP/HTTP :4318
-core OTel receiver (packages/core/src/otel/*.ts — lands in M2)
-       ↓ span → edge mapper
+       ↓ OTLP/HTTP :4318  (or OTLP/gRPC :4317)
+core OTel receiver:
+   packages/core/src/otel.ts       — HTTP/JSON, always on
+   packages/core/src/otel-grpc.ts  — gRPC, opt-in via NEAT_OTLP_GRPC=true
+       ↓ span → edge mapper (parseOtlpRequest is shared)
 core graph: existing nodes get OBSERVED edges with confidence + lastObserved
        ↓ stale detection: edges not seen in N seconds → STALE
 ```
+
+The gRPC receiver loads `.proto` files bundled at `packages/core/proto/` via `@grpc/proto-loader` at startup, decodes the binary OTLP wire format, reshapes the snake_case message into the same `OtlpTracesRequest` shape the HTTP path uses, and reuses `parseOtlpRequest` so the downstream `onSpan` handler sees identical `ParsedSpan`s either way. Default port is `4317` (the OTLP/gRPC convention); override with `NEAT_OTLP_GRPC_PORT`.
 
 ## Provenance lifecycle
 
