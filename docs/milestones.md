@@ -12,39 +12,37 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-02. **v0.1.2-β is shipped on `main`.** All five β PRs merged in one sequence (#89/#90/#91/#92/#93). Workspace is green at HEAD: `npx turbo build test lint` clean, 132 core / 25 types / 17 mcp tests passing. Issues #69, #70, #71, #72, #73 still open — they get closed by hand after you spot-verify the merged work.
+**Last session ended:** 2026-05-02. **v0.1.2-γ is shipped on `main`.** All five γ PRs merged (#95/#96/#97/#98/#99). Workspace is green at HEAD: `npx turbo build test lint` clean, **178 core / 30 types / 24 mcp** tests passing. Issues #74, #75, #76, #77, #78 still open — they get closed by hand after you spot-verify the merged work.
 
-**Next session is v0.1.2-γ — graph correctness.** Confidence stops being a constant, compat grows beyond driver/engine pairs, FRONTIER nodes get populated, snapshot diffing lands. β gave γ a richer graph to reason about; γ's job is to make the reasoning sharper.
+**Next session is v0.1.2-δ — ergonomics.** γ made the graph reason sharper; δ makes it pleasant to use. `neat watch` ends manual `POST /graph/scan` during dev, MCP Resources let agents subscribe instead of poll, `semantic_search` graduates from substring to embeddings, and multi-project support stops `getGraph()` being a singleton.
 
-### γ work order (within v0.1.2-γ)
+### δ work order (within v0.1.2-δ)
 
-Branch each issue off the latest `main`. Keep PRs small; #76 will likely touch the edge schema, so co-ordinate snapshot bumps with #74.
+Branch each issue off the latest `main`. δ PRs are largely independent — none of them share a schema, so they don't need to stack.
 
-1. **#75 — OBSERVED-edge attribution + FRONTIER population.** OBSERVED edges record nothing about *who* drove the traffic that produced them; FRONTIER nodes are reserved in the enum but never written. Both are pre-requisites for the rest of γ. Lives mostly in `packages/core/src/ingest.ts` (the trace stitcher knows when it's filling a hole — that's the FRONTIER signal).
-2. **#77 — snapshot diffing endpoint + MCP tool.** `GET /graph/diff?since=<timestamp>` returns added/removed/changed nodes + edges relative to the named snapshot. Stand-alone — won't conflict with the schema work. The MCP side is a thin wrapper, parallel work.
-3. **#74 — compat matrix beyond drivers** (Node engines, package conflicts, deprecated APIs). The matrix shape grows: today it's `{driver, engine, minDriverVersion, minEngineVersion}`; γ adds `{kind: "engine"|"package-conflict"|"deprecated-api"}` so traversal can ask "what kind of incompatibility?" Touches `compat.json` schema + `compat.ts`. Snapshot stays compatible if we keep all new fields optional.
-4. **#76 — per-edge confidence signals** (span count, error rate, recency). Confidence today is one of `1.0 | 0.7 | 0.5 | 0.3`. γ replaces that with a continuous score derived from `callCount`, error rate, and `lastObserved` recency. The math lives in `packages/core/src/traverse.ts#confidenceFromMix`. Edge schema gains a few optional numeric fields — co-ordinate the snapshot bump with #74.
-5. **#78 — per-edge-type stale thresholds + stale event log.** Today `markStaleEdges` uses one global threshold (24h). γ moves that to a per-edge-type config (`CALLS` stale faster than `CONNECTS_TO`, etc.) and writes a stale-event log so consumers can replay transitions. New ADR likely.
+1. **#79 — `neat watch <path>` daemon.** New CLI subcommand, watches the scan path with `chokidar`, debounces ~1s, re-extracts on file changes. Same in-memory graph as the REST API; SIGTERM has to clean up watchers. Lives next to `neat init` in `packages/core/src/cli.ts`. Pre-requisite work (extract phase modules, recursive service discovery) is already in place from β.
+2. **#81 — MCP Resources.** Expose every node as `neat://node/<id>` (read returns attrs + outbound edges) and `neat://incidents/recent` as a streaming resource. Wire up resource list + read handlers next to the existing `server.tool(...)` calls in `packages/mcp/src/index.ts`. Tools stay; resources are additive.
+3. **#82 — real `semantic_search` embeddings.** Embed `id + name + description fragments` per node. Default to `nomic-embed-text` via Ollama if `OLLAMA_HOST` is set; fall back to `@xenova/transformers` in-process; substring fallback when neither is available. Flat cosine in-memory (≤10K nodes is fine). **Needs a model-choice ADR before code lands** — write that first so the choice is documented, not just embedded in code.
+4. **#83 — multi-project support.** Last in δ on purpose; α/γ schemas have settled now, so now's safe. Replace `getGraph()` singleton with `Map<string, NeatGraph>`. Routes become `/projects/:project/graph` with `default` as the back-compat fallback. Snapshots persist to `neat-out/<project>.json`. MCP tools take an optional `project` arg; server reads `NEAT_DEFAULT_PROJECT`.
 
-#75 + #77 first, in parallel — neither depends on the other and neither touches the schema. #74 next; #76 third (touches edge schema — co-ordinate snapshot bump with #74); #78 last.
+#79 first (stand-alone, no schema impact). #81 + #82 in parallel after that. #83 last — it touches every route shape, so let the others land first.
 
-### M6 manual verification — DEFERRED TO POST-δ
+### M6 manual verification — STILL DEFERRED, now post-δ
 
-The two unchecked manual gates (live Railway deploy + Claude Code end-to-end against the deployed core) wait until γ + δ have also merged. Reasoning hasn't changed — see PR #87 + the M6 section below.
+The two unchecked manual gates (live Railway deploy + Claude Code end-to-end against the deployed core) are the closing gate. Reasoning hasn't changed since PR #87. Run them after #83 merges, then tag v0.1.2.
 
-### Gotchas a fresh γ session will benefit from
+### Gotchas a fresh δ session will benefit from
 
-- **β shipped a much richer graph.** `extract/` now has subdirs for every phase: `databases/{db-config-yaml,dotenv,prisma,drizzle,knex,ormconfig,typeorm,sequelize,docker-compose}`, `calls/{http,kafka,redis,aws,grpc}`, `infra/{docker-compose,dockerfile,terraform,k8s}`. Service discovery is recursive + workspace-aware + Python-capable. Same `extract/index.ts` orchestrator pattern — five phases, each returns `{nodesAdded, edgesAdded}`. Don't refactor that.
-- **`extract/index.ts` is now a 5-phase orchestrator.** Phases: services → databases → configs → calls → infra. Adding a γ phase (e.g. confidence backfill) means writing the function and one line in the orchestrator.
-- **Snapshot schema is still at v2.** Every β change was additive. Adding optional fields to existing schemas stays forward-compatible. Renaming or restructuring (e.g. flattening `incompatibilities`, repurposing `provenance`) bumps to v3 — add a v2→v3 migration in `loadGraphFromDisk` per ADR-019's pattern.
-- **Compat is data-driven (ADR-015).** Driver/engine pairs live in `compat.json`. #74 generalises this — new `kind` field on each pair, plus probably new top-level shapes. Don't add per-kind code paths; let the matrix carry the data.
-- **`.env` still records existence, not contents (ADR-016).** β's #70 reads `DATABASE_URL` etc. into transient `DbConfig`s for DB discovery — values never reach a `ConfigNode`. Don't blur this in γ; if #76's confidence math wants per-edge metadata, attach it to the edge, not to a config.
-- **Edge evidence already exists.** #71 added optional `evidence: { file, line, snippet }` to `GraphEdgeSchema`. γ can extend it (e.g. `firstObservedAt`, `errorRate`) without restructuring.
-- **EdgeType enum has 7 values now** (CALLS, DEPENDS_ON, CONNECTS_TO, CONFIGURED_BY, PUBLISHES_TO, CONSUMES_FROM, RUNS_ON). NodeType still 4 (the `infra:<kind>:<name>` taxonomy lives inside `InfraNode.kind`, not as new top-level node types — see #73's commit). Both `packages/types/test/schemas.test.ts` and any tests counting types will need an update if you grow either.
-- **Demo extraction picks up Dockerfiles now.** `service:service-a` and `service:service-b` each emit a `RUNS_ON` edge to `infra:container-image:node:20-bookworm-slim`. Blast-radius from `service:service-a` is now 4 deep (was 3) and 2 at depth 1 (was 1). The api tests already reflect this — don't try to "fix" them back to the old numbers.
-- **OTLP/gRPC is opt-in.** `NEAT_OTLP_GRPC=true` activates the listener (port `:4317`, override via `NEAT_OTLP_GRPC_PORT`). Default deployments are HTTP-only on `:4318`.
-- **Manual pg span in service-b is gone.** Removed during M5; the trace stitcher fills the gap. Don't reintroduce one.
-- **Branching convention unchanged.** One issue → one branch `<num>-<slug>` → one PR (`Refs #N`, not `Closes #N`). Plain-English commits, no `Co-Authored-By: Claude`. Branch off the latest `main` — γ PRs stack on β's merged work, not on each other.
+- **γ shipped: confidence is signal-driven, frontier is real, the matrix has four kinds, the diff endpoint exists, staleness is per-edge-type.** None of δ's work needs to touch any of that. If you find yourself editing `traverse.ts#confidenceForEdge` or the matrix shape, you're outside δ's scope — push back.
+- **Snapshot schema is still v2.** γ kept every change additive. δ likely will too: `neat watch` doesn't change disk format, MCP Resources don't touch snapshots, embeddings live in memory + a sidecar cache, multi-project just changes the file *path*. If something genuinely demands v3, follow ADR-019's migration pattern.
+- **`extract/index.ts` orchestrator is unchanged in shape.** Phases: services → aliases → databases → configs → calls → infra → frontier promotion. γ #75 added `addServiceAliases` between phase 1 and 2, and `promoteFrontierNodes` after phase 5 (returned as `frontiersPromoted`). Adding a new "phase" still means writing the function and one line in the orchestrator. **`neat watch`'s incremental-extract optimisation is per-phase: a `package.json` change touches phase 1 + 2; a `*.js` change touches phase 4 only.**
+- **NodeType has 5 values now** (ServiceNode, DatabaseNode, ConfigNode, InfraNode, FrontierNode — γ #75). EdgeType still 7. `packages/types/test/schemas.test.ts` counts both. Multi-project (#83) doesn't add a node type; projects are scoping, not topology.
+- **MCP currently has eight tools.** δ #81 adds *resources* on top, which is a different MCP surface (read-by-URI + subscribe vs. tool-call). Don't reframe the existing tools as resources — the design assumes both surfaces coexist.
+- **`compat.json` already has four kinds + a `NEAT_COMPAT_URL` override** (γ #74). #82's embeddings shouldn't reuse this loader — embeddings are per-node graph data, not portable matrix data.
+- **`stale-events.ndjson` is the new transition log** (γ #78, ADR-024). Anything δ-shaped that wants "what just changed" should read it rather than diffing the graph itself. `neat watch` may want to write a similar log for re-extraction events; if so, follow the same ndjson + `readX` helper shape.
+- **`/incidents/:nodeId` route catches `/incidents/stale`** unless registered first; γ #78 already handles this. Other route additions in #79/#81 should keep specific-before-parametric route ordering.
+- **Branching convention unchanged.** One issue → one branch `<num>-<slug>` → one PR (`Refs #N`, not `Closes #N`). Plain-English commits, no `Co-Authored-By: Claude`. Branch off the latest `main`.
+- **Force-push needs explicit user approval.** If you rebase a δ branch and need to force-push, ask first — the harness blocks `git push --force-with-lease` unless authorised for the specific operation.
 
 ---
 

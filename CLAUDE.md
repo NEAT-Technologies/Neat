@@ -46,21 +46,26 @@ The graph is no longer JS-and-pg-shaped. Recursive workspace discovery, generali
 - ✓ #72 — Python services via `tree-sitter-python`, `requirements.txt` + `pyproject.toml` parsing, three new compat entries (psycopg2, pymongo, mysql-connector-python). NEAT's own toolchain stays Node + TS.
 - ✓ #73 — infra extraction: docker-compose (DEPENDS_ON), Dockerfile (RUNS_ON to `infra:container-image:<image>`), Terraform `aws_*`, k8s `kind`. `InfraNodeSchema` gained `kind`; `EdgeType` gained `RUNS_ON`.
 
-### v0.1.2-γ — Graph correctness (next up)
+### v0.1.2-γ — Graph correctness ✓ shipped
 
-Make the reasoning sharper. Order within γ:
+The graph reasons sharper now. Confidence stops being a constant, compat covers four kinds, frontier nodes get populated and promoted, snapshot diffing lands, staleness is per-edge-type with a transition log.
 
-1. **#75 — OBSERVED-edge attribution + FRONTIER population.** Pre-requisite for the rest of γ. Lives mostly in `packages/core/src/ingest.ts`.
-2. **#77 — snapshot diffing endpoint + MCP tool.** Stand-alone, parallel to #75.
-3. **#74 — compat matrix beyond drivers** (Node engines, package conflicts, deprecated APIs). Touches `compat.json` shape; new optional fields stay snapshot-compatible.
-4. **#76 — per-edge confidence signals** (span count, error rate, recency). Touches edge schema — co-ordinate snapshot bump with #74.
-5. **#78 — per-edge-type stale thresholds + stale event log.** Likely warrants an ADR.
+- ✓ #75 — `ServiceNode.aliases` populated from compose / Dockerfile labels / k8s metadata; `FrontierNode` (5th `NodeType`) for unresolved span peers; `promoteFrontierNodes` retires placeholders once an alias matches (ADR-023).
+- ✓ #77 — `GET /graph/diff?against=<path-or-url>` plus MCP `get_graph_diff`. Returns added/removed/changed for both nodes and edges with both `exportedAt` timestamps.
+- ✓ #74 — compat matrix grew `kind: 'driver-engine' | 'node-engine' | 'package-conflict' | 'deprecated-api'`. `NEAT_COMPAT_URL` fetches a remote extension, caches to `~/.neat/compat-cache.json` with 24h TTL. `ServiceNode.nodeEngine` carries `engines.node`.
+- ✓ #76 — per-edge `signal: { spanCount, errorCount, lastObservedAgeMs }`. `confidenceForEdge` blends provenance ceiling × volume × recency × cleanliness. Path-level confidence is the bottleneck (min) across the walk. MCP surfaces signal numbers verbatim.
+- ✓ #78 — per-edge-type stale thresholds (`CALLS` 1h, `CONNECTS_TO` 4h, `DEPENDS_ON` 24h). `NEAT_STALE_THRESHOLDS` JSON override. Every transition appends to `stale-events.ndjson`; `/incidents/stale` + MCP `get_recent_stale_edges` expose them (ADR-024).
 
-#75 + #77 first, in parallel; #74 next; #76 third; #78 last.
+### v0.1.2-δ — Ergonomics (next up)
 
-### v0.1.2-δ — Ergonomics
+Make the graph pleasant to use. Order within δ:
 
-#79 (`neat watch` daemon — needs #68 + #69), #81 (MCP Resources), #82 (real embeddings for `semantic_search` — model-choice ADR needed), #83 (multi-project support — last; don't start until α/γ schemas have settled).
+1. **#79 — `neat watch <path>` daemon.** New CLI subcommand alongside `neat init`. Uses `chokidar`, debounces ~1s, re-extracts incrementally per phase. SIGTERM has to clean up watchers. Same in-memory graph as the REST API; no new persistence path.
+2. **#81 — MCP Resources.** `neat://node/<id>` (read returns attrs + outbound edges) and `neat://incidents/recent` (streaming subscription). Wire next to existing `server.tool(...)` calls in `packages/mcp/src/index.ts`. Tools stay; resources are additive.
+3. **#82 — real `semantic_search` embeddings.** Default to Ollama (`nomic-embed-text`) if `OLLAMA_HOST` is set; fall back to `@xenova/transformers` in-process; substring fallback otherwise. Flat cosine in-memory (≤10K nodes is fine). Write the model-choice ADR before the code.
+4. **#83 — multi-project support.** Replace `getGraph()` singleton with `Map<string, NeatGraph>`. Routes `/projects/:project/graph`, default `"default"` for back-compat. Snapshots persist as `neat-out/<project>.json`. MCP tools get an optional `project` arg; server reads `NEAT_DEFAULT_PROJECT`.
+
+#79 first (no schema impact). #81 + #82 in parallel after that. #83 last — it touches every route shape, so let the others land first.
 
 ### Closing gate — M6 manual verification
 
