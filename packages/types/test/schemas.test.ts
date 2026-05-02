@@ -19,8 +19,8 @@ describe('runtime constants', () => {
   it('Provenance has 5 values', () => {
     expect(Object.values(Provenance)).toHaveLength(5)
   })
-  it('EdgeType has 4 values', () => {
-    expect(Object.values(EdgeType)).toHaveLength(4)
+  it('EdgeType has 6 values', () => {
+    expect(Object.values(EdgeType)).toHaveLength(6)
   })
   it('NodeType has 4 values', () => {
     expect(Object.values(NodeType)).toHaveLength(4)

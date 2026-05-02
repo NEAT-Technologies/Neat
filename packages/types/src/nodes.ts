@@ -57,6 +57,7 @@ export const InfraNodeSchema = z.object({
   name: z.string(),
   provider: z.string(),
   region: z.string().optional(),
+  kind: z.string().optional(),
 })
 export type InfraNode = z.infer<typeof InfraNodeSchema>
 

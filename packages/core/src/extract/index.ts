@@ -2,7 +2,7 @@ import type { NeatGraph } from '../graph.js'
 import { addServiceNodes, discoverServices } from './services.js'
 import { addDatabasesAndCompat } from './databases/index.js'
 import { addConfigNodes } from './configs.js'
-import { addCallEdges } from './calls.js'
+import { addCallEdges } from './calls/index.js'
 
 export interface ExtractResult {
   nodesAdded: number
@@ -18,10 +18,10 @@ export async function extractFromDirectory(
   const phase1Nodes = addServiceNodes(graph, services)
   const phase2 = await addDatabasesAndCompat(graph, services)
   const phase3 = await addConfigNodes(graph, services, scanPath)
-  const phase4Edges = await addCallEdges(graph, services)
+  const phase4 = await addCallEdges(graph, services)
 
   return {
-    nodesAdded: phase1Nodes + phase2.nodesAdded + phase3.nodesAdded,
-    edgesAdded: phase2.edgesAdded + phase3.edgesAdded + phase4Edges,
+    nodesAdded: phase1Nodes + phase2.nodesAdded + phase3.nodesAdded + phase4.nodesAdded,
+    edgesAdded: phase2.edgesAdded + phase3.edgesAdded + phase4.edgesAdded,
   }
 }
