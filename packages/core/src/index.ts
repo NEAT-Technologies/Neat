@@ -27,9 +27,14 @@ export {
   makeSpanHandler,
   markStaleEdges,
   readErrorEvents,
+  readStaleEvents,
   startStalenessLoop,
   stitchTrace,
+  thresholdForEdgeType,
   type IngestContext,
+  type MarkStaleOptions,
+  type StaleEvent,
+  type StalenessLoopOptions,
 } from './ingest.js'
 export { getBlastRadius, getRootCause } from './traverse.js'
 export {

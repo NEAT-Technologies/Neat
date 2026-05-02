@@ -305,11 +305,16 @@ v0.1.2-β #73 populated `InfraNode` from docker-compose, Dockerfile, Terraform, 
 
 ---
 
+<<<<<<< HEAD
 ## ADR-023 — `FrontierNode` as a fifth top-level node type
+=======
+## ADR-024 — Per-edge-type stale thresholds
+>>>>>>> 959e891 (Per-edge-type stale thresholds + stale-events log (#78))
 
 **Date:** 2026-05-02
 **Status:** Active.
 
+<<<<<<< HEAD
 v0.1.2-γ #75 added a fifth member to `GraphNodeSchema`: `FrontierNode`. A frontier node is the placeholder ingest writes when an OTel span peer (`server.address`, `net.peer.name`, etc.) doesn't resolve to any known service. The id format is `frontier:<host>`. A later extraction round picks up the host as an alias on a real service, `promoteFrontierNodes` re-links the edges, and the placeholder goes away.
 
 **Why a new node type, not an `InfraNode` kind.** ADR-022 deliberately kept the discriminated union at four. Frontier nodes broke that ceiling because they aren't classified by *what they are* — they're classified by *what they don't yet know*. They have a distinct lifecycle (placeholder → promoted → deleted), they carry temporal fields (`firstObserved`, `lastObserved`) that don't make sense on infra catalog entries, and a frontier node is supposed to disappear once extraction catches up. Cramming that into `InfraNode.kind = "frontier"` would have meant teaching every consumer of `InfraNode` to filter out a special case, and would have leaked frontier semantics into a node type whose whole job is to be permanent.
@@ -323,3 +328,18 @@ v0.1.2-γ #75 added a fifth member to `GraphNodeSchema`: `FrontierNode`. A front
 **Where promotion runs.** At the end of every `extractFromDirectory` pass, after services + databases + configs + calls + infra. Promotion needs the full alias state from the latest extraction round, so it has to run last. Re-running ingest doesn't trigger promotion directly — it just keeps pinning frontier `lastObserved` — which is fine because the next extraction round will sweep them up.
 
 **When to revisit.** If frontier nodes start sticking around (a host that never resolves no matter how many rounds pass), they become a UX signal: "you have unknown peers." That's a γ #76 concern (per-edge confidence) or δ ergonomics, not this ADR. The placeholder will continue to do its job until then.
+=======
+A single 24h `STALE_THRESHOLD_MS` doesn't survive contact with diverse traffic. HTTP `CALLS` recur in seconds — 24h means a service could go down for the whole afternoon and the graph would still claim everything was fine. Infra `DEPENDS_ON` is the opposite — a docker-compose service idle overnight isn't a problem. v0.1.2-γ #78 splits the threshold per edge type: `CALLS` go stale at 1h, `CONNECTS_TO` / `PUBLISHES_TO` / `CONSUMES_FROM` at 4h, infra `DEPENDS_ON` / `CONFIGURED_BY` / `RUNS_ON` at 24h.
+
+**Why a hardcoded default map, not a single tunable.** The defaults encode operational knowledge — "HTTP traffic is chatty, infra dependencies aren't" — and shouldn't have to be rediscovered per deployment. The map lives next to `markStaleEdges` in `ingest.ts`; new edge types fall back to 24h via a single sentinel constant, so adding to `EdgeType` doesn't silently bypass staleness sweeps.
+
+**Why `NEAT_STALE_THRESHOLDS` is JSON, not per-flag env vars.** The variable count grows with `EdgeType` cardinality, and most deployments won't override anything — a single JSON blob is the path of least resistance. The parser tolerates malformed input (warn + fall back to defaults) so a typo can't take down the staleness loop.
+
+**Why a stale-events ndjson log, not just edge mutations.** The graph stores the *current* state — once an edge flips to STALE, the OBSERVED → STALE transition is gone. That transition is the load-bearing fact (oncall wants to know "what just stopped working", not "what's currently quiet"). A per-line ndjson log is the same shape as `errors.ndjson`, replays cleanly, and a downstream consumer (alerting, dashboard) can tail it without touching the graph.
+
+**Why expose it as `/incidents/stale` rather than another resource.** Stale-edge transitions *are* incidents in the operational sense — something stopped, oncall might care. Co-locating with `/incidents` keeps the surface coherent. The MCP tool `get_recent_stale_edges` mirrors `get_incident_history` so the questions ("what just broke?" / "what just went quiet?") have parallel answers.
+
+**Where this could go wrong.** A flapping integration that calls every 65 minutes will oscillate between OBSERVED and STALE under the 1h `CALLS` default. The fix is to nudge the threshold (`NEAT_STALE_THRESHOLDS={"CALLS":7200000}`); the ndjson log will record both transitions so the oscillation itself is observable.
+
+**When to revisit.** When δ #79's `neat watch` daemon runs continuously, the stale-events log will grow unbounded. Rotation / TTL belongs there, not here — this ADR's job is to define the shape; that one will define the lifecycle.
+>>>>>>> 959e891 (Per-edge-type stale thresholds + stale-events log (#78))

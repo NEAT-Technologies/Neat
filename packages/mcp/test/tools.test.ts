@@ -7,6 +7,7 @@ import {
   getGraphDiff,
   getIncidentHistory,
   getObservedDependencies,
+  getRecentStaleEdges,
   getRootCause,
   semanticSearch,
 } from '../src/tools.js'
@@ -455,5 +456,55 @@ describe('getGraphDiff', () => {
     const res = await getGraphDiff(client, { againstSnapshot: 'oops' })
     expect(res.isError).toBe(true)
     expect(res.content[0].text).toContain('Could not load snapshot oops')
+  })
+})
+
+describe('getRecentStaleEdges', () => {
+  it('formats a list of stale-edge transitions newest-first', async () => {
+    const { client, capture } = clientFor({
+      '/incidents/stale': [
+        {
+          edgeId: 'CONNECTS_TO:OBSERVED:service:b->database:c',
+          source: 'service:b',
+          target: 'database:c',
+          edgeType: 'CONNECTS_TO',
+          thresholdMs: 14400000,
+          ageMs: 15000000,
+          lastObserved: '2026-05-02T07:00:00.000Z',
+          transitionedAt: '2026-05-02T11:10:00.000Z',
+        },
+        {
+          edgeId: 'CALLS:OBSERVED:service:a->service:b',
+          source: 'service:a',
+          target: 'service:b',
+          edgeType: 'CALLS',
+          thresholdMs: 3600000,
+          ageMs: 5400000,
+          lastObserved: '2026-05-02T10:00:00.000Z',
+          transitionedAt: '2026-05-02T11:30:00.000Z',
+        },
+      ],
+    })
+    const res = await getRecentStaleEdges(client, {})
+    const out = res.content[0].text
+    expect(out).toContain('Recent stale-edge transitions (2)')
+    expect(out).toContain('service:b -[CONNECTS_TO]-> database:c')
+    expect(out).toContain('service:a -[CALLS]-> service:b')
+    expect(capture.paths[0]).toBe('/incidents/stale')
+  })
+
+  it('returns a friendly empty message', async () => {
+    const { client } = clientFor({ '/incidents/stale': [] })
+    const res = await getRecentStaleEdges(client, {})
+    expect(res.content[0].text).toContain('No stale-edge transitions')
+  })
+
+  it('passes edgeType + limit query params', async () => {
+    const { client, capture } = clientFor({
+      '/incidents/stale?limit=10&edgeType=CALLS': [],
+    })
+    await getRecentStaleEdges(client, { limit: 10, edgeType: 'CALLS' })
+    expect(capture.paths[0]).toContain('limit=10')
+    expect(capture.paths[0]).toContain('edgeType=CALLS')
   })
 })
