@@ -36,19 +36,27 @@ Cleared the schema cleanup and the structural refactor that lets every β PR sta
 - ✓ #68 — split `extract.ts` into per-source modules under `packages/core/src/extract/{services,databases,configs,calls,shared,index}.ts`. Orchestrator is 27 lines; each phase is independently importable.
 - ✓ #80 — OTLP/gRPC receiver opt-in via `NEAT_OTLP_GRPC=true` (port `:4317`). Bundled OTLP protos under `packages/core/proto/` (ADR-020).
 
-### v0.1.2-β — Extraction breadth (next up)
+### v0.1.2-β — Extraction breadth ✓ shipped
 
-Make the graph richer. Order within β:
+The graph is no longer JS-and-pg-shaped. Recursive workspace discovery, generalised DB discovery, polyglot service detection, transport-aware call extraction, and infrastructure-as-nodes all landed in one sprint.
 
-1. **#69 — recursive service discovery + workspaces.** Foundational; #70/#71/#72 all need the recursive walk.
-2. **#70 — generalised DB discovery** (.env, ORM configs, docker-compose). Replaces the hardcoded `db-config.yaml` path.
-3. **#71 — calls beyond HTTP URL substrings** (gRPC, Kafka, Redis, AWS SDK). Each gets its own extraction submodule under `extract/calls/` — #68 paid this off in advance.
-4. **#72 — Python service extraction.** New extractor module; needs `tree-sitter-python`. NEAT's toolchain stays TS-only.
-5. **#73 — infrastructure extraction** (docker-compose, Dockerfile, Terraform, k8s). New `infra:` node type prefix (ADR-010 reservation), new edge types in `@neat/types` — likely bumps snapshot schema again.
+- ✓ #69 — recursive `discoverServices` walk, `NEAT_SCAN_DEPTH`, gitignore + workspace globs, dup-name warning.
+- ✓ #70 — DB discovery via parser registry: `.env`, prisma, drizzle, knex, ormconfig, typeorm, sequelize, docker-compose, all on top of the original `db-config.yaml` path.
+- ✓ #71 — calls beyond HTTP: Kafka (`PUBLISHES_TO`/`CONSUMES_FROM`), Redis, AWS SDK (S3 + DynamoDB), gRPC. Edges carry optional `evidence: { file, line, snippet }`.
+- ✓ #72 — Python services via `tree-sitter-python`, `requirements.txt` + `pyproject.toml` parsing, three new compat entries (psycopg2, pymongo, mysql-connector-python). NEAT's own toolchain stays Node + TS.
+- ✓ #73 — infra extraction: docker-compose (DEPENDS_ON), Dockerfile (RUNS_ON to `infra:container-image:<image>`), Terraform `aws_*`, k8s `kind`. `InfraNodeSchema` gained `kind`; `EdgeType` gained `RUNS_ON`.
 
-### v0.1.2-γ — Graph correctness
+### v0.1.2-γ — Graph correctness (next up)
 
-#74 (compat matrix beyond drivers), #75 (OBSERVED attribution + FRONTIER population), #76 (per-edge confidence signals), #77 (snapshot diffing endpoint + MCP tool), #78 (per-edge stale thresholds + event log). Within γ: #75 + #77 first, in parallel; #74 next; #76 third (touches edge schema — co-ordinate snapshot bump with #74); #78 last.
+Make the reasoning sharper. Order within γ:
+
+1. **#75 — OBSERVED-edge attribution + FRONTIER population.** Pre-requisite for the rest of γ. Lives mostly in `packages/core/src/ingest.ts`.
+2. **#77 — snapshot diffing endpoint + MCP tool.** Stand-alone, parallel to #75.
+3. **#74 — compat matrix beyond drivers** (Node engines, package conflicts, deprecated APIs). Touches `compat.json` shape; new optional fields stay snapshot-compatible.
+4. **#76 — per-edge confidence signals** (span count, error rate, recency). Touches edge schema — co-ordinate snapshot bump with #74.
+5. **#78 — per-edge-type stale thresholds + stale event log.** Likely warrants an ADR.
+
+#75 + #77 first, in parallel; #74 next; #76 third; #78 last.
 
 ### v0.1.2-δ — Ergonomics
 
@@ -72,6 +80,8 @@ Run **after δ merges**, not before. Stand up Railway per `docs/railway.md` → 
 - Railway deployment is documented in `docs/railway.md`, not codified as IaC (ADR-018)
 - `pgDriverVersion` removed from `ServiceNodeSchema`; snapshot v1→v2 migrates on load (ADR-019)
 - OTLP `.proto` files bundled in-tree; gRPC receiver is opt-in (ADR-020)
+- Python extraction reads source via `tree-sitter-python`; NEAT's runtime stays Node-only (ADR-021)
+- `infra:<kind>:<name>` id format; one `InfraNode` type, free-string `kind` for sub-typing (ADR-022)
 
 ## Conventions
 
@@ -79,7 +89,7 @@ Run **after δ merges**, not before. Stand up Railway per `docs/railway.md` → 
 - PR body says `Refs #N`, **not** `Closes #N`. The user closes issues by hand after verifying.
 - Commits and PRs read like a colleague wrote them. No "this commit introduces" or release-notes-y bullets. See ADR-008.
 - **No** `Co-Authored-By: Claude` trailer on commits — human authors only (ADR-006).
-- Stack β PRs on top of merged α work, not on each other. `main` rebase is the easier merge story.
+- Stack γ PRs on top of merged β work, not on each other. `main` rebase is the easier merge story.
 - Every package emits ESM + CJS + DTS via tsup. Don't ship ESM-only.
 
 ## Don't do
