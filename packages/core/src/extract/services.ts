@@ -1,5 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import ignore, { type Ignore } from 'ignore'
+import { minimatch } from 'minimatch'
 import type { ServiceNode } from '@neat/types'
 import { NodeType } from '@neat/types'
 import type { NeatGraph } from '../graph.js'
@@ -11,28 +13,165 @@ import {
   type PackageJson,
 } from './shared.js'
 
-// Phase 1 — discover service directories under scanPath. A service is any
-// immediate subdirectory that contains a package.json. The package's `name`
-// becomes the ServiceNode id (`service:<name>`).
-export async function discoverServices(scanPath: string): Promise<DiscoveredService[]> {
-  const out: DiscoveredService[] = []
-  const entries = await fs.readdir(scanPath, { withFileTypes: true })
+const DEFAULT_SCAN_DEPTH = 5
 
-  for (const entry of entries) {
-    if (!entry.isDirectory() || IGNORED_DIRS.has(entry.name)) continue
-    const dir = path.join(scanPath, entry.name)
+interface RootPackageJson extends PackageJson {
+  workspaces?: string[] | { packages?: string[] }
+}
+
+function parseScanDepth(): number {
+  const raw = process.env.NEAT_SCAN_DEPTH
+  if (!raw) return DEFAULT_SCAN_DEPTH
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SCAN_DEPTH
+}
+
+function workspaceGlobs(pkg: RootPackageJson): string[] | null {
+  const ws = pkg.workspaces
+  if (!ws) return null
+  if (Array.isArray(ws)) return ws.length > 0 ? ws : null
+  if (Array.isArray(ws.packages)) return ws.packages.length > 0 ? ws.packages : null
+  return null
+}
+
+async function loadGitignore(scanPath: string): Promise<Ignore | null> {
+  const gitignorePath = path.join(scanPath, '.gitignore')
+  if (!(await exists(gitignorePath))) return null
+  const raw = await fs.readFile(gitignorePath, 'utf8')
+  return ignore().add(raw)
+}
+
+interface WalkOptions {
+  maxDepth: number
+  ig: Ignore | null
+}
+
+async function walkDirs(
+  start: string,
+  scanPath: string,
+  options: WalkOptions,
+  visit: (dir: string) => Promise<void> | void,
+): Promise<void> {
+  async function recurse(current: string, depth: number): Promise<void> {
+    if (depth > options.maxDepth) return
+    const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (IGNORED_DIRS.has(entry.name)) continue
+      const child = path.join(current, entry.name)
+      if (options.ig) {
+        const rel = path.relative(scanPath, child).split(path.sep).join('/')
+        // Trailing slash so `ignore` evaluates the entry as a directory; without
+        // it, gitignore patterns like `dist/` won't match because the lib
+        // distinguishes file vs. directory tests.
+        if (rel && options.ig.ignores(rel + '/')) continue
+      }
+      await visit(child)
+      await recurse(child, depth + 1)
+    }
+  }
+  await recurse(start, 0)
+}
+
+async function expandWorkspaceGlobs(
+  scanPath: string,
+  globs: string[],
+): Promise<string[]> {
+  const found = new Set<string>()
+  const scanDepth = parseScanDepth()
+
+  for (const raw of globs) {
+    const pattern = raw.replace(/^\.\//, '')
+
+    if (!pattern.includes('*')) {
+      const candidate = path.join(scanPath, pattern)
+      if (await exists(path.join(candidate, 'package.json'))) found.add(candidate)
+      continue
+    }
+
+    const segments = pattern.split('/')
+    const staticSegments: string[] = []
+    for (const seg of segments) {
+      if (seg.includes('*')) break
+      staticSegments.push(seg)
+    }
+    const start = path.join(scanPath, ...staticSegments)
+    if (!(await exists(start))) continue
+
+    const hasDoubleStar = pattern.includes('**')
+    const walkDepth = hasDoubleStar
+      ? scanDepth
+      : Math.max(0, segments.length - staticSegments.length - 1)
+
+    await walkDirs(start, scanPath, { maxDepth: walkDepth, ig: null }, async (dir) => {
+      const rel = path.relative(scanPath, dir).split(path.sep).join('/')
+      if (minimatch(rel, pattern) && (await exists(path.join(dir, 'package.json')))) {
+        found.add(dir)
+      }
+    })
+  }
+
+  return [...found]
+}
+
+// Phase 1 — discover service directories under scanPath. A service is any
+// directory containing a package.json. If the root has a `workspaces` field,
+// those globs are authoritative and we stop there. Otherwise we walk
+// recursively, depth-bounded by NEAT_SCAN_DEPTH (default 5), skipping
+// IGNORED_DIRS and anything matched by the root .gitignore. Two package.jsons
+// sharing a `name` collapse to one node (ADR-010 id collision rule); the
+// duplicate logs a warning naming both paths.
+export async function discoverServices(scanPath: string): Promise<DiscoveredService[]> {
+  const rootPkgPath = path.join(scanPath, 'package.json')
+  const rootPkg = (await exists(rootPkgPath))
+    ? await readJson<RootPackageJson>(rootPkgPath)
+    : null
+  const wsGlobs = rootPkg ? workspaceGlobs(rootPkg) : null
+
+  const candidateDirs: string[] = []
+  if (wsGlobs) {
+    candidateDirs.push(...(await expandWorkspaceGlobs(scanPath, wsGlobs)))
+  } else {
+    if (rootPkg && rootPkg.name) candidateDirs.push(scanPath)
+    const ig = await loadGitignore(scanPath)
+    await walkDirs(
+      scanPath,
+      scanPath,
+      { maxDepth: parseScanDepth(), ig },
+      async (dir) => {
+        if (await exists(path.join(dir, 'package.json'))) candidateDirs.push(dir)
+      },
+    )
+  }
+
+  candidateDirs.sort()
+
+  const seen = new Map<string, string>()
+  const out: DiscoveredService[] = []
+  for (const dir of candidateDirs) {
     const pkgPath = path.join(dir, 'package.json')
     if (!(await exists(pkgPath))) continue
-
     const pkg = await readJson<PackageJson>(pkgPath)
-    const deps = pkg.dependencies ?? {}
+    if (!pkg.name) continue
+
+    const existingDir = seen.get(pkg.name)
+    if (existingDir !== undefined) {
+      const a = path.relative(scanPath, existingDir) || '.'
+      const b = path.relative(scanPath, dir) || '.'
+      console.warn(
+        `[neat] duplicate package name "${pkg.name}" — keeping ${a}, ignoring ${b}`,
+      )
+      continue
+    }
+    seen.set(pkg.name, dir)
+
     const node: ServiceNode = {
       id: `service:${pkg.name}`,
       type: NodeType.ServiceNode,
       name: pkg.name,
       language: 'javascript',
       version: pkg.version,
-      dependencies: deps,
+      dependencies: pkg.dependencies ?? {},
       repoPath: path.relative(scanPath, dir),
     }
     out.push({ pkg, dir, node })
