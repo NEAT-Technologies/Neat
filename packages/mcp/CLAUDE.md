@@ -1,6 +1,6 @@
 # @neat/mcp
 
-The NEAT MCP server. Stdio JSON-RPC, seven tools, talks to a running `@neat/core` instance over HTTP.
+The NEAT MCP server. Stdio JSON-RPC, eight tools, talks to a running `@neat/core` instance over HTTP.
 
 ## When to use these tools
 
@@ -17,6 +17,7 @@ Rule of thumb: if the question would take more than two file reads to answer fro
 | "Show me recent errors on X"                         | `get_incident_history`     |
 | "Find nodes matching …"                              | `semantic_search`          |
 | "What changed since the last snapshot?"              | `get_graph_diff`           |
+| "Which integrations have gone quiet?"                | `get_recent_stale_edges`   |
 
 If a tool returns "not found" or empty, check that core is running (`curl $NEAT_CORE_URL/health`) before falling back to source reads.
 

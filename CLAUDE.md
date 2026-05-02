@@ -82,7 +82,11 @@ Run **after δ merges**, not before. Stand up Railway per `docs/railway.md` → 
 - OTLP `.proto` files bundled in-tree; gRPC receiver is opt-in (ADR-020)
 - Python extraction reads source via `tree-sitter-python`; NEAT's runtime stays Node-only (ADR-021)
 - `infra:<kind>:<name>` id format; one `InfraNode` type, free-string `kind` for sub-typing (ADR-022)
+<<<<<<< HEAD
 - `FrontierNode` is a fifth node type for unresolved span peers; promoted away once an alias matches (ADR-023)
+=======
+- Per-edge-type stale thresholds + `stale-events.ndjson` transition log (ADR-024)
+>>>>>>> 959e891 (Per-edge-type stale thresholds + stale-events log (#78))
 
 ## Conventions
 

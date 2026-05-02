@@ -16,7 +16,9 @@ import {
   markStaleEdges,
   promoteFrontierNodes,
   readErrorEvents,
+  readStaleEvents,
   stitchTrace,
+  thresholdForEdgeType,
   type IngestContext,
 } from '../src/ingest.js'
 import type { ParsedSpan } from '../src/otel.js'
@@ -324,8 +326,14 @@ describe('markStaleEdges', () => {
         confidence: 1,
       },
     )
-    const demoted = markStaleEdges(graph, 24 * 60 * 60 * 1000, fresh.getTime())
-    expect(demoted).toBe(1)
+    const result = await markStaleEdges(graph, {
+      thresholds: {
+        CALLS: 24 * 60 * 60 * 1000,
+        CONNECTS_TO: 24 * 60 * 60 * 1000,
+      },
+      now: fresh.getTime(),
+    })
+    expect(result.count).toBe(1)
     const stale = graph.getEdgeAttributes('CALLS:OBSERVED:service:service-a->service:service-b') as GraphEdge
     expect(stale.provenance).toBe(Provenance.STALE)
     expect(stale.confidence).toBe(0.3)
@@ -335,7 +343,7 @@ describe('markStaleEdges', () => {
     expect(still.provenance).toBe(Provenance.OBSERVED)
   })
 
-  it('leaves EXTRACTED edges alone', () => {
+  it('leaves EXTRACTED edges alone', async () => {
     const graph = newGraph()
     graph.addEdgeWithKey(
       'CALLS:service:service-a->service:service-b',
@@ -349,7 +357,112 @@ describe('markStaleEdges', () => {
         provenance: Provenance.EXTRACTED,
       },
     )
-    expect(markStaleEdges(graph, 0, Date.now())).toBe(0)
+    const result = await markStaleEdges(graph, { thresholds: { CALLS: 0 } })
+    expect(result.count).toBe(0)
+  })
+
+  it('uses per-edge-type defaults: CALLS goes stale faster than CONNECTS_TO', async () => {
+    const graph = newGraph()
+    const now = new Date('2026-05-02T12:00:00.000Z').getTime()
+    const ninetyMinAgo = new Date(now - 90 * 60 * 1000).toISOString()
+
+    graph.addEdgeWithKey(
+      'CALLS:OBSERVED:service:service-a->service:service-b',
+      'service:service-a',
+      'service:service-b',
+      {
+        id: 'CALLS:OBSERVED:service:service-a->service:service-b',
+        source: 'service:service-a',
+        target: 'service:service-b',
+        type: EdgeType.CALLS,
+        provenance: Provenance.OBSERVED,
+        lastObserved: ninetyMinAgo,
+      },
+    )
+    graph.addEdgeWithKey(
+      'CONNECTS_TO:OBSERVED:service:service-b->database:payments-db',
+      'service:service-b',
+      'database:payments-db',
+      {
+        id: 'CONNECTS_TO:OBSERVED:service:service-b->database:payments-db',
+        source: 'service:service-b',
+        target: 'database:payments-db',
+        type: EdgeType.CONNECTS_TO,
+        provenance: Provenance.OBSERVED,
+        lastObserved: ninetyMinAgo,
+      },
+    )
+
+    const result = await markStaleEdges(graph, { now })
+    expect(result.count).toBe(1)
+    expect(
+      (graph.getEdgeAttributes(
+        'CALLS:OBSERVED:service:service-a->service:service-b',
+      ) as GraphEdge).provenance,
+    ).toBe(Provenance.STALE)
+    // CONNECTS_TO threshold is 4h by default — 90 min isn't long enough.
+    expect(
+      (graph.getEdgeAttributes(
+        'CONNECTS_TO:OBSERVED:service:service-b->database:payments-db',
+      ) as GraphEdge).provenance,
+    ).toBe(Provenance.OBSERVED)
+  })
+
+  it('appends a StaleEvent to the log on transition', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-stale-'))
+    const staleEventsPath = path.join(tmpDir, 'stale-events.ndjson')
+    try {
+      const graph = newGraph()
+      const now = new Date('2026-05-02T12:00:00.000Z').getTime()
+      graph.addEdgeWithKey(
+        'CALLS:OBSERVED:service:service-a->service:service-b',
+        'service:service-a',
+        'service:service-b',
+        {
+          id: 'CALLS:OBSERVED:service:service-a->service:service-b',
+          source: 'service:service-a',
+          target: 'service:service-b',
+          type: EdgeType.CALLS,
+          provenance: Provenance.OBSERVED,
+          lastObserved: new Date(now - 90 * 60 * 1000).toISOString(),
+        },
+      )
+      const { events } = await markStaleEdges(graph, { now, staleEventsPath })
+      expect(events).toHaveLength(1)
+      const persisted = await readStaleEvents(staleEventsPath)
+      expect(persisted).toHaveLength(1)
+      expect(persisted[0].edgeType).toBe(EdgeType.CALLS)
+      expect(persisted[0].thresholdMs).toBe(60 * 60 * 1000)
+      expect(persisted[0].source).toBe('service:service-a')
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('thresholdForEdgeType', () => {
+  const originalEnv = process.env.NEAT_STALE_THRESHOLDS
+  afterEach(() => {
+    if (originalEnv === undefined) delete process.env.NEAT_STALE_THRESHOLDS
+    else process.env.NEAT_STALE_THRESHOLDS = originalEnv
+  })
+
+  it('returns the per-edge-type default when no override is set', () => {
+    expect(thresholdForEdgeType('CALLS')).toBe(60 * 60 * 1000)
+    expect(thresholdForEdgeType('CONNECTS_TO')).toBe(4 * 60 * 60 * 1000)
+    expect(thresholdForEdgeType('DEPENDS_ON')).toBe(24 * 60 * 60 * 1000)
+  })
+
+  it('applies NEAT_STALE_THRESHOLDS overrides', () => {
+    process.env.NEAT_STALE_THRESHOLDS = JSON.stringify({ CALLS: 5 * 60 * 1000 })
+    expect(thresholdForEdgeType('CALLS')).toBe(5 * 60 * 1000)
+    // Unaffected types keep their defaults.
+    expect(thresholdForEdgeType('CONNECTS_TO')).toBe(4 * 60 * 60 * 1000)
+  })
+
+  it('falls back to the default map when the env var is malformed JSON', () => {
+    process.env.NEAT_STALE_THRESHOLDS = 'not-json'
+    expect(thresholdForEdgeType('CALLS')).toBe(60 * 60 * 1000)
   })
 })
 

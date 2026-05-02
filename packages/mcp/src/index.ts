@@ -10,6 +10,7 @@ import {
   getGraphDiff,
   getIncidentHistory,
   getObservedDependencies,
+  getRecentStaleEdges,
   getRootCause,
   semanticSearch,
 } from './tools.js'
@@ -95,6 +96,25 @@ server.tool(
       ),
   },
   async (input) => getGraphDiff(client, input),
+)
+
+server.tool(
+  'get_recent_stale_edges',
+  'List the most recent OBSERVED → STALE edge transitions. Use this to spot integrations that have gone quiet — a CALLS edge that just went stale typically means an upstream stopped calling, not that the link is healthy.',
+  {
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .max(200)
+      .optional()
+      .describe('Max events to return (default 50)'),
+    edgeType: z
+      .string()
+      .optional()
+      .describe('Filter by edge type — e.g. "CALLS" or "CONNECTS_TO"'),
+  },
+  async (input) => getRecentStaleEdges(client, input),
 )
 
 async function main(): Promise<void> {

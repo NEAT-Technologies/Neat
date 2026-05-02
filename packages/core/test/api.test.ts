@@ -202,6 +202,12 @@ describe('REST API (fastify.inject)', () => {
     expect(res.statusCode).toBe(400)
   })
 
+  it('GET /incidents/stale returns [] when no stale-events log is configured', async () => {
+    const res = await app.inject({ method: 'GET', url: '/incidents/stale' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual([])
+  })
+
   it('GET /traverse/blast-radius/:nodeId honours a custom depth', async () => {
     const res = await app.inject({
       method: 'GET',
@@ -274,5 +280,79 @@ describe('GET /graph/diff', () => {
       'config:service-b/db-config.yaml',
     )
     expect(body.added.nodes).toEqual([])
+  })
+})
+
+describe('GET /incidents/stale (with log)', () => {
+  let app: FastifyInstance
+  let tmpDir: string
+  let staleEventsPath: string
+
+  beforeEach(async () => {
+    const { promises: fs } = await import('node:fs')
+    const os = await import('node:os')
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-stale-api-'))
+    staleEventsPath = path.join(tmpDir, 'stale-events.ndjson')
+
+    const events = [
+      {
+        edgeId: 'CALLS:OBSERVED:service:a->service:b',
+        source: 'service:a',
+        target: 'service:b',
+        edgeType: 'CALLS',
+        thresholdMs: 3600000,
+        ageMs: 5400000,
+        lastObserved: '2026-05-02T10:00:00.000Z',
+        transitionedAt: '2026-05-02T11:30:00.000Z',
+      },
+      {
+        edgeId: 'CONNECTS_TO:OBSERVED:service:b->database:c',
+        source: 'service:b',
+        target: 'database:c',
+        edgeType: 'CONNECTS_TO',
+        thresholdMs: 14400000,
+        ageMs: 15000000,
+        lastObserved: '2026-05-02T07:00:00.000Z',
+        transitionedAt: '2026-05-02T11:10:00.000Z',
+      },
+    ]
+    await fs.writeFile(
+      staleEventsPath,
+      events.map((e) => JSON.stringify(e)).join('\n') + '\n',
+      'utf8',
+    )
+
+    resetGraph()
+    app = await buildApi({ graph: getGraph(), staleEventsPath })
+  })
+
+  afterEach(async () => {
+    await app.close()
+    const { promises: fs } = await import('node:fs')
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('returns the events newest-first', async () => {
+    const res = await app.inject({ method: 'GET', url: '/incidents/stale' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body).toHaveLength(2)
+    expect(body[0].edgeType).toBe('CONNECTS_TO')
+    expect(body[1].edgeType).toBe('CALLS')
+  })
+
+  it('filters by edgeType', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/incidents/stale?edgeType=CALLS',
+    })
+    const body = res.json()
+    expect(body).toHaveLength(1)
+    expect(body[0].edgeType).toBe('CALLS')
+  })
+
+  it('honours limit', async () => {
+    const res = await app.inject({ method: 'GET', url: '/incidents/stale?limit=1' })
+    expect(res.json()).toHaveLength(1)
   })
 })

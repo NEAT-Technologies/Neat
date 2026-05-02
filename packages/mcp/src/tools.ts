@@ -362,3 +362,61 @@ function summariseAttrDiff(
     ? 'attributes differ'
     : `fields changed: ${changed.sort().join(', ')}`
 }
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.round(m / 60)
+  if (h < 48) return `${h}h`
+  return `${Math.round(h / 24)}d`
+}
+
+export interface RecentStaleEdgesInput {
+  limit?: number
+  edgeType?: string
+}
+
+interface StaleEventResponse {
+  edgeId: string
+  source: string
+  target: string
+  edgeType: string
+  thresholdMs: number
+  ageMs: number
+  lastObserved: string
+  transitionedAt: string
+}
+
+export async function getRecentStaleEdges(
+  client: HttpClient,
+  input: RecentStaleEdgesInput,
+): Promise<ToolResponse> {
+  const params = new URLSearchParams()
+  if (input.limit !== undefined) params.set('limit', String(input.limit))
+  if (input.edgeType) params.set('edgeType', input.edgeType)
+  const qs = params.size > 0 ? `?${params.toString()}` : ''
+
+  try {
+    const events = await client.get<StaleEventResponse[]>(`/incidents/stale${qs}`)
+    if (events.length === 0) {
+      return text(
+        input.edgeType
+          ? `No stale ${input.edgeType} edges recorded.`
+          : 'No stale-edge transitions recorded yet.',
+      )
+    }
+    const lines = [`Recent stale-edge transitions (${events.length}):`, '']
+    for (const e of events) {
+      lines.push(
+        `  ${e.transitionedAt} — ${e.source} -[${e.edgeType}]-> ${e.target}` +
+          ` (last seen ${e.lastObserved}, threshold ${formatDuration(e.thresholdMs)})`,
+      )
+    }
+    return text(lines.join('\n'))
+  } catch (err) {
+    return errorText(`Error talking to neat-core: ${(err as Error).message}`)
+  }
+}

@@ -3,7 +3,7 @@ import cors from '@fastify/cors'
 import type { ErrorEvent, GraphEdge, GraphNode } from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
-import { readErrorEvents } from './ingest.js'
+import { readErrorEvents, readStaleEvents } from './ingest.js'
 import { getBlastRadius, getRootCause } from './traverse.js'
 import { computeGraphDiff, loadSnapshotForDiff } from './diff.js'
 
@@ -14,6 +14,8 @@ export interface BuildApiOptions {
   scanPath?: string
   // ndjson path the /incidents endpoints read from. Optional for tests.
   errorsPath?: string
+  // ndjson path /incidents/stale reads from. Optional for tests.
+  staleEventsPath?: string
 }
 
 interface SerializedGraph {
@@ -71,6 +73,20 @@ export async function buildApi(opts: BuildApiOptions): Promise<FastifyInstance> 
     if (!opts.errorsPath) return []
     return readErrorEvents(opts.errorsPath)
   })
+  app.get<{ Querystring: { limit?: string; edgeType?: string } }>(
+    '/incidents/stale',
+    async (req) => {
+      if (!opts.staleEventsPath) return []
+      const events = await readStaleEvents(opts.staleEventsPath)
+      const filtered = req.query.edgeType
+        ? events.filter((e) => e.edgeType === req.query.edgeType)
+        : events
+      // Most-recent first; ndjson is append-time so the tail is newest.
+      const ordered = [...filtered].reverse()
+      const limit = req.query.limit ? Number(req.query.limit) : 50
+      return ordered.slice(0, Number.isFinite(limit) && limit > 0 ? limit : 50)
+    },
+  )
   app.get<{ Params: { nodeId: string } }>('/incidents/:nodeId', async (req, reply) => {
     const { nodeId } = req.params
     if (!graph.hasNode(nodeId)) {

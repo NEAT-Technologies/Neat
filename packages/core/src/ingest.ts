@@ -22,7 +22,51 @@ export interface IngestContext {
   now?: () => number
 }
 
-const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000
+const HOUR_MS = 60 * 60 * 1000
+const DAY_MS = 24 * HOUR_MS
+
+// Per-edge-type stale thresholds. HTTP CALLS at 24h is meaningless because
+// healthy traffic recurs in seconds; infra DEPENDS_ON is the opposite — a
+// docker-compose service can sit idle overnight without anything being wrong.
+// Override via NEAT_STALE_THRESHOLDS (JSON, ms-per-edge-type).
+const DEFAULT_STALE_THRESHOLDS: Record<string, number> = {
+  CALLS: HOUR_MS,
+  CONNECTS_TO: 4 * HOUR_MS,
+  PUBLISHES_TO: 4 * HOUR_MS,
+  CONSUMES_FROM: 4 * HOUR_MS,
+  DEPENDS_ON: DAY_MS,
+  CONFIGURED_BY: DAY_MS,
+  RUNS_ON: DAY_MS,
+}
+// Fallback for any edge type not in the map (forward compat — adding a new
+// EdgeType shouldn't break staleness sweeps).
+const FALLBACK_STALE_THRESHOLD_MS = DAY_MS
+
+function loadStaleThresholdsFromEnv(): Record<string, number> {
+  const raw = process.env.NEAT_STALE_THRESHOLDS
+  if (!raw) return DEFAULT_STALE_THRESHOLDS
+  try {
+    const overrides = JSON.parse(raw) as Record<string, unknown>
+    const merged = { ...DEFAULT_STALE_THRESHOLDS }
+    for (const [k, v] of Object.entries(overrides)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) merged[k] = v
+    }
+    return merged
+  } catch (err) {
+    console.warn(
+      `[neat] NEAT_STALE_THRESHOLDS could not be parsed (${(err as Error).message}); using defaults`,
+    )
+    return DEFAULT_STALE_THRESHOLDS
+  }
+}
+
+export function thresholdForEdgeType(
+  edgeType: string,
+  overrides?: Record<string, number>,
+): number {
+  const map = overrides ?? loadStaleThresholdsFromEnv()
+  return map[edgeType] ?? FALLBACK_STALE_THRESHOLD_MS
+}
 
 function nowIso(ctx: IngestContext): string {
   return new Date(ctx.now ? ctx.now() : Date.now()).toISOString()
@@ -430,44 +474,113 @@ export function makeSpanHandler(ctx: IngestContext): (span: ParsedSpan) => Promi
   return (span) => handleSpan(ctx, span)
 }
 
-// Demote OBSERVED edges that haven't been seen in a while. Returns the count
-// of demotions for visibility in tests + logs.
-export function markStaleEdges(
+export interface StaleEvent {
+  edgeId: string
+  source: string
+  target: string
+  edgeType: string
+  thresholdMs: number
+  ageMs: number
+  lastObserved: string
+  transitionedAt: string
+}
+
+export interface MarkStaleOptions {
+  // Per-edge-type override map. Defaults to DEFAULT_STALE_THRESHOLDS, merged
+  // with NEAT_STALE_THRESHOLDS if the env var is set.
+  thresholds?: Record<string, number>
+  now?: number
+  // ndjson path. When set, every OBSERVED → STALE transition appends one
+  // line. Skipped if undefined — tests and embedded use cases don't need a
+  // log.
+  staleEventsPath?: string
+}
+
+// Demote OBSERVED edges that haven't been seen in a while. Per-edge-type
+// thresholds: HTTP CALLS go stale fast; infra DEPENDS_ON is patient. Returns
+// the count of demotions and the events appended to the log.
+export async function markStaleEdges(
   graph: NeatGraph,
-  thresholdMs = STALE_THRESHOLD_MS,
-  now = Date.now(),
-): number {
-  let count = 0
+  options: MarkStaleOptions = {},
+): Promise<{ count: number; events: StaleEvent[] }> {
+  const thresholds = options.thresholds ?? loadStaleThresholdsFromEnv()
+  const now = options.now ?? Date.now()
+  const events: StaleEvent[] = []
+
   graph.forEachEdge((id, attrs) => {
     const e = attrs as GraphEdge
     if (e.provenance !== Provenance.OBSERVED) return
     if (!e.lastObserved) return
+    const threshold = thresholdForEdgeType(e.type, thresholds)
     const age = now - new Date(e.lastObserved).getTime()
-    if (age > thresholdMs) {
+    if (age > threshold) {
       const updated: GraphEdge = { ...e, provenance: Provenance.STALE, confidence: 0.3 }
       graph.replaceEdgeAttributes(id, updated)
-      count++
+      events.push({
+        edgeId: id,
+        source: e.source,
+        target: e.target,
+        edgeType: e.type,
+        thresholdMs: threshold,
+        ageMs: age,
+        lastObserved: e.lastObserved,
+        transitionedAt: new Date(now).toISOString(),
+      })
     }
   })
-  return count
+
+  if (options.staleEventsPath && events.length > 0) {
+    await appendStaleEvents(options.staleEventsPath, events)
+  }
+
+  return { count: events.length, events }
+}
+
+async function appendStaleEvents(staleEventsPath: string, events: StaleEvent[]): Promise<void> {
+  await fs.mkdir(path.dirname(staleEventsPath), { recursive: true })
+  const lines = events.map((e) => JSON.stringify(e)).join('\n') + '\n'
+  await fs.appendFile(staleEventsPath, lines, 'utf8')
+}
+
+export async function readStaleEvents(staleEventsPath: string): Promise<StaleEvent[]> {
+  try {
+    const raw = await fs.readFile(staleEventsPath, 'utf8')
+    return raw
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as StaleEvent)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw err
+  }
+}
+
+export interface StalenessLoopOptions {
+  thresholds?: Record<string, number>
+  intervalMs?: number
+  staleEventsPath?: string
 }
 
 export function startStalenessLoop(
   graph: NeatGraph,
-  thresholdMs = STALE_THRESHOLD_MS,
-  intervalMs = 60_000,
+  options: StalenessLoopOptions = {},
 ): () => void {
   let stopped = false
+  const intervalMs = options.intervalMs ?? 60_000
   const tick = (): void => {
     if (stopped) return
-    try {
-      markStaleEdges(graph, thresholdMs)
-    } catch (err) {
-      console.error('staleness tick failed', err)
-    }
+    void (async () => {
+      try {
+        await markStaleEdges(graph, {
+          thresholds: options.thresholds,
+          staleEventsPath: options.staleEventsPath,
+        })
+      } catch (err) {
+        console.error('staleness tick failed', err)
+      }
+    })()
   }
   const interval = setInterval(tick, intervalMs)
-  // Don't keep the process alive just for this.
   if (typeof interval.unref === 'function') interval.unref()
   return () => {
     stopped = true

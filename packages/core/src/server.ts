@@ -14,6 +14,10 @@ async function main(): Promise<void> {
   const errorsPath = path.resolve(
     process.env.NEAT_ERRORS_PATH ?? path.join(path.dirname(outPath), 'errors.ndjson'),
   )
+  const staleEventsPath = path.resolve(
+    process.env.NEAT_STALE_EVENTS_PATH ??
+      path.join(path.dirname(outPath), 'stale-events.ndjson'),
+  )
 
   // Load any existing snapshot first so a restart doesn't lose runtime
   // (M2 OBSERVED) edges that won't be reproduced by a fresh extract.
@@ -27,13 +31,13 @@ async function main(): Promise<void> {
   )
 
   startPersistLoop(graph, outPath)
-  startStalenessLoop(graph)
+  startStalenessLoop(graph, { staleEventsPath })
 
   const host = process.env.HOST ?? '0.0.0.0'
   const port = Number(process.env.PORT ?? 8080)
   const otelPort = Number(process.env.OTEL_PORT ?? 4318)
 
-  const app = await buildApi({ graph, scanPath, errorsPath })
+  const app = await buildApi({ graph, scanPath, errorsPath, staleEventsPath })
   await app.listen({ port, host })
   console.log(`neat-core listening on http://${host}:${port}`)
   console.log(`  scan path:     ${scanPath}`)
