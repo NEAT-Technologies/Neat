@@ -216,4 +216,63 @@ describe('REST API (fastify.inject)', () => {
       'service:service-b',
     ])
   })
+
+  it('GET /graph/diff returns 400 when `against` is missing', async () => {
+    const res = await app.inject({ method: 'GET', url: '/graph/diff' })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('GET /graph/diff returns 400 when the snapshot path is unreadable', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/graph/diff?against=/no/such/path.json',
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error).toBe('failed to load snapshot')
+  })
+})
+
+describe('GET /graph/diff', () => {
+  let app: FastifyInstance
+  let tmpDir: string
+  let basePath: string
+
+  beforeEach(async () => {
+    const { promises: fs } = await import('node:fs')
+    const os = await import('node:os')
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-api-diff-'))
+    basePath = path.join(tmpDir, 'base.json')
+
+    resetGraph()
+    const graph = getGraph()
+    await extractFromDirectory(graph, DEMO_PATH)
+
+    const { saveGraphToDisk } = await import('../src/persist.js')
+    await saveGraphToDisk(graph, basePath)
+
+    // Drop one node from the live graph so the diff has something to report.
+    graph.dropNode('config:service-b/db-config.yaml')
+    app = await buildApi({ graph })
+  })
+
+  afterEach(async () => {
+    await app.close()
+    const { promises: fs } = await import('node:fs')
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('reports the dropped node as removed', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/graph/diff?against=${encodeURIComponent(basePath)}`,
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.base.exportedAt).toBeTruthy()
+    expect(body.current.exportedAt).toBeTruthy()
+    expect(body.removed.nodes.map((n: { id: string }) => n.id)).toContain(
+      'config:service-b/db-config.yaml',
+    )
+    expect(body.added.nodes).toEqual([])
+  })
 })

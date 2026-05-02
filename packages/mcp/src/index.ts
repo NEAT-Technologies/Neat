@@ -7,6 +7,7 @@ import { createHttpClient } from './client.js'
 import {
   getBlastRadius,
   getDependencies,
+  getGraphDiff,
   getIncidentHistory,
   getObservedDependencies,
   getRootCause,
@@ -81,6 +82,19 @@ server.tool(
   'Search nodes by free-text query. Currently a keyword match over node ids and names; vector search lands post-MVP.',
   { query: z.string().describe('Search text') },
   async (input) => semanticSearch(client, input),
+)
+
+server.tool(
+  'get_graph_diff',
+  'Diff a saved graph snapshot against the current live graph. Useful for change reviews and post-incidents — answers "what changed in the architecture between then and now." Returns added/removed/changed nodes and edges with both snapshot timestamps.',
+  {
+    againstSnapshot: z
+      .string()
+      .describe(
+        'Path or http(s) URL of the snapshot to diff against (the "before" state). The current graph is the "after".',
+      ),
+  },
+  async (input) => getGraphDiff(client, input),
 )
 
 async function main(): Promise<void> {

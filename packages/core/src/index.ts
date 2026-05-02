@@ -32,3 +32,9 @@ export {
   type IngestContext,
 } from './ingest.js'
 export { getBlastRadius, getRootCause } from './traverse.js'
+export {
+  computeGraphDiff,
+  loadSnapshotForDiff,
+  type GraphDiff,
+  type PersistedSnapshot,
+} from './diff.js'

@@ -4,6 +4,7 @@ import { HttpError, type HttpClient } from '../src/client.js'
 import {
   getBlastRadius,
   getDependencies,
+  getGraphDiff,
   getIncidentHistory,
   getObservedDependencies,
   getRootCause,
@@ -355,5 +356,104 @@ describe('semanticSearch', () => {
     })
     const res = await semanticSearch(client, { query: 'nothing' })
     expect(res.content[0].text).toContain('No matches')
+  })
+})
+
+describe('getGraphDiff', () => {
+  const baseExportedAt = '2026-04-25T10:00:00.000Z'
+  const currentExportedAt = '2026-05-02T10:00:00.000Z'
+
+  it('formats added/removed/changed sections', async () => {
+    const { client, capture } = clientFor({
+      '/graph/diff?against=.%2Fsnapshots%2Flast-week.json': {
+        base: { exportedAt: baseExportedAt },
+        current: { exportedAt: currentExportedAt },
+        added: {
+          nodes: [
+            {
+              id: 'service:checkout',
+              type: NodeType.ServiceNode,
+              name: 'checkout',
+              language: 'javascript',
+            },
+          ],
+          edges: [
+            {
+              id: 'CALLS:OBSERVED:service:service-a->service:checkout',
+              source: 'service:service-a',
+              target: 'service:checkout',
+              type: EdgeType.CALLS,
+              provenance: Provenance.OBSERVED,
+            },
+          ],
+        },
+        removed: { nodes: [], edges: [] },
+        changed: {
+          nodes: [],
+          edges: [
+            {
+              id: 'CONNECTS_TO:OBSERVED:service:service-b->database:payments-db',
+              before: {
+                id: 'CONNECTS_TO:OBSERVED:service:service-b->database:payments-db',
+                source: 'service:service-b',
+                target: 'database:payments-db',
+                type: EdgeType.CONNECTS_TO,
+                provenance: Provenance.OBSERVED,
+                callCount: 12,
+              },
+              after: {
+                id: 'CONNECTS_TO:OBSERVED:service:service-b->database:payments-db',
+                source: 'service:service-b',
+                target: 'database:payments-db',
+                type: EdgeType.CONNECTS_TO,
+                provenance: Provenance.STALE,
+                callCount: 12,
+                confidence: 0.3,
+              },
+            },
+          ],
+        },
+      },
+    })
+    const res = await getGraphDiff(client, { againstSnapshot: './snapshots/last-week.json' })
+    expect(res.isError).toBeFalsy()
+    const out = res.content[0].text
+    expect(out).toContain('Diff against ./snapshots/last-week.json')
+    expect(out).toContain(`base exportedAt:    ${baseExportedAt}`)
+    expect(out).toContain(`current exportedAt: ${currentExportedAt}`)
+    expect(out).toContain('+ node service:checkout')
+    expect(out).toContain('+ edge CALLS:OBSERVED:service:service-a->service:checkout')
+    expect(out).toContain(
+      '~ edge CONNECTS_TO:OBSERVED:service:service-b->database:payments-db — provenance OBSERVED → STALE',
+    )
+    expect(capture.paths).toEqual([
+      '/graph/diff?against=.%2Fsnapshots%2Flast-week.json',
+    ])
+  })
+
+  it('reports an empty diff with both timestamps', async () => {
+    const { client } = clientFor({
+      '/graph/diff?against=.%2Fsame.json': {
+        base: { exportedAt: baseExportedAt },
+        current: { exportedAt: currentExportedAt },
+        added: { nodes: [], edges: [] },
+        removed: { nodes: [], edges: [] },
+        changed: { nodes: [], edges: [] },
+      },
+    })
+    const res = await getGraphDiff(client, { againstSnapshot: './same.json' })
+    expect(res.content[0].text).toContain('No differences')
+    expect(res.content[0].text).toContain(baseExportedAt)
+  })
+
+  it('surfaces a friendly error when the snapshot cannot be loaded', async () => {
+    const client: HttpClient = {
+      async get<T>(): Promise<T> {
+        throw new HttpError(400, '400 on /graph/diff?against=oops')
+      },
+    }
+    const res = await getGraphDiff(client, { againstSnapshot: 'oops' })
+    expect(res.isError).toBe(true)
+    expect(res.content[0].text).toContain('Could not load snapshot oops')
   })
 })
