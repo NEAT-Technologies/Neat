@@ -24,15 +24,39 @@ MVP milestone summary for context:
 
 ## What's next: v0.1.2
 
-Work is scoped across three areas. Pick up from the open issues on GitHub, one issue per branch per the conventions below.
+The release goal in one line: **drop the Node-only assumption.** By the end of v0.1.2 NEAT can — at a basic level — work on any codebase and any server, not just JS/TS services on Node. NEAT itself stays Node 20 + TypeScript; the *target* it understands stops being Node-shaped.
 
-**Extraction breadth** (#67–#73): recursive service discovery, generalised DB config parsing, call types beyond HTTP, Python support, infrastructure files. (#67 — drop the legacy `pgDriverVersion` field — and #68 — split `extract.ts` into per-source modules under `packages/core/src/extract/` — landed on the v0.1.2-α track.)
+Work is sequenced across four sub-milestones. Pick up from open issues on GitHub, one issue per branch per the conventions below.
 
-**Graph correctness** (#74–#78): expand the compat matrix beyond drivers, FRONTIER/OBSERVED attribution, per-edge confidence signals, snapshot diffing, stale thresholds.
+### v0.1.2-α — Foundations ✓ shipped
 
-**Ergonomics** (#79–#83): `neat watch` daemon, gRPC ingest, MCP Resources, real embeddings for `semantic_search`, multi-project support.
+Cleared the schema cleanup and the structural refactor that lets every β PR stay small.
 
-No prescribed order within the release, but extraction breadth issues are generally foundational — the graph has to be richer before the correctness and ergonomics features have much to act on.
+- ✓ #67 — drop legacy `pgDriverVersion`; snapshot bumps to v2 with auto-migration on load (ADR-019).
+- ✓ #68 — split `extract.ts` into per-source modules under `packages/core/src/extract/{services,databases,configs,calls,shared,index}.ts`. Orchestrator is 27 lines; each phase is independently importable.
+- ✓ #80 — OTLP/gRPC receiver opt-in via `NEAT_OTLP_GRPC=true` (port `:4317`). Bundled OTLP protos under `packages/core/proto/` (ADR-020).
+
+### v0.1.2-β — Extraction breadth (next up)
+
+Make the graph richer. Order within β:
+
+1. **#69 — recursive service discovery + workspaces.** Foundational; #70/#71/#72 all need the recursive walk.
+2. **#70 — generalised DB discovery** (.env, ORM configs, docker-compose). Replaces the hardcoded `db-config.yaml` path.
+3. **#71 — calls beyond HTTP URL substrings** (gRPC, Kafka, Redis, AWS SDK). Each gets its own extraction submodule under `extract/calls/` — #68 paid this off in advance.
+4. **#72 — Python service extraction.** New extractor module; needs `tree-sitter-python`. NEAT's toolchain stays TS-only.
+5. **#73 — infrastructure extraction** (docker-compose, Dockerfile, Terraform, k8s). New `infra:` node type prefix (ADR-010 reservation), new edge types in `@neat/types` — likely bumps snapshot schema again.
+
+### v0.1.2-γ — Graph correctness
+
+#74 (compat matrix beyond drivers), #75 (OBSERVED attribution + FRONTIER population), #76 (per-edge confidence signals), #77 (snapshot diffing endpoint + MCP tool), #78 (per-edge stale thresholds + event log). Within γ: #75 + #77 first, in parallel; #74 next; #76 third (touches edge schema — co-ordinate snapshot bump with #74); #78 last.
+
+### v0.1.2-δ — Ergonomics
+
+#79 (`neat watch` daemon — needs #68 + #69), #81 (MCP Resources), #82 (real embeddings for `semantic_search` — model-choice ADR needed), #83 (multi-project support — last; don't start until α/γ schemas have settled).
+
+### Closing gate — M6 manual verification
+
+Run **after δ merges**, not before. Stand up Railway per `docs/railway.md` → drive traffic at `service-a` → confirm OBSERVED + INFERRED edges in the deployed `/graph` → point Claude Code at the deployed core via `NEAT_CORE_URL` → ask the headline question + one polyglot follow-up. Then flip M6 to VERIFIED and tag v0.1.2. The two unchecked boxes in `docs/milestones.md` are the gate.
 
 ## Decisions already made
 
@@ -46,13 +70,16 @@ No prescribed order within the release, but extraction breadth issues are genera
 - ConfigNodes record file existence, not contents (ADR-016)
 - `neat init` writes snapshot to `<path>/neat-out/graph.json` by default (ADR-017)
 - Railway deployment is documented in `docs/railway.md`, not codified as IaC (ADR-018)
+- `pgDriverVersion` removed from `ServiceNodeSchema`; snapshot v1→v2 migrates on load (ADR-019)
+- OTLP `.proto` files bundled in-tree; gRPC receiver is opt-in (ADR-020)
 
 ## Conventions
 
 - One issue → one branch named `<num>-<slug>` → one PR.
 - PR body says `Refs #N`, **not** `Closes #N`. The user closes issues by hand after verifying.
 - Commits and PRs read like a colleague wrote them. No "this commit introduces" or release-notes-y bullets. See ADR-008.
-- `Co-Authored-By: Claude <noreply@anthropic.com>` trailer on commits where Claude did the work alongside the human author.
+- **No** `Co-Authored-By: Claude` trailer on commits — human authors only (ADR-006).
+- Stack β PRs on top of merged α work, not on each other. `main` rebase is the easier merge story.
 - Every package emits ESM + CJS + DTS via tsup. Don't ship ESM-only.
 
 ## Don't do
