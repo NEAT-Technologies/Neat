@@ -12,6 +12,7 @@ import {
   type DiscoveredService,
   type PackageJson,
 } from './shared.js'
+import { discoverPythonService, pythonToPackage } from './python.js'
 
 const DEFAULT_SCAN_DEPTH = 5
 
@@ -114,12 +115,55 @@ async function expandWorkspaceGlobs(
   return [...found]
 }
 
+async function discoverNodeService(
+  scanPath: string,
+  dir: string,
+): Promise<DiscoveredService | null> {
+  const pkgPath = path.join(dir, 'package.json')
+  if (!(await exists(pkgPath))) return null
+  const pkg = await readJson<PackageJson>(pkgPath)
+  if (!pkg.name) return null
+  const node: ServiceNode = {
+    id: `service:${pkg.name}`,
+    type: NodeType.ServiceNode,
+    name: pkg.name,
+    language: 'javascript',
+    version: pkg.version,
+    dependencies: pkg.dependencies ?? {},
+    repoPath: path.relative(scanPath, dir),
+  }
+  return { pkg, dir, node }
+}
+
+async function discoverPyService(
+  scanPath: string,
+  dir: string,
+): Promise<DiscoveredService | null> {
+  const py = await discoverPythonService(dir)
+  if (!py) return null
+  const pkg = pythonToPackage(py)
+  const node: ServiceNode = {
+    id: `service:${py.name}`,
+    type: NodeType.ServiceNode,
+    name: py.name,
+    language: 'python',
+    version: py.version,
+    dependencies: py.dependencies,
+    repoPath: path.relative(scanPath, dir),
+  }
+  return { pkg, dir, node }
+}
+
 // Phase 1 — discover service directories under scanPath. A service is any
-// directory containing a package.json. If the root has a `workspaces` field,
-// those globs are authoritative and we stop there. Otherwise we walk
-// recursively, depth-bounded by NEAT_SCAN_DEPTH (default 5), skipping
-// IGNORED_DIRS and anything matched by the root .gitignore. Two package.jsons
-// sharing a `name` collapse to one node (ADR-010 id collision rule); the
+// directory containing a JS/TS manifest (`package.json`) or a Python manifest
+// (`pyproject.toml` / `requirements.txt` / `setup.py`). JS wins on tie.
+//
+// If the root `package.json` declares `workspaces`, those globs are
+// authoritative — we don't fall back to a free recursive walk. Otherwise we
+// walk recursively, depth-bounded by `NEAT_SCAN_DEPTH` (default 5), skipping
+// `IGNORED_DIRS` and anything matched by the root `.gitignore`.
+//
+// Two manifests sharing a `name` collapse to one node per ADR-010; the
 // duplicate logs a warning naming both paths.
 export async function discoverServices(scanPath: string): Promise<DiscoveredService[]> {
   const rootPkgPath = path.join(scanPath, 'package.json')
@@ -139,7 +183,15 @@ export async function discoverServices(scanPath: string): Promise<DiscoveredServ
       scanPath,
       { maxDepth: parseScanDepth(), ig },
       async (dir) => {
-        if (await exists(path.join(dir, 'package.json'))) candidateDirs.push(dir)
+        if (await exists(path.join(dir, 'package.json'))) {
+          candidateDirs.push(dir)
+        } else if (
+          (await exists(path.join(dir, 'pyproject.toml'))) ||
+          (await exists(path.join(dir, 'requirements.txt'))) ||
+          (await exists(path.join(dir, 'setup.py')))
+        ) {
+          candidateDirs.push(dir)
+        }
       },
     )
   }
@@ -149,32 +201,22 @@ export async function discoverServices(scanPath: string): Promise<DiscoveredServ
   const seen = new Map<string, string>()
   const out: DiscoveredService[] = []
   for (const dir of candidateDirs) {
-    const pkgPath = path.join(dir, 'package.json')
-    if (!(await exists(pkgPath))) continue
-    const pkg = await readJson<PackageJson>(pkgPath)
-    if (!pkg.name) continue
+    const service =
+      (await discoverNodeService(scanPath, dir)) ??
+      (await discoverPyService(scanPath, dir))
+    if (!service) continue
 
-    const existingDir = seen.get(pkg.name)
+    const existingDir = seen.get(service.node.name)
     if (existingDir !== undefined) {
       const a = path.relative(scanPath, existingDir) || '.'
       const b = path.relative(scanPath, dir) || '.'
       console.warn(
-        `[neat] duplicate package name "${pkg.name}" — keeping ${a}, ignoring ${b}`,
+        `[neat] duplicate package name "${service.node.name}" — keeping ${a}, ignoring ${b}`,
       )
       continue
     }
-    seen.set(pkg.name, dir)
-
-    const node: ServiceNode = {
-      id: `service:${pkg.name}`,
-      type: NodeType.ServiceNode,
-      name: pkg.name,
-      language: 'javascript',
-      version: pkg.version,
-      dependencies: pkg.dependencies ?? {},
-      repoPath: path.relative(scanPath, dir),
-    }
-    out.push({ pkg, dir, node })
+    seen.set(service.node.name, dir)
+    out.push(service)
   }
   return out
 }

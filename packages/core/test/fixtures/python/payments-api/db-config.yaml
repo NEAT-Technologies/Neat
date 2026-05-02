@@ -1,0 +1,5 @@
+host: payments-db
+port: 5432
+database: payments
+engine: postgresql
+engineVersion: "15"

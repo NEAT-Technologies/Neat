@@ -16,7 +16,7 @@ export interface DiscoveredService {
   node: ServiceNode
 }
 
-export const SERVICE_FILE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx'])
+export const SERVICE_FILE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.py'])
 export const CONFIG_FILE_EXTENSIONS = new Set(['.yaml', '.yml'])
 export const IGNORED_DIRS = new Set([
   'node_modules',

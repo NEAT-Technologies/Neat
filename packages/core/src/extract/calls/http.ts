@@ -1,14 +1,20 @@
 import path from 'node:path'
 import Parser from 'tree-sitter'
 import JavaScript from 'tree-sitter-javascript'
+import Python from 'tree-sitter-python'
 import type { GraphEdge } from '@neat/types'
 import { EdgeType, Provenance } from '@neat/types'
 import type { NeatGraph } from '../../graph.js'
 import { makeEdgeId, type DiscoveredService } from '../shared.js'
 import { loadSourceFiles, lineOf, snippet } from './shared.js'
 
+// JS uses `string_fragment` for the textual interior of a template/string;
+// Python uses `string_content` inside a `string` node. Either way we want the
+// raw textual content (no quotes), so we accept both.
+const STRING_LITERAL_NODE_TYPES = new Set(['string_fragment', 'string_content'])
+
 function collectStringLiterals(node: Parser.SyntaxNode, out: string[]): void {
-  if (node.type === 'string_fragment') out.push(node.text)
+  if (STRING_LITERAL_NODE_TYPES.has(node.type)) out.push(node.text)
   for (let i = 0; i < node.namedChildCount; i++) {
     const child = node.namedChild(i)
     if (child) collectStringLiterals(child, out)
@@ -34,14 +40,27 @@ export function callsFromSource(
   return targets
 }
 
-// HTTP CALLS via URL substring match — the original tree-sitter scan, kept
-// intact so the demo's CALLS edges are byte-for-byte identical.
+function makeJsParser(): Parser {
+  const p = new Parser()
+  p.setLanguage(JavaScript)
+  return p
+}
+
+function makePyParser(): Parser {
+  const p = new Parser()
+  p.setLanguage(Python)
+  return p
+}
+
+// HTTP CALLS via URL substring match. Parser is picked per file extension:
+// .py uses tree-sitter-python; everything else uses tree-sitter-javascript.
+// The demo's CALLS edges stay byte-for-byte identical to the M1 baseline.
 export async function addHttpCallEdges(
   graph: NeatGraph,
   services: DiscoveredService[],
 ): Promise<number> {
-  const parser = new Parser()
-  parser.setLanguage(JavaScript)
+  const jsParser = makeJsParser()
+  const pyParser = makePyParser()
 
   const knownHosts = new Set<string>()
   const hostToNodeId = new Map<string, string>()
@@ -57,6 +76,7 @@ export async function addHttpCallEdges(
     const files = await loadSourceFiles(service.dir)
     const seenTargets = new Map<string, { file: string; host: string }>()
     for (const file of files) {
+      const parser = path.extname(file.path) === '.py' ? pyParser : jsParser
       const targets = callsFromSource(file.content, parser, knownHosts)
       for (const t of targets) {
         const targetId = hostToNodeId.get(t)
