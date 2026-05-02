@@ -37,6 +37,21 @@ function summarise(nodes: GraphNode[], edges: GraphEdge[]): string {
   return ['nodes:', ...nodeLines, 'edges:', ...edgeLines].join('\n')
 }
 
+function formatIncompat(inc: NonNullable<ServiceNode['incompatibilities']>[number]): string {
+  if (inc.kind === 'node-engine') {
+    const range = inc.declaredNodeEngine ? ` (engines.node="${inc.declaredNodeEngine}")` : ''
+    return `${inc.package}@${inc.packageVersion ?? '?'} requires Node ${inc.requiredNodeVersion}${range} — ${inc.reason}`
+  }
+  if (inc.kind === 'package-conflict') {
+    const found = inc.foundVersion ? `@${inc.foundVersion}` : ' (missing)'
+    return `${inc.package}@${inc.packageVersion ?? '?'} requires ${inc.requires.name}>=${inc.requires.minVersion}; found ${inc.requires.name}${found} — ${inc.reason}`
+  }
+  if (inc.kind === 'deprecated-api') {
+    return `${inc.package}@${inc.packageVersion ?? '?'} is deprecated — ${inc.reason}`
+  }
+  return `${inc.driver}@${inc.driverVersion} vs ${inc.engine} ${inc.engineVersion} — ${inc.reason}`
+}
+
 function findIncompatibilities(nodes: GraphNode[]): ServiceNode[] {
   return nodes.filter(
     (n): n is ServiceNode =>
@@ -75,9 +90,7 @@ async function runInit(opts: InitOptions): Promise<void> {
     console.log(`incompatibilities found in ${incompatibilities.length} service(s):`)
     for (const svc of incompatibilities) {
       for (const inc of svc.incompatibilities ?? []) {
-        console.log(
-          `  ${svc.name}: ${inc.driver}@${inc.driverVersion} vs ${inc.engine} ${inc.engineVersion} — ${inc.reason}`,
-        )
+        console.log(`  ${svc.name}: ${formatIncompat(inc)}`)
       }
     }
   }

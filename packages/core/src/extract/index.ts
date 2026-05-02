@@ -1,5 +1,6 @@
 import type { NeatGraph } from '../graph.js'
 import { promoteFrontierNodes } from '../ingest.js'
+import { ensureCompatLoaded } from '../compat.js'
 import { addServiceNodes, discoverServices } from './services.js'
 import { addServiceAliases } from './aliases.js'
 import { addDatabasesAndCompat } from './databases/index.js'
@@ -17,6 +18,7 @@ export async function extractFromDirectory(
   graph: NeatGraph,
   scanPath: string,
 ): Promise<ExtractResult> {
+  await ensureCompatLoaded()
   const services = await discoverServices(scanPath)
 
   const phase1Nodes = addServiceNodes(graph, services)

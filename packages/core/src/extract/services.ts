@@ -131,6 +131,7 @@ async function discoverNodeService(
     version: pkg.version,
     dependencies: pkg.dependencies ?? {},
     repoPath: path.relative(scanPath, dir),
+    ...(pkg.engines?.node ? { nodeEngine: pkg.engines.node } : {}),
   }
   return { pkg, dir, node }
 }
