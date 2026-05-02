@@ -228,11 +228,19 @@ export async function addDatabasesAndCompat(
       // before this phase), so the writeback doesn't drop fields populated by
       // earlier passes.
       const current = graph.getNodeAttributes(service.node.id) as ServiceNode
-      graph.replaceNodeAttributes(service.node.id, {
+      const updated: ServiceNode = {
         ...current,
         ...(service.node as ServiceNode),
         ...(current.aliases ? { aliases: current.aliases } : {}),
-      } as unknown as GraphNode)
+      }
+      // attachIncompatibilities only sets the field when there's something to
+      // flag. On a re-extract (`neat watch`, `POST /graph/scan`), a stale
+      // entry on `current` would otherwise survive the spread and leave the
+      // graph reporting a problem the new manifest no longer has.
+      if (!service.node.incompatibilities || service.node.incompatibilities.length === 0) {
+        delete (updated as { incompatibilities?: unknown }).incompatibilities
+      }
+      graph.replaceNodeAttributes(service.node.id, updated as unknown as GraphNode)
     }
   }
 

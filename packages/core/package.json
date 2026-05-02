@@ -35,6 +35,7 @@
     "@grpc/grpc-js": "^1.14.3",
     "@grpc/proto-loader": "^0.8.0",
     "@neat/types": "*",
+    "chokidar": "^4.0.3",
     "fastify": "^5.0.0",
     "graphology": "^0.25.4",
     "graphology-shortest-path": "^2.1.0",
