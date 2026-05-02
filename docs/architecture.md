@@ -37,7 +37,7 @@ Static (M1):
 ```
 demo/service-*/package.json + *.js
        ↓ (tree-sitter + JSON parse)
-packages/core/src/extract.ts
+packages/core/src/extract/  (services / databases / configs / calls)
        ↓ (emits ServiceNode / DatabaseNode / ConfigNode + EXTRACTED edges)
 packages/core/src/graph.ts  (in-memory MultiDirectedGraph)
        ↓ (Fastify routes)
@@ -83,7 +83,7 @@ In-memory graph snapshots to `${NEAT_OUT_PATH:-./neat-out/graph.json}` on a 60s 
 
 The matrix carries a `minEngineVersion` field per pair — the driver constraint only fires once the engine is at that major or higher. So `pg 7.4.0 / postgresql 13` still passes (PG 13 doesn't require scram), `pg 7.4.0 / postgresql 14` fails.
 
-`compatPairs()` is the second exported function — `extract.ts` iterates it to populate `DatabaseNode.compatibleDrivers`. So adding a new pair to `compat.json` automatically shows up on the right engine's `compatibleDrivers` list, no other code change required.
+`compatPairs()` is the second exported function — `extract/databases.ts` iterates it to populate `DatabaseNode.compatibleDrivers`. So adding a new pair to `compat.json` automatically shows up on the right engine's `compatibleDrivers` list, no other code change required.
 
 ## M1 implementation notes
 
@@ -91,7 +91,7 @@ Things that aren't load-bearing decisions but are non-obvious from reading the c
 
 - **Node ids**: `service:<package.name>` for ServiceNodes, `database:<host>` for DatabaseNodes (host comes from `db-config.yaml`). Edge ids: `${type}:${source}->${target}`. The id format is the contract everything else (traversal in M3, MCP tools in M4) keys off, so don't change it casually.
 
-- **Extract is three phases.** (1) Discover services from `package.json` files. (2) For each service, parse `db-config.yaml` if present → emit DatabaseNode + `CONNECTS_TO` edge + run compat check. (3) tree-sitter parse every JS/TS file in each service dir, collect string literals, look for URLs containing a known service hostname → emit `CALLS` edges (deduped per source). The function is idempotent — running it twice on the same path adds 0 nodes/edges.
+- **Extract is four phases, one module each.** Under `packages/core/src/extract/`: (1) `services.ts` discovers services from `package.json` files. (2) `databases.ts` parses `db-config.yaml` if present → emits DatabaseNode + `CONNECTS_TO` edge + runs compat checks. (3) `configs.ts` walks yaml/env files into `ConfigNode`s + `CONFIGURED_BY` edges. (4) `calls.ts` tree-sitter-parses every JS/TS file, collects string literals, looks for URLs containing a known service hostname → emits `CALLS` edges (deduped per source). `extract/index.ts` orchestrates the phases; `extract.ts` at the package root is a thin re-export so `import { extractFromDirectory } from '@neat/core'` keeps working. The function is idempotent — running it twice on the same path adds 0 nodes/edges.
 
 - **tree-sitter scope is intentionally tiny.** It's a string-literal scan for URL substrings matching known hostnames, not a full import-graph analysis. Good enough to pick up `axios.get('http://service-b:3001/...')` and similar; doesn't catch dynamically constructed URLs or network calls hidden behind a config object. Worth revisiting only if a real demo case needs more.
 
@@ -99,7 +99,7 @@ Things that aren't load-bearing decisions but are non-obvious from reading the c
 
 - **Driver versions live in `dependencies` and the audit trail in `incompatibilities[]`.** The first is whatever the service's `package.json` declares — the source of truth that compat traversal reads. The second is the audit trail ("here's what specifically is wrong"). Both are populated during extract phase 2.
 
-- **The yaml dependency is M1-scoped.** `db-config.yaml` is parsed today only because it's the cheapest path to `payments-db.engineVersion: "15"` for the demo. Full yaml/env extraction with first-class `ConfigNode` types and `CONFIGURED_BY` edges is M5. Don't expand the yaml parsing surface inside `extract.ts` — it goes to its own pass when M5 happens.
+- **The yaml dependency is db-config-scoped.** `db-config.yaml` is parsed in `extract/databases.ts` today only because it's the cheapest path to `payments-db.engineVersion: "15"` for the demo. The phase 3 module (`extract/configs.ts`) records yaml/env files as `ConfigNode`s without reading their contents (ADR-016). When generalised DB config parsing lands (#70), it gets its own module under `extract/` rather than expanding `databases.ts`.
 
 - **Persistence loads BEFORE extracts on startup.** OBSERVED edges (M2 onwards) won't be reproduced by static extraction — they have to survive a restart. Reorder this and you silently lose every runtime observation on every reboot.
 
