@@ -1,6 +1,6 @@
 # @neat/mcp
 
-The NEAT MCP server. Stdio JSON-RPC, eight tools, talks to a running `@neat/core` instance over HTTP.
+The NEAT MCP server. Stdio JSON-RPC, eight tools and two resources, talks to a running `@neat/core` instance over HTTP.
 
 ## When to use these tools
 
@@ -21,9 +21,18 @@ Rule of thumb: if the question would take more than two file reads to answer fro
 
 If a tool returns "not found" or empty, check that core is running (`curl $NEAT_CORE_URL/health`) before falling back to source reads.
 
+## Resources
+
+Two MCP resources sit alongside the tools — same data, different access pattern:
+
+- **`neat://node/<id>`** (templated) — one resource per graph node. Read returns `{ node, outboundEdges }` as JSON. Listing enumerates every node currently in the graph. Use it when you want the raw attributes rather than a formatted answer.
+- **`neat://incidents/recent`** (static) — most recent error events as JSON `{ count, total, events[] }`. Subscribe to be notified (`notifications/resources/updated`) when new incidents land. The server polls `/incidents` every 5s by default; override with `NEAT_RESOURCE_POLL_MS` (set to `0` to disable polling).
+
 ## Configuration
 
 `NEAT_CORE_URL` — base URL for the core REST API. Default `http://localhost:8080`.
+
+`NEAT_RESOURCE_POLL_MS` — interval in ms for the `neat://incidents/recent` change-detection poll. Default `5000`. `0` disables it.
 
 ## Smoke-test the handshake
 

@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { createHttpClient } from './client.js'
+import { registerResources } from './resources.js'
 import {
   getBlastRadius,
   getDependencies,
@@ -117,10 +118,27 @@ server.tool(
   async (input) => getRecentStaleEdges(client, input),
 )
 
+// Resources sit alongside tools — same data, different access pattern. Read
+// the per-node resource for raw attrs+edges JSON; subscribe to the incidents
+// resource to be notified when new errors land. The eight tools above are
+// unchanged.
+const incidentsPollMs = process.env.NEAT_RESOURCE_POLL_MS
+  ? Number(process.env.NEAT_RESOURCE_POLL_MS)
+  : undefined
+const resourceRegistration = registerResources(server, client, {
+  ...(incidentsPollMs !== undefined ? { incidentsPollMs } : {}),
+})
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport()
   await server.connect(transport)
 }
+
+const stopPolling = (): void => {
+  resourceRegistration.stop()
+}
+process.on('SIGTERM', stopPolling)
+process.on('SIGINT', stopPolling)
 
 main().catch((err) => {
   console.error(err)
