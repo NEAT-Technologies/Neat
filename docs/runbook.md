@@ -77,6 +77,21 @@ npm run build --workspace @neat/mcp
 
 You should see two JSON-RPC responses: `serverInfo` from `initialize`, then a tool list with all six tools.
 
+## Enable OTLP/gRPC ingest
+
+Most NEAT installs land OTLP traffic over HTTP/JSON on `:4318`. If your collector or SDK exports over gRPC instead, flip the gRPC receiver on:
+
+```bash
+NEAT_SCAN_PATH=./demo \
+  NEAT_OTLP_GRPC=true \
+  npm run dev --workspace @neat/core
+# → http://localhost:8080  (REST API)
+# → http://localhost:4318  (OTLP/HTTP)
+# → 0.0.0.0:4317           (OTLP/gRPC)
+```
+
+`NEAT_OTLP_GRPC_PORT` overrides the default `:4317`. The HTTP receiver always stays on; gRPC is purely additive. Both transports go through the same `parseOtlpRequest` decoder so a span looks identical to ingest no matter which transport delivered it.
+
 ## Common failure modes
 
 - **`tsup` build fails with `Cannot find module '.../packages/<pkg>/node_modules/tsup/dist/cli-default.js'`** — leftover per-package node_modules from a different package manager. Wipe and reinstall (see "First-time setup").

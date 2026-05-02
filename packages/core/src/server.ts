@@ -4,6 +4,7 @@ import { buildApi } from './api.js'
 import { extractFromDirectory } from './extract.js'
 import { loadGraphFromDisk, startPersistLoop } from './persist.js'
 import { buildOtelReceiver } from './otel.js'
+import { startOtelGrpcReceiver } from './otel-grpc.js'
 import { makeSpanHandler, startStalenessLoop } from './ingest.js'
 
 async function main(): Promise<void> {
@@ -43,6 +44,15 @@ async function main(): Promise<void> {
   const otelApp = await buildOtelReceiver({ onSpan })
   await otelApp.listen({ port: otelPort, host })
   console.log(`neat-core OTLP receiver on http://${host}:${otelPort}/v1/traces`)
+
+  // gRPC OTLP receiver — off by default. Most NEAT installs run the HTTP path
+  // because that's what docker-compose's collector ships, but plenty of OTel
+  // deployments default to gRPC, so this is the "drop NEAT in" affordance.
+  if (process.env.NEAT_OTLP_GRPC === 'true') {
+    const grpcPort = Number(process.env.NEAT_OTLP_GRPC_PORT ?? 4317)
+    const grpcReceiver = await startOtelGrpcReceiver({ onSpan, host, port: grpcPort })
+    console.log(`neat-core OTLP/gRPC receiver on ${grpcReceiver.address}`)
+  }
 }
 
 main().catch((err) => {
