@@ -26,6 +26,16 @@ export const EdgeEvidenceSchema = z.object({
 })
 export type EdgeEvidence = z.infer<typeof EdgeEvidenceSchema>
 
+// Runtime signal for per-edge confidence (γ #76). Populated by ingest. Three
+// continuous numbers stand in for the previous coarse 0.3/0.5/0.7/1.0 ladder:
+// how much traffic, how clean, and how recent.
+export const EdgeSignalSchema = z.object({
+  spanCount: z.number().int().nonnegative(),
+  errorCount: z.number().int().nonnegative(),
+  lastObservedAgeMs: z.number().nonnegative().optional(),
+})
+export type EdgeSignal = z.infer<typeof EdgeSignalSchema>
+
 export const GraphEdgeSchema = z.object({
   id: z.string(),
   source: z.string(),
@@ -36,5 +46,6 @@ export const GraphEdgeSchema = z.object({
   lastObserved: z.string().datetime().optional(),
   callCount: z.number().int().nonnegative().optional(),
   evidence: EdgeEvidenceSchema.optional(),
+  signal: EdgeSignalSchema.optional(),
 })
 export type GraphEdge = z.infer<typeof GraphEdgeSchema>

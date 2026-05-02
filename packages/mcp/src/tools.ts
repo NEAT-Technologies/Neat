@@ -163,10 +163,31 @@ export async function getObservedDependencies(
 
 function edgeMeta(e: GraphEdge): string {
   const bits: string[] = []
-  if (e.callCount !== undefined) bits.push(`callCount=${e.callCount}`)
+  if (e.signal) {
+    // Prefer the runtime signal numbers — "saw 1,247 calls, 3 errors" reads
+    // better than a derived 0.94 confidence.
+    bits.push(`spans=${e.signal.spanCount}`)
+    if (e.signal.errorCount > 0) bits.push(`errors=${e.signal.errorCount}`)
+    if (e.signal.lastObservedAgeMs !== undefined) {
+      bits.push(`age=${formatDuration(e.signal.lastObservedAgeMs)}`)
+    }
+  } else if (e.callCount !== undefined) {
+    bits.push(`callCount=${e.callCount}`)
+  }
   if (e.lastObserved) bits.push(`lastObserved=${e.lastObserved}`)
   if (e.confidence !== undefined) bits.push(`confidence=${e.confidence}`)
   return bits.length ? ` [${bits.join(', ')}]` : ''
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.round(m / 60)
+  if (h < 48) return `${h}h`
+  return `${Math.round(h / 24)}d`
 }
 
 // Two services can have an EXTRACTED edge AND an OBSERVED edge AND an INFERRED

@@ -31,7 +31,7 @@ export {
   stitchTrace,
   type IngestContext,
 } from './ingest.js'
-export { getBlastRadius, getRootCause } from './traverse.js'
+export { confidenceForEdge, getBlastRadius, getRootCause } from './traverse.js'
 export {
   computeGraphDiff,
   loadSnapshotForDiff,

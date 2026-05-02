@@ -158,17 +158,25 @@ function upsertObservedEdge(
   source: string,
   target: string,
   ts: string,
+  isError = false,
 ): UpsertResult | null {
   if (!graph.hasNode(source) || !graph.hasNode(target)) return null
 
   const id = makeObservedEdgeId(type, source, target)
   if (graph.hasEdge(id)) {
     const existing = graph.getEdgeAttributes(id) as GraphEdge
+    const newSpanCount = (existing.signal?.spanCount ?? existing.callCount ?? 0) + 1
+    const newErrorCount = (existing.signal?.errorCount ?? 0) + (isError ? 1 : 0)
     const updated: GraphEdge = {
       ...existing,
       provenance: Provenance.OBSERVED,
       lastObserved: ts,
-      callCount: (existing.callCount ?? 0) + 1,
+      callCount: newSpanCount,
+      signal: {
+        spanCount: newSpanCount,
+        errorCount: newErrorCount,
+        lastObservedAgeMs: 0,
+      },
       confidence: 1.0,
     }
     graph.replaceEdgeAttributes(id, updated)
@@ -184,6 +192,11 @@ function upsertObservedEdge(
     confidence: 1.0,
     lastObserved: ts,
     callCount: 1,
+    signal: {
+      spanCount: 1,
+      errorCount: isError ? 1 : 0,
+      lastObservedAgeMs: 0,
+    },
   }
   graph.addEdgeWithKey(id, source, target, edge)
   return { edge, created: true }
@@ -254,6 +267,7 @@ async function appendErrorEvent(ctx: IngestContext, ev: ErrorEvent): Promise<voi
 export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<void> {
   const ts = nowIso(ctx)
   const sourceId = `service:${span.service}`
+  const isError = span.statusCode === 2
 
   let affectedNode = sourceId
 
@@ -262,7 +276,14 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     const host = pickAddress(span)
     if (host) {
       const targetId = `database:${host}`
-      const result = upsertObservedEdge(ctx.graph, EdgeType.CONNECTS_TO, sourceId, targetId, ts)
+      const result = upsertObservedEdge(
+        ctx.graph,
+        EdgeType.CONNECTS_TO,
+        sourceId,
+        targetId,
+        ts,
+        isError,
+      )
       if (result) affectedNode = targetId
     }
   } else {
@@ -276,7 +297,14 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     if (host && host !== span.service) {
       const targetId = resolveServiceId(ctx.graph, host)
       if (targetId && targetId !== sourceId) {
-        upsertObservedEdge(ctx.graph, EdgeType.CALLS, sourceId, targetId, ts)
+        upsertObservedEdge(
+          ctx.graph,
+          EdgeType.CALLS,
+          sourceId,
+          targetId,
+          ts,
+          isError,
+        )
         affectedNode = targetId
       } else if (!targetId) {
         const frontierId = ensureFrontierNode(ctx.graph, host, ts)

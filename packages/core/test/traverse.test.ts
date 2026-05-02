@@ -394,3 +394,63 @@ describe('getBlastRadius', () => {
     expect(c!.distance).toBe(1)
   })
 })
+
+describe('confidenceForEdge — signal-aware (#76)', () => {
+  it('returns provenance ceiling when no signal data is present', async () => {
+    const { confidenceForEdge } = await import('../src/traverse.js')
+    const e: GraphEdge = {
+      id: 'x',
+      source: 's',
+      target: 't',
+      type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED,
+    }
+    expect(confidenceForEdge(e)).toBe(1)
+  })
+
+  it('penalises a low-volume stale OBSERVED edge below a high-volume fresh one', async () => {
+    const { confidenceForEdge } = await import('../src/traverse.js')
+    const stale: GraphEdge = {
+      id: 'a',
+      source: 's',
+      target: 't',
+      type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED,
+      signal: { spanCount: 1, errorCount: 0, lastObservedAgeMs: 23 * 60 * 60 * 1000 },
+    }
+    const fresh: GraphEdge = {
+      id: 'b',
+      source: 's',
+      target: 't',
+      type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED,
+      signal: { spanCount: 10000, errorCount: 0, lastObservedAgeMs: 5 * 1000 },
+    }
+    const a = confidenceForEdge(stale)
+    const b = confidenceForEdge(fresh)
+    expect(a).toBeLessThan(b)
+    expect(a).toBeGreaterThanOrEqual(0)
+    expect(b).toBeLessThanOrEqual(1)
+  })
+
+  it('penalises a flapping edge with high error rate', async () => {
+    const { confidenceForEdge } = await import('../src/traverse.js')
+    const clean: GraphEdge = {
+      id: 'a',
+      source: 's',
+      target: 't',
+      type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED,
+      signal: { spanCount: 100, errorCount: 0, lastObservedAgeMs: 1000 },
+    }
+    const flapping: GraphEdge = {
+      id: 'b',
+      source: 's',
+      target: 't',
+      type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED,
+      signal: { spanCount: 100, errorCount: 60, lastObservedAgeMs: 1000 },
+    }
+    expect(confidenceForEdge(flapping)).toBeLessThan(confidenceForEdge(clean))
+  })
+})
