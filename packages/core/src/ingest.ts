@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ErrorEvent, GraphEdge } from '@neat/types'
+import type { ErrorEvent, FrontierNode, GraphEdge, ServiceNode } from '@neat/types'
 import { EdgeType, NodeType, Provenance, type EdgeTypeValue } from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import type { ParsedSpan } from './otel.js'
@@ -71,15 +71,80 @@ function resolveServiceId(graph: NeatGraph, host: string): string | null {
   if (graph.hasNode(direct)) return direct
 
   // Service hostnames in the demo can match either the package name (which the
-  // node id is built from) or the directory basename. We've already tried the
-  // direct id; fall back to scanning service nodes for a matching name.
+  // node id is built from) or the directory basename — handled by the name
+  // check below. Beyond that, anything in `aliases` (compose service names,
+  // k8s metadata.name + cluster-DNS variants, Dockerfile labels) should
+  // resolve too. Population happens in the extract phases; consumption is
+  // here.
   let found: string | null = null
   graph.forEachNode((id, attrs) => {
     if (found) return
-    const a = attrs as { type?: string; name?: string }
-    if (a.type === NodeType.ServiceNode && a.name === host) found = id
+    const a = attrs as ServiceNode & { type?: string }
+    if (a.type !== NodeType.ServiceNode) return
+    if (a.name === host) {
+      found = id
+      return
+    }
+    if (a.aliases && a.aliases.includes(host)) {
+      found = id
+    }
   })
   return found
+}
+
+export function frontierIdFor(host: string): string {
+  return `frontier:${host}`
+}
+
+function ensureFrontierNode(graph: NeatGraph, host: string, ts: string): string {
+  const id = frontierIdFor(host)
+  if (graph.hasNode(id)) {
+    const existing = graph.getNodeAttributes(id) as FrontierNode
+    graph.replaceNodeAttributes(id, { ...existing, lastObserved: ts })
+    return id
+  }
+  const node: FrontierNode = {
+    id,
+    type: NodeType.FrontierNode,
+    name: host,
+    host,
+    firstObserved: ts,
+    lastObserved: ts,
+  }
+  graph.addNode(id, node)
+  return id
+}
+
+function upsertFrontierEdge(
+  graph: NeatGraph,
+  type: EdgeTypeValue,
+  source: string,
+  target: string,
+  ts: string,
+): void {
+  const id = `${type}:FRONTIER:${source}->${target}`
+  if (graph.hasEdge(id)) {
+    const existing = graph.getEdgeAttributes(id) as GraphEdge
+    const updated: GraphEdge = {
+      ...existing,
+      provenance: Provenance.FRONTIER,
+      lastObserved: ts,
+      callCount: (existing.callCount ?? 0) + 1,
+    }
+    graph.replaceEdgeAttributes(id, updated)
+    return
+  }
+  const edge: GraphEdge = {
+    id,
+    source,
+    target,
+    type,
+    provenance: Provenance.FRONTIER,
+    confidence: 1.0,
+    lastObserved: ts,
+    callCount: 1,
+  }
+  graph.addEdgeWithKey(id, source, target, edge)
 }
 
 interface UpsertResult {
@@ -201,14 +266,24 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
       if (result) affectedNode = targetId
     }
   } else {
-    // Possibly a cross-service call — only if the address resolves to a known
-    // service node, and isn't ourselves.
+    // Possibly a cross-service call. Resolve the peer; if it matches a known
+    // ServiceNode, record an OBSERVED CALLS edge. If it matches nothing — pod
+    // IP, ingress hostname, AWS PrivateLink endpoint — drop a FRONTIER
+    // placeholder so the call isn't lost. promoteFrontierNodes (run by the
+    // extract orchestrator) replaces it once a later round records the host
+    // as an alias on a real service.
     const host = pickAddress(span)
     if (host && host !== span.service) {
       const targetId = resolveServiceId(ctx.graph, host)
       if (targetId && targetId !== sourceId) {
         upsertObservedEdge(ctx.graph, EdgeType.CALLS, sourceId, targetId, ts)
         affectedNode = targetId
+      } else if (!targetId) {
+        const frontierId = ensureFrontierNode(ctx.graph, host, ts)
+        if (ctx.graph.hasNode(sourceId)) {
+          upsertFrontierEdge(ctx.graph, EdgeType.CALLS, sourceId, frontierId, ts)
+        }
+        affectedNode = frontierId
       }
     }
   }
@@ -229,6 +304,99 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
 }
 
 export { stitchTrace }
+
+// Promote any frontier:<host> placeholder whose host matches an alias on a
+// real ServiceNode: re-link inbound/outbound edges to the service, then drop
+// the placeholder. Returns the count of nodes promoted, for tests + logs.
+//
+// Called at the end of every extraction round. Static rounds are when new
+// aliases land (compose names, k8s metadata.name, Dockerfile labels), so
+// running it there picks up the case the issue describes: ingest fills in a
+// frontier when traffic arrives for an unknown host, and the next extraction
+// round resolves it.
+export function promoteFrontierNodes(graph: NeatGraph): number {
+  const aliasIndex = new Map<string, string>()
+  graph.forEachNode((id, attrs) => {
+    const a = attrs as ServiceNode & { type?: string }
+    if (a.type !== NodeType.ServiceNode) return
+    aliasIndex.set(a.name, id)
+    if (a.aliases) {
+      for (const alias of a.aliases) aliasIndex.set(alias, id)
+    }
+  })
+
+  const toPromote: { frontierId: string; serviceId: string }[] = []
+  graph.forEachNode((id, attrs) => {
+    const a = attrs as FrontierNode & { type?: string }
+    if (a.type !== NodeType.FrontierNode) return
+    const target = aliasIndex.get(a.host)
+    if (!target) return
+    if (target === id) return
+    toPromote.push({ frontierId: id, serviceId: target })
+  })
+
+  for (const { frontierId, serviceId } of toPromote) {
+    rewireFrontierEdges(graph, frontierId, serviceId)
+    graph.dropNode(frontierId)
+  }
+  return toPromote.length
+}
+
+function rewireFrontierEdges(graph: NeatGraph, frontierId: string, serviceId: string): void {
+  const inbound = [...graph.inboundEdges(frontierId)]
+  const outbound = [...graph.outboundEdges(frontierId)]
+
+  for (const edgeId of inbound) {
+    const edge = graph.getEdgeAttributes(edgeId) as GraphEdge
+    rebuildEdge(graph, edge, edge.source, serviceId, edgeId)
+  }
+  for (const edgeId of outbound) {
+    const edge = graph.getEdgeAttributes(edgeId) as GraphEdge
+    rebuildEdge(graph, edge, serviceId, edge.target, edgeId)
+  }
+}
+
+function rebuildEdge(
+  graph: NeatGraph,
+  edge: GraphEdge,
+  newSource: string,
+  newTarget: string,
+  oldEdgeId: string,
+): void {
+  graph.dropEdge(oldEdgeId)
+  // FRONTIER provenance gets upgraded to OBSERVED on promotion: the call
+  // certainty was always there; only the target identity was unknown, and now
+  // it isn't.
+  const promotedProvenance =
+    edge.provenance === Provenance.FRONTIER ? Provenance.OBSERVED : edge.provenance
+  const newId = `${edge.type}:${promotedProvenance}:${newSource}->${newTarget}`
+
+  if (graph.hasEdge(newId)) {
+    const existing = graph.getEdgeAttributes(newId) as GraphEdge
+    const merged: GraphEdge = {
+      ...existing,
+      callCount: (existing.callCount ?? 0) + (edge.callCount ?? 0),
+      lastObserved: pickLater(existing.lastObserved, edge.lastObserved),
+    }
+    graph.replaceEdgeAttributes(newId, merged)
+    return
+  }
+
+  const rebuilt: GraphEdge = {
+    ...edge,
+    id: newId,
+    source: newSource,
+    target: newTarget,
+    provenance: promotedProvenance,
+  }
+  graph.addEdgeWithKey(newId, newSource, newTarget, rebuilt)
+}
+
+function pickLater(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b
+  if (!b) return a
+  return new Date(a).getTime() >= new Date(b).getTime() ? a : b
+}
 
 export function makeSpanHandler(ctx: IngestContext): (span: ParsedSpan) => Promise<void> {
   return (span) => handleSpan(ctx, span)

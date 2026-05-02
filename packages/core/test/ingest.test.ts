@@ -14,6 +14,7 @@ import {
 import {
   handleSpan,
   markStaleEdges,
+  promoteFrontierNodes,
   readErrorEvents,
   stitchTrace,
   type IngestContext,
@@ -193,13 +194,45 @@ describe('handleSpan', () => {
     ).toBe(true)
   })
 
-  it('skips spans whose target service node does not exist in the graph', async () => {
-    await handleSpan(ctx, clientHttpSpan({ attributes: { 'server.address': 'unknown-service' } }))
-    let calls = 0
+  it('emits a FRONTIER placeholder when the span peer matches no service node', async () => {
+    await handleSpan(
+      ctx,
+      clientHttpSpan({ attributes: { 'server.address': 'payments-api.cluster.local' } }),
+    )
+    let observedCalls = 0
     ctx.graph.forEachEdge((k) => {
-      if (k.startsWith(`${EdgeType.CALLS}:OBSERVED:`)) calls++
+      if (k.startsWith(`${EdgeType.CALLS}:OBSERVED:`)) observedCalls++
     })
-    expect(calls).toBe(0)
+    expect(observedCalls).toBe(0)
+
+    expect(ctx.graph.hasNode('frontier:payments-api.cluster.local')).toBe(true)
+    const frontier = ctx.graph.getNodeAttributes(
+      'frontier:payments-api.cluster.local',
+    ) as { type: string; host: string; firstObserved?: string }
+    expect(frontier.type).toBe(NodeType.FrontierNode)
+    expect(frontier.host).toBe('payments-api.cluster.local')
+    expect(frontier.firstObserved).toBeTruthy()
+
+    const frontierEdgeId = `${EdgeType.CALLS}:FRONTIER:service:service-a->frontier:payments-api.cluster.local`
+    expect(ctx.graph.hasEdge(frontierEdgeId)).toBe(true)
+    const edge = ctx.graph.getEdgeAttributes(frontierEdgeId) as GraphEdge
+    expect(edge.provenance).toBe(Provenance.FRONTIER)
+    expect(edge.callCount).toBe(1)
+  })
+
+  it('resolves a span peer through ServiceNode.aliases', async () => {
+    ctx.graph.replaceNodeAttributes('service:service-b', {
+      ...(ctx.graph.getNodeAttributes('service:service-b') as Record<string, unknown>),
+      aliases: ['payments-api.cluster.local'],
+    })
+    await handleSpan(
+      ctx,
+      clientHttpSpan({ attributes: { 'server.address': 'payments-api.cluster.local' } }),
+    )
+    expect(
+      ctx.graph.hasEdge(`${EdgeType.CALLS}:OBSERVED:service:service-a->service:service-b`),
+    ).toBe(true)
+    expect(ctx.graph.hasNode('frontier:payments-api.cluster.local')).toBe(false)
   })
 
   it('does not touch a pre-existing EXTRACTED edge between the same services', async () => {
@@ -440,5 +473,73 @@ describe('stitchTrace', () => {
       graph.hasEdge(`${EdgeType.CONNECTS_TO}:INFERRED:service:service-b->database:payments-db`),
     ).toBe(true)
     await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+})
+
+describe('promoteFrontierNodes', () => {
+  it('replaces a frontier node once a service records its host as an alias', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-frontier-'))
+    const graph = newGraph()
+    const ctx: IngestContext = { graph, errorsPath: path.join(tmpDir, 'errors.ndjson') }
+
+    await handleSpan(
+      ctx,
+      clientHttpSpan({ attributes: { 'server.address': 'payments-api.cluster.local' } }),
+    )
+    expect(graph.hasNode('frontier:payments-api.cluster.local')).toBe(true)
+
+    graph.replaceNodeAttributes('service:service-b', {
+      ...(graph.getNodeAttributes('service:service-b') as Record<string, unknown>),
+      aliases: ['payments-api.cluster.local'],
+    })
+
+    const promoted = promoteFrontierNodes(graph)
+    expect(promoted).toBe(1)
+    expect(graph.hasNode('frontier:payments-api.cluster.local')).toBe(false)
+
+    const promotedEdgeId = `${EdgeType.CALLS}:OBSERVED:service:service-a->service:service-b`
+    expect(graph.hasEdge(promotedEdgeId)).toBe(true)
+    const edge = graph.getEdgeAttributes(promotedEdgeId) as GraphEdge
+    expect(edge.provenance).toBe(Provenance.OBSERVED)
+    expect(edge.callCount).toBe(1)
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('merges with an existing OBSERVED edge if one already targets the service', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-frontier-merge-'))
+    const graph = newGraph()
+    const ctx: IngestContext = { graph, errorsPath: path.join(tmpDir, 'errors.ndjson') }
+
+    await handleSpan(ctx, clientHttpSpan())
+    await handleSpan(
+      ctx,
+      clientHttpSpan({
+        spanId: 'span-a2',
+        attributes: { 'server.address': 'payments-api.cluster.local' },
+      }),
+    )
+
+    graph.replaceNodeAttributes('service:service-b', {
+      ...(graph.getNodeAttributes('service:service-b') as Record<string, unknown>),
+      aliases: ['payments-api.cluster.local'],
+    })
+    promoteFrontierNodes(graph)
+
+    const id = `${EdgeType.CALLS}:OBSERVED:service:service-a->service:service-b`
+    const edge = graph.getEdgeAttributes(id) as GraphEdge
+    expect(edge.callCount).toBe(2)
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('leaves a frontier alone if no alias matches yet', () => {
+    const graph = newGraph()
+    graph.addNode('frontier:unknown', {
+      id: 'frontier:unknown',
+      type: NodeType.FrontierNode,
+      name: 'unknown',
+      host: 'unknown',
+    })
+    expect(promoteFrontierNodes(graph)).toBe(0)
+    expect(graph.hasNode('frontier:unknown')).toBe(true)
   })
 })

@@ -25,6 +25,7 @@ export const NodeType = {
   DatabaseNode: 'DatabaseNode',
   ConfigNode: 'ConfigNode',
   InfraNode: 'InfraNode',
+  FrontierNode: 'FrontierNode',
 } as const
 
 export type NodeTypeValue = (typeof NodeType)[keyof typeof NodeType]
