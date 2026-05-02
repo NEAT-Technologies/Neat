@@ -1,0 +1,14 @@
+version: '3.9'
+services:
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: shop
+  cache:
+    image: redis:7
+    ports:
+      - "6379:6379"
+  app:
+    image: node:20

@@ -1,6 +1,6 @@
 import type { NeatGraph } from '../graph.js'
 import { addServiceNodes, discoverServices } from './services.js'
-import { addDatabasesAndCompat } from './databases.js'
+import { addDatabasesAndCompat } from './databases/index.js'
 import { addConfigNodes } from './configs.js'
 import { addCallEdges } from './calls.js'
 

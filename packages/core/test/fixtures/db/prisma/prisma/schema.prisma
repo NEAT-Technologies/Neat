@@ -1,0 +1,4 @@
+datasource db {
+  provider = "postgresql"
+  url      = "postgresql://prisma-user:p@prisma-db:5432/orders"
+}
