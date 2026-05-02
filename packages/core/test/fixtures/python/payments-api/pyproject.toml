@@ -1,0 +1,7 @@
+[project]
+name = "payments-api"
+version = "0.1.0"
+dependencies = [
+    "fastapi==0.110.0",
+    "psycopg2==2.7.0",
+]

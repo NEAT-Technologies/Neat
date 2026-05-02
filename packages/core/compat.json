@@ -20,6 +20,27 @@
       "minDriverVersion": "7.0.0",
       "minEngineVersion": "7",
       "reason": "MongoDB 7 drops legacy wire-protocol opcodes that mongoose < 7.0.0 still emits."
+    },
+    {
+      "driver": "psycopg2",
+      "engine": "postgresql",
+      "minDriverVersion": "2.9.0",
+      "minEngineVersion": "14",
+      "reason": "PostgreSQL 14+ requires scram-sha-256 auth by default; psycopg2 < 2.9.0 only speaks md5."
+    },
+    {
+      "driver": "pymongo",
+      "engine": "mongodb",
+      "minDriverVersion": "4.0.0",
+      "minEngineVersion": "7",
+      "reason": "MongoDB 7 drops legacy wire-protocol opcodes that pymongo < 4.0.0 still emits."
+    },
+    {
+      "driver": "mysql-connector-python",
+      "engine": "mysql",
+      "minDriverVersion": "8.0.0",
+      "minEngineVersion": "8",
+      "reason": "MySQL 8 defaults to caching_sha2_password; mysql-connector-python < 8.0.0 doesn't negotiate it."
     }
   ]
 }

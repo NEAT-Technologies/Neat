@@ -84,11 +84,14 @@ describe('checkCompatibility', () => {
   describe('compatPairs() export', () => {
     it('exposes the configured matrix for #4 to read', () => {
       const pairs = compatPairs()
-      expect(pairs.length).toBe(3)
+      expect(pairs.length).toBe(6)
       expect(pairs.map((p) => `${p.driver}/${p.engine}`).sort()).toEqual([
         'mongoose/mongodb',
+        'mysql-connector-python/mysql',
         'mysql2/mysql',
         'pg/postgresql',
+        'psycopg2/postgresql',
+        'pymongo/mongodb',
       ])
     })
   })
