@@ -1,33 +1,11 @@
-import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import Parser from 'tree-sitter'
 import JavaScript from 'tree-sitter-javascript'
 import type { GraphEdge } from '@neat/types'
 import { EdgeType, Provenance } from '@neat/types'
-import type { NeatGraph } from '../graph.js'
-import {
-  IGNORED_DIRS,
-  SERVICE_FILE_EXTENSIONS,
-  makeEdgeId,
-  type DiscoveredService,
-} from './shared.js'
-
-export async function walkSourceFiles(dir: string): Promise<string[]> {
-  const out: string[] = []
-  async function walk(current: string): Promise<void> {
-    const entries = await fs.readdir(current, { withFileTypes: true })
-    for (const entry of entries) {
-      const full = path.join(current, entry.name)
-      if (entry.isDirectory()) {
-        if (!IGNORED_DIRS.has(entry.name)) await walk(full)
-      } else if (entry.isFile() && SERVICE_FILE_EXTENSIONS.has(path.extname(entry.name))) {
-        out.push(full)
-      }
-    }
-  }
-  await walk(dir)
-  return out
-}
+import type { NeatGraph } from '../../graph.js'
+import { makeEdgeId, type DiscoveredService } from '../shared.js'
+import { loadSourceFiles, lineOf, snippet } from './shared.js'
 
 function collectStringLiterals(node: Parser.SyntaxNode, out: string[]): void {
   if (node.type === 'string_fragment') out.push(node.text)
@@ -37,9 +15,6 @@ function collectStringLiterals(node: Parser.SyntaxNode, out: string[]): void {
   }
 }
 
-// Find URL-like literals in the AST that point at one of the known service
-// hostnames (the directory name OR the package.json name). Each match implies a
-// CALLS edge from the file's owning service to the target.
 export function callsFromSource(
   source: string,
   parser: Parser,
@@ -59,8 +34,9 @@ export function callsFromSource(
   return targets
 }
 
-// Phase 4 — service-to-service CALLS via tree-sitter URL-literal scan.
-export async function addCallEdges(
+// HTTP CALLS via URL substring match — the original tree-sitter scan, kept
+// intact so the demo's CALLS edges are byte-for-byte identical.
+export async function addHttpCallEdges(
   graph: NeatGraph,
   services: DiscoveredService[],
 ): Promise<number> {
@@ -78,24 +54,32 @@ export async function addCallEdges(
 
   let edgesAdded = 0
   for (const service of services) {
-    const files = await walkSourceFiles(service.dir)
-    const seenTargets = new Set<string>()
+    const files = await loadSourceFiles(service.dir)
+    const seenTargets = new Map<string, { file: string; host: string }>()
     for (const file of files) {
-      const source = await fs.readFile(file, 'utf8')
-      const targets = callsFromSource(source, parser, knownHosts)
+      const targets = callsFromSource(file.content, parser, knownHosts)
       for (const t of targets) {
         const targetId = hostToNodeId.get(t)
         if (!targetId || targetId === service.node.id) continue
-        seenTargets.add(targetId)
+        if (!seenTargets.has(targetId)) {
+          seenTargets.set(targetId, { file: file.path, host: t })
+        }
       }
     }
-    for (const targetId of seenTargets) {
+    for (const [targetId, evidenceFile] of seenTargets) {
+      const fileContent = files.find((f) => f.path === evidenceFile.file)?.content ?? ''
+      const line = lineOf(fileContent, `//${evidenceFile.host}`)
       const edge: GraphEdge = {
         id: makeEdgeId(service.node.id, targetId, EdgeType.CALLS),
         source: service.node.id,
         target: targetId,
         type: EdgeType.CALLS,
         provenance: Provenance.EXTRACTED,
+        evidence: {
+          file: path.relative(service.dir, evidenceFile.file),
+          line,
+          snippet: snippet(fileContent, line),
+        },
       }
       if (!graph.hasEdge(edge.id)) {
         graph.addEdgeWithKey(edge.id, edge.source, edge.target, edge)

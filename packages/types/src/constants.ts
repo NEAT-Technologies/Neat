@@ -13,6 +13,8 @@ export const EdgeType = {
   DEPENDS_ON: 'DEPENDS_ON',
   CONNECTS_TO: 'CONNECTS_TO',
   CONFIGURED_BY: 'CONFIGURED_BY',
+  PUBLISHES_TO: 'PUBLISHES_TO',
+  CONSUMES_FROM: 'CONSUMES_FROM',
 } as const
 
 export type EdgeTypeValue = (typeof EdgeType)[keyof typeof EdgeType]
