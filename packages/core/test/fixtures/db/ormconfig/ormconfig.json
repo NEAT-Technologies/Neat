@@ -1,0 +1,6 @@
+{
+  "type": "postgres",
+  "host": "ormconfig-host",
+  "port": 5432,
+  "database": "orm_db"
+}

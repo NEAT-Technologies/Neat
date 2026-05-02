@@ -1,0 +1,13 @@
+{
+  "production": {
+    "dialect": "mysql",
+    "host": "sequelize-host",
+    "port": 3306,
+    "database": "seq_db"
+  },
+  "development": {
+    "dialect": "sqlite",
+    "host": "sequelize-host",
+    "database": "seq_db"
+  }
+}
