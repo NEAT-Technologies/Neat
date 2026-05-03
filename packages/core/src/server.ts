@@ -6,6 +6,7 @@ import { loadGraphFromDisk, startPersistLoop } from './persist.js'
 import { buildOtelReceiver } from './otel.js'
 import { startOtelGrpcReceiver } from './otel-grpc.js'
 import { makeSpanHandler, startStalenessLoop } from './ingest.js'
+import { buildSearchIndex } from './search.js'
 
 async function main(): Promise<void> {
   const graph = getGraph()
@@ -37,7 +38,19 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 8080)
   const otelPort = Number(process.env.OTEL_PORT ?? 4318)
 
-  const app = await buildApi({ graph, scanPath, errorsPath, staleEventsPath })
+  const cachePath = path.resolve(
+    process.env.NEAT_EMBEDDINGS_CACHE_PATH ??
+      path.join(path.dirname(outPath), 'embeddings.json'),
+  )
+  const searchIndex = await buildSearchIndex(graph, { cachePath }).catch((err) => {
+    console.warn(`semantic_search: index build failed (${(err as Error).message}); falling back to inline substring`)
+    return undefined
+  })
+  if (searchIndex) {
+    console.log(`semantic_search: ${searchIndex.provider} provider`)
+  }
+
+  const app = await buildApi({ graph, scanPath, errorsPath, staleEventsPath, searchIndex })
   await app.listen({ port, host })
   console.log(`neat-core listening on http://${host}:${port}`)
   console.log(`  scan path:     ${scanPath}`)

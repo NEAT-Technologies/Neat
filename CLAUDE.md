@@ -89,6 +89,7 @@ Run **after δ merges**, not before. Stand up Railway per `docs/railway.md` → 
 - `infra:<kind>:<name>` id format; one `InfraNode` type, free-string `kind` for sub-typing (ADR-022)
 - `FrontierNode` is a fifth node type for unresolved span peers; promoted away once an alias matches (ADR-023)
 - Per-edge-type stale thresholds + `stale-events.ndjson` transition log (ADR-024)
+- `semantic_search` uses an Ollama → Transformers.js → substring fallback chain; flat in-memory cosine, sidecar `embeddings.json` cache (ADR-025)
 
 ## Conventions
 

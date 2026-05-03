@@ -6,6 +6,7 @@ import { extractFromDirectory } from './extract.js'
 import { readErrorEvents, readStaleEvents } from './ingest.js'
 import { getBlastRadius, getRootCause } from './traverse.js'
 import { computeGraphDiff, loadSnapshotForDiff } from './diff.js'
+import type { SearchIndex } from './search.js'
 
 export interface BuildApiOptions {
   graph: NeatGraph
@@ -16,6 +17,9 @@ export interface BuildApiOptions {
   errorsPath?: string
   // ndjson path /incidents/stale reads from. Optional for tests.
   staleEventsPath?: string
+  // Optional embedding-backed search index. When absent, /search falls back
+  // to the substring path inline so the route always works.
+  searchIndex?: SearchIndex
 }
 
 interface SerializedGraph {
@@ -133,17 +137,33 @@ export async function buildApi(opts: BuildApiOptions): Promise<FastifyInstance> 
     },
   )
 
-  app.get<{ Querystring: { q?: string } }>('/search', async (req, reply) => {
-    const q = (req.query.q ?? '').trim().toLowerCase()
-    if (!q) return reply.code(400).send({ error: 'query parameter `q` is required' })
-    const matches: GraphNode[] = []
+  app.get<{ Querystring: { q?: string; limit?: string } }>('/search', async (req, reply) => {
+    const raw = (req.query.q ?? '').trim()
+    if (!raw) return reply.code(400).send({ error: 'query parameter `q` is required' })
+    const limit = req.query.limit ? Number(req.query.limit) : undefined
+    const safeLimit = limit !== undefined && Number.isFinite(limit) && limit > 0 ? limit : undefined
+
+    if (opts.searchIndex) {
+      const result = await opts.searchIndex.search(raw, safeLimit)
+      return {
+        query: result.query,
+        provider: result.provider,
+        matches: result.matches.map((m) => ({ ...m.node, score: m.score })),
+      }
+    }
+
+    // Substring fallback for callers (mainly tests) that build the API
+    // without an attached index. Same shape as the index path so consumers
+    // don't branch.
+    const q = raw.toLowerCase()
+    const matches: (GraphNode & { score: number })[] = []
     graph.forEachNode((id, attrs) => {
       const name = (attrs as { name?: string }).name ?? ''
       if (id.toLowerCase().includes(q) || name.toLowerCase().includes(q)) {
-        matches.push(attrs)
+        matches.push({ ...(attrs as GraphNode), score: 1 })
       }
     })
-    return { query: q, matches }
+    return { query: q, provider: 'substring' as const, matches: matches.slice(0, safeLimit) }
   })
 
   app.get<{ Querystring: { against?: string } }>('/graph/diff', async (req, reply) => {

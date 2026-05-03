@@ -247,7 +247,8 @@ export interface SemanticSearchInput {
 
 interface SearchResponse {
   query: string
-  matches: GraphNode[]
+  provider?: 'ollama' | 'transformers' | 'substring'
+  matches: (GraphNode & { score?: number })[]
 }
 
 export async function semanticSearch(
@@ -261,9 +262,19 @@ export async function semanticSearch(
     if (result.matches.length === 0) {
       return text(`No matches for "${input.query}".`)
     }
-    const lines = [`Search results for "${input.query}":`, '']
+    const provider = result.provider ?? 'substring'
+    const lines = [
+      `Search results for "${input.query}" (${provider}):`,
+      '',
+    ]
     for (const n of result.matches) {
-      lines.push(`  • ${n.id} (${n.type}) — ${n.name}`)
+      // Embedding tiers attach a cosine score in [0,1]; substring fallback
+      // doesn't, so we elide the score when it's the placeholder 1.
+      const scoreBit =
+        provider !== 'substring' && typeof n.score === 'number'
+          ? ` [score=${n.score.toFixed(2)}]`
+          : ''
+      lines.push(`  • ${n.id} (${n.type}) — ${(n as { name?: string }).name ?? n.id}${scoreBit}`)
     }
     return text(lines.join('\n'))
   } catch (err) {
