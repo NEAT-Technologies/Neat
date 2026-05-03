@@ -12,37 +12,37 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-02. **v0.1.2-γ is shipped on `main`.** All five γ PRs merged (#95/#96/#97/#98/#99). Workspace is green at HEAD: `npx turbo build test lint` clean, **178 core / 30 types / 24 mcp** tests passing. Issues #74, #75, #76, #77, #78 still open — they get closed by hand after you spot-verify the merged work.
+**Last session ended:** 2026-05-03. **v0.1.2 is shipped and tagged.** All four δ PRs merged (#102/#103/#104/#105). The release lives at https://github.com/NEAT-Technologies/Neat/releases/tag/v0.1.2. Workspace at HEAD is green: `npx turbo build test lint` clean, **214 core / 30 types / 35 mcp** tests passing. The v0.1.2 milestone is closed; issues #67–#83 stay attached for the historical record (per ADR-005 the user closes individual issues by hand).
 
-**Next session is v0.1.2-δ — ergonomics.** γ made the graph reason sharper; δ makes it pleasant to use. `neat watch` ends manual `POST /graph/scan` during dev, MCP Resources let agents subscribe instead of poll, `semantic_search` graduates from substring to embeddings, and multi-project support stops `getGraph()` being a singleton.
+A generic `Dockerfile` lives at the repo root (separate from `packages/core/Dockerfile`, which still bakes in the demo). Mount your codebase at `/workspace`, point a volume at `/neat-out`, and the image runs the REST + OTLP daemon by default. CMD overrides: `neat init /workspace --project <name>` for a one-shot snapshot, `neat watch /workspace` for the live re-extraction daemon, `neat-mcp` for the stdio MCP binary.
 
-### δ work order (within v0.1.2-δ)
+**Next release is v0.2.0 — Frontend.** `packages/web/` was a shell through v0.1.2 (ADR-004); v0.2.0 fills it in. Open issues under that milestone:
 
-Branch each issue off the latest `main`. δ PRs are largely independent — none of them share a schema, so they don't need to stack.
+- **#28 — Implement graph explorer with Cytoscape.js**
+- **#29 — Implement node inspector panel**
+- **#30 — Implement incident log page**
+- **#31 — Apply NEAT branding**
+- **#106 — Multi-project switcher in the web UI** (reads `GET /projects`, persists selection, threads through every API call)
+- **#107 — `semantic_search` bar — natural-language node lookup** (hits `/search`, surfaces provider + score, click-through to inspector)
+- **#108 — Live graph updates via SSE / WebSocket from `neat watch`** (server emits a "graph_changed" event after each `runExtractPhases` flush; UI hot-refetches)
 
-1. **#79 — `neat watch <path>` daemon.** New CLI subcommand, watches the scan path with `chokidar`, debounces ~1s, re-extracts on file changes. Same in-memory graph as the REST API; SIGTERM has to clean up watchers. Lives next to `neat init` in `packages/core/src/cli.ts`. Pre-requisite work (extract phase modules, recursive service discovery) is already in place from β.
-2. **#81 — MCP Resources.** Expose every node as `neat://node/<id>` (read returns attrs + outbound edges) and `neat://incidents/recent` as a streaming resource. Wire up resource list + read handlers next to the existing `server.tool(...)` calls in `packages/mcp/src/index.ts`. Tools stay; resources are additive.
-3. **#82 — real `semantic_search` embeddings.** Embed `id + name + description fragments` per node. Default to `nomic-embed-text` via Ollama if `OLLAMA_HOST` is set; fall back to `@xenova/transformers` in-process; substring fallback when neither is available. Flat cosine in-memory (≤10K nodes is fine). **Needs a model-choice ADR before code lands** — write that first so the choice is documented, not just embedded in code.
-4. **#83 — multi-project support.** Last in δ on purpose; α/γ schemas have settled now, so now's safe. Replace `getGraph()` singleton with `Map<string, NeatGraph>`. Routes become `/projects/:project/graph` with `default` as the back-compat fallback. Snapshots persist to `neat-out/<project>.json`. MCP tools take an optional `project` arg; server reads `NEAT_DEFAULT_PROJECT`.
+Suggested order: #31 (branding) → #28 (graph explorer) → #29 (inspector) → #106 (project switcher) → #107 (search bar) → #30 (incident log) → #108 (live updates). Branding first because it shapes the rest of the visual decisions; live updates last because it depends on a stable explorer to render the deltas into.
 
-#79 first (stand-alone, no schema impact). #81 + #82 in parallel after that. #83 last — it touches every route shape, so let the others land first.
+### M6 manual verification — STILL DEFERRED
 
-### M6 manual verification — STILL DEFERRED, now post-δ
+The two unchecked Railway gates remain unchecked. They were rescheduled to post-δ in PR #87 and the user has indicated AWS deployment is the more likely production target. Treat them as informational rather than blocking.
 
-The two unchecked manual gates (live Railway deploy + Claude Code end-to-end against the deployed core) are the closing gate. Reasoning hasn't changed since PR #87. Run them after #83 merges, then tag v0.1.2.
+### Gotchas a fresh v0.2.0 session will benefit from
 
-### Gotchas a fresh δ session will benefit from
-
-- **γ shipped: confidence is signal-driven, frontier is real, the matrix has four kinds, the diff endpoint exists, staleness is per-edge-type.** None of δ's work needs to touch any of that. If you find yourself editing `traverse.ts#confidenceForEdge` or the matrix shape, you're outside δ's scope — push back.
-- **Snapshot schema is still v2.** γ kept every change additive. δ likely will too: `neat watch` doesn't change disk format, MCP Resources don't touch snapshots, embeddings live in memory + a sidecar cache, multi-project just changes the file *path*. If something genuinely demands v3, follow ADR-019's migration pattern.
-- **`extract/index.ts` orchestrator is unchanged in shape.** Phases: services → aliases → databases → configs → calls → infra → frontier promotion. γ #75 added `addServiceAliases` between phase 1 and 2, and `promoteFrontierNodes` after phase 5 (returned as `frontiersPromoted`). Adding a new "phase" still means writing the function and one line in the orchestrator. **`neat watch`'s incremental-extract optimisation is per-phase: a `package.json` change touches phase 1 + 2; a `*.js` change touches phase 4 only.**
-- **NodeType has 5 values now** (ServiceNode, DatabaseNode, ConfigNode, InfraNode, FrontierNode — γ #75). EdgeType still 7. `packages/types/test/schemas.test.ts` counts both. Multi-project (#83) doesn't add a node type; projects are scoping, not topology.
-- **MCP currently has eight tools.** δ #81 adds *resources* on top, which is a different MCP surface (read-by-URI + subscribe vs. tool-call). Don't reframe the existing tools as resources — the design assumes both surfaces coexist.
-- **`compat.json` already has four kinds + a `NEAT_COMPAT_URL` override** (γ #74). #82's embeddings shouldn't reuse this loader — embeddings are per-node graph data, not portable matrix data.
-- **`stale-events.ndjson` is the new transition log** (γ #78, ADR-024). Anything δ-shaped that wants "what just changed" should read it rather than diffing the graph itself. `neat watch` may want to write a similar log for re-extraction events; if so, follow the same ndjson + `readX` helper shape.
-- **`/incidents/:nodeId` route catches `/incidents/stale`** unless registered first; γ #78 already handles this. Other route additions in #79/#81 should keep specific-before-parametric route ordering.
+- **`packages/web/` is a Next.js shell.** It exists but does nothing useful — every page is a placeholder. The v0.2.0 work is greenfield UI on top of a stable, tested core API.
+- **Core API is project-aware everywhere.** Routes mount at both `/X` (default project) and `/projects/:project/X`. The web client should use the prefixed shape from day one — see ADR-026 and `packages/mcp/src/tools.ts` for the routing pattern.
+- **Snapshot schema is at v2.** Frontend doesn't touch it; everything goes through HTTP. If you find yourself reading `neat-out/graph.json` directly from the web layer, stop and use `/graph` instead — it'll keep working through future schema migrations.
+- **NodeType has 5 values** (ServiceNode, DatabaseNode, ConfigNode, InfraNode, FrontierNode). EdgeType has 7 (CALLS, CONNECTS_TO, DEPENDS_ON, CONFIGURED_BY, RUNS_ON, PUBLISHES_TO, CONSUMES_FROM). The graph explorer needs styling rules for each.
+- **Provenance has four states** (OBSERVED, INFERRED, EXTRACTED, STALE) plus FRONTIER for placeholder edges. Confidence is per-edge with a `signal: { spanCount, errorCount, lastObservedAgeMs }` shape from γ #76. The inspector should surface signal numbers verbatim, not just confidence — see `packages/mcp/src/tools.ts` for how the MCP tools format these.
+- **Real-time updates need a new transport on core.** Currently the only push is MCP `notifications/resources/updated` for the incidents resource (5s poll). Issue #108 will add an SSE or WebSocket route on neat-core; web consumes it.
 - **Branching convention unchanged.** One issue → one branch `<num>-<slug>` → one PR (`Refs #N`, not `Closes #N`). Plain-English commits, no `Co-Authored-By: Claude`. Branch off the latest `main`.
-- **Force-push needs explicit user approval.** If you rebase a δ branch and need to force-push, ask first — the harness blocks `git push --force-with-lease` unless authorised for the specific operation.
+- **No emojis in commits / code / docs unless explicitly requested.** Memory has this; easy to forget under autopilot.
+- **Force-push needs explicit user approval.** Same as v0.1.2 — the harness blocks `git push --force-with-lease` unless authorised.
 
 ---
 
@@ -296,15 +296,15 @@ A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the sam
 
 **End state:** confidence is a real signal, not a constant. Compat covers more than (driver, engine) pairs. FRONTIER nodes get populated. Snapshot diffing answers "what changed?".
 
-**Status:** NOT_STARTED.
+**Status:** VERIFIED 2026-05-02.
 
-| Issue | Title |
-|-------|-------|
-| #74   | Compat matrix beyond drivers (Node engines, package conflicts, deprecated APIs) |
-| #75   | OBSERVED-edge attribution and FRONTIER node population |
-| #76   | Per-edge confidence signals (span count, error rate, recency) |
-| #77   | Snapshot diffing endpoint and MCP tool |
-| #78   | Per-edge-type stale thresholds + stale event log |
+| Issue | Title                                                                   | PR  | Status |
+|-------|-------------------------------------------------------------------------|-----|--------|
+| #74   | Compat matrix beyond drivers (Node engines, package conflicts, deprecated APIs) | #97 | merged |
+| #75   | OBSERVED-edge attribution and FRONTIER node population                  | #95 | merged |
+| #76   | Per-edge confidence signals (span count, error rate, recency)           | #98 | merged |
+| #77   | Snapshot diffing endpoint and MCP tool                                  | #96 | merged |
+| #78   | Per-edge-type stale thresholds + stale event log                        | #99 | merged |
 
 ---
 
@@ -312,11 +312,29 @@ A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the sam
 
 **End state:** the daily-use surface is pleasant. `neat watch` re-extracts on save. MCP exposes Resources for graph nodes and the incident stream. Real semantic search. Multiple projects coexist in one core instance.
 
+**Status:** VERIFIED 2026-05-03.
+
+| Issue | Title                                                  | PR   | Status |
+|-------|--------------------------------------------------------|------|--------|
+| #79   | neat watch daemon (live re-extraction)                 | #102 | merged |
+| #81   | MCP Resources for graph nodes and incident stream      | #103 | merged |
+| #82   | semantic_search with real embeddings                   | #104 | merged |
+| #83   | Multi-graph / multi-project support                    | #105 | merged |
+
+---
+
+## v0.2.0 — Frontend
+
+**End state:** `packages/web/` is no longer a shell. Graph explorer renders the live graph; node inspector shows attrs + signal + outbound edges; incident log surfaces recent errors and stale-edge transitions; multi-project switcher routes every call through the right `/projects/:project/*` URL; semantic search bar lives in the top chrome; the explorer hot-updates when `neat watch` re-extracts.
+
 **Status:** NOT_STARTED.
 
-| Issue | Title |
-|-------|-------|
-| #79   | neat watch daemon (live re-extraction) |
-| #81   | MCP Resources for graph nodes and incident stream |
-| #82   | semantic_search with real embeddings |
-| #83   | Multi-graph / multi-project support |
+| Issue | Title                                                          |
+|-------|----------------------------------------------------------------|
+| #28   | Implement graph explorer with Cytoscape.js                     |
+| #29   | Implement node inspector panel                                 |
+| #30   | Implement incident log page                                    |
+| #31   | Apply NEAT branding                                            |
+| #106  | Multi-project switcher in the web UI                           |
+| #107  | `semantic_search` bar — natural-language node lookup           |
+| #108  | Live graph updates via SSE / WebSocket from `neat watch`       |

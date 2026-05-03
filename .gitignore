@@ -29,3 +29,6 @@ npm-debug.log*
 
 # test
 coverage/
+
+# docker save artifacts — image tarballs are big and never belong in the tree
+*.tar.gz
