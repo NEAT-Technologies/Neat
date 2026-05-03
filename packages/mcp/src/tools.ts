@@ -28,6 +28,15 @@ function errorText(s: string): ToolResponse {
   return { content: [{ type: 'text', text: s }], isError: true }
 }
 
+// Project-aware path builder. When `project` is set, route through
+// /projects/<name>/...; otherwise hit the legacy root URL (which the core
+// resolves to project=`default`). Keeping the legacy path means callers
+// running an older core still talk to a known route.
+function projectPath(project: string | undefined, suffix: string): string {
+  if (!project) return suffix
+  return `/projects/${encodeURIComponent(project)}${suffix}`
+}
+
 // Most tools want "node missing → friendly message, anything else → real error".
 async function withMissingNodeFallback(
   fn: () => Promise<ToolResponse>,
@@ -46,11 +55,15 @@ async function withMissingNodeFallback(
 export interface RootCauseInput {
   errorNode: string
   errorId?: string
+  project?: string
 }
 
 export async function getRootCause(client: HttpClient, input: RootCauseInput): Promise<ToolResponse> {
   const qs = input.errorId ? `?errorId=${encodeURIComponent(input.errorId)}` : ''
-  const path = `/traverse/root-cause/${encodeURIComponent(input.errorNode)}${qs}`
+  const path = projectPath(
+    input.project,
+    `/traverse/root-cause/${encodeURIComponent(input.errorNode)}${qs}`,
+  )
 
   return withMissingNodeFallback(async () => {
     const result = await client.get<RootCauseResult>(path)
@@ -76,6 +89,7 @@ export async function getRootCause(client: HttpClient, input: RootCauseInput): P
 export interface BlastRadiusInput {
   nodeId: string
   depth?: number
+  project?: string
 }
 
 export async function getBlastRadius(
@@ -83,7 +97,10 @@ export async function getBlastRadius(
   input: BlastRadiusInput,
 ): Promise<ToolResponse> {
   const qs = input.depth !== undefined ? `?depth=${input.depth}` : ''
-  const path = `/traverse/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`
+  const path = projectPath(
+    input.project,
+    `/traverse/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`,
+  )
 
   return withMissingNodeFallback(async () => {
     const result = await client.get<BlastRadiusResult>(path)
@@ -115,6 +132,7 @@ interface EdgesResponse {
 
 export interface DependenciesInput {
   nodeId: string
+  project?: string
 }
 
 export async function getDependencies(
@@ -123,7 +141,7 @@ export async function getDependencies(
 ): Promise<ToolResponse> {
   return withMissingNodeFallback(async () => {
     const edges = await client.get<EdgesResponse>(
-      `/graph/edges/${encodeURIComponent(input.nodeId)}`,
+      projectPath(input.project, `/graph/edges/${encodeURIComponent(input.nodeId)}`),
     )
     const outbound = edges.outbound
     if (outbound.length === 0) {
@@ -143,7 +161,7 @@ export async function getObservedDependencies(
 ): Promise<ToolResponse> {
   return withMissingNodeFallback(async () => {
     const edges = await client.get<EdgesResponse>(
-      `/graph/edges/${encodeURIComponent(input.nodeId)}`,
+      projectPath(input.project, `/graph/edges/${encodeURIComponent(input.nodeId)}`),
     )
     const observed = edges.outbound.filter((e) => e.provenance === Provenance.OBSERVED)
     if (observed.length === 0) {
@@ -213,6 +231,7 @@ function dedupeBestProvenance(edges: GraphEdge[]): GraphEdge[] {
 export interface IncidentHistoryInput {
   nodeId: string
   limit?: number
+  project?: string
 }
 
 export async function getIncidentHistory(
@@ -221,7 +240,7 @@ export async function getIncidentHistory(
 ): Promise<ToolResponse> {
   return withMissingNodeFallback(async () => {
     const events = await client.get<ErrorEvent[]>(
-      `/incidents/${encodeURIComponent(input.nodeId)}`,
+      projectPath(input.project, `/incidents/${encodeURIComponent(input.nodeId)}`),
     )
     if (events.length === 0) {
       return text(`No incidents recorded against ${input.nodeId}.`)
@@ -243,6 +262,7 @@ export async function getIncidentHistory(
 
 export interface SemanticSearchInput {
   query: string
+  project?: string
 }
 
 interface SearchResponse {
@@ -257,7 +277,7 @@ export async function semanticSearch(
 ): Promise<ToolResponse> {
   try {
     const result = await client.get<SearchResponse>(
-      `/search?q=${encodeURIComponent(input.query)}`,
+      projectPath(input.project, `/search?q=${encodeURIComponent(input.query)}`),
     )
     if (result.matches.length === 0) {
       return text(`No matches for "${input.query}".`)
@@ -284,6 +304,7 @@ export async function semanticSearch(
 
 export interface GraphDiffInput {
   againstSnapshot: string
+  project?: string
 }
 
 interface GraphDiffResponse {
@@ -303,7 +324,10 @@ export async function getGraphDiff(
 ): Promise<ToolResponse> {
   try {
     const result = await client.get<GraphDiffResponse>(
-      `/graph/diff?against=${encodeURIComponent(input.againstSnapshot)}`,
+      projectPath(
+        input.project,
+        `/graph/diff?against=${encodeURIComponent(input.againstSnapshot)}`,
+      ),
     )
     const total =
       result.added.nodes.length +
@@ -377,6 +401,7 @@ function summariseAttrDiff(
 export interface RecentStaleEdgesInput {
   limit?: number
   edgeType?: string
+  project?: string
 }
 
 interface StaleEventResponse {
@@ -400,7 +425,9 @@ export async function getRecentStaleEdges(
   const qs = params.size > 0 ? `?${params.toString()}` : ''
 
   try {
-    const events = await client.get<StaleEventResponse[]>(`/incidents/stale${qs}`)
+    const events = await client.get<StaleEventResponse[]>(
+      projectPath(input.project, `/incidents/stale${qs}`),
+    )
     if (events.length === 0) {
       return text(
         input.edgeType

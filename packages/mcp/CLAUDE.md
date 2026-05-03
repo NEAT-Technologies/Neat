@@ -34,6 +34,16 @@ Two MCP resources sit alongside the tools — same data, different access patter
 
 `NEAT_RESOURCE_POLL_MS` — interval in ms for the `neat://incidents/recent` change-detection poll. Default `5000`. `0` disables it.
 
+`NEAT_DEFAULT_PROJECT` — the project this MCP instance reports against when a tool call doesn't pass `project`. Unset means "the core's `default` project" via legacy unprefixed URLs (back-compat with pre-#83 cores). Set this when one neat-core hosts multiple projects and a given Claude Code session should pin to one.
+
+## Multi-project
+
+Every tool takes an optional `project` arg. Resources route via the configured project too. Three behaviours, in priority order:
+
+1. The tool call passes `project: 'alpha'` → URLs go to `/projects/alpha/...`.
+2. `NEAT_DEFAULT_PROJECT=alpha` is set → calls without `project` route through `/projects/alpha/...`.
+3. Neither → calls hit the legacy unprefixed URLs (`/traverse/root-cause/...`), which the core resolves to its `default` project.
+
 ## Smoke-test the handshake
 
 ```bash

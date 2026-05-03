@@ -90,6 +90,7 @@ Run **after δ merges**, not before. Stand up Railway per `docs/railway.md` → 
 - `FrontierNode` is a fifth node type for unresolved span peers; promoted away once an alias matches (ADR-023)
 - Per-edge-type stale thresholds + `stale-events.ndjson` transition log (ADR-024)
 - `semantic_search` uses an Ollama → Transformers.js → substring fallback chain; flat in-memory cosine, sidecar `embeddings.json` cache (ADR-025)
+- Multi-project lives behind `Map<string, NeatGraph>`; routes dual-mount at `/X` and `/projects/:project/X`; default project keeps the legacy filenames; OTel ingest stays single-project (ADR-026)
 
 ## Conventions
 

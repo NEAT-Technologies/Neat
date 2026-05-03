@@ -19,6 +19,21 @@ import {
 const baseUrl = process.env.NEAT_CORE_URL ?? 'http://localhost:8080'
 const client = createHttpClient(baseUrl)
 
+// `NEAT_DEFAULT_PROJECT` is the implicit project for tool calls that don't
+// pass a `project` arg. Unset means "use the core's `default` project" — we
+// route those calls through the legacy unprefixed URL so an older core (one
+// that predates #83) still gets the request it expects.
+const defaultProject = process.env.NEAT_DEFAULT_PROJECT
+const projectFor = (input: { project?: string }): string | undefined =>
+  input.project ?? defaultProject
+
+const projectField = z
+  .string()
+  .optional()
+  .describe(
+    'Project name when the core hosts more than one (set NEAT_PROJECTS=...). Omit to use the default project.',
+  )
+
 const server = new McpServer({
   name: 'neat',
   version: '0.1.0',
@@ -35,8 +50,9 @@ server.tool(
       .string()
       .optional()
       .describe('Specific error event id from incident history; if set, the result is coloured with that error message'),
+    project: projectField,
   },
-  async (input) => getRootCause(client, input),
+  async (input) => getRootCause(client, { ...input, project: projectFor(input) }),
 )
 
 server.tool(
@@ -51,22 +67,29 @@ server.tool(
       .max(20)
       .optional()
       .describe('Max BFS depth (default 10)'),
+    project: projectField,
   },
-  async (input) => getBlastRadius(client, input),
+  async (input) => getBlastRadius(client, { ...input, project: projectFor(input) }),
 )
 
 server.tool(
   'get_dependencies',
   'List the outgoing dependencies of a node — both static (EXTRACTED from source) and runtime (OBSERVED via OTel), de-duplicated to the most trustworthy provenance per pair.',
-  { nodeId: z.string().describe('Graph node id to inspect') },
-  async (input) => getDependencies(client, input),
+  {
+    nodeId: z.string().describe('Graph node id to inspect'),
+    project: projectField,
+  },
+  async (input) => getDependencies(client, { ...input, project: projectFor(input) }),
 )
 
 server.tool(
   'get_observed_dependencies',
   'List only the runtime (OBSERVED via OTel) outgoing dependencies of a node. Use this to compare what code SAYS the service depends on vs what production actually does.',
-  { nodeId: z.string().describe('Graph node id to inspect') },
-  async (input) => getObservedDependencies(client, input),
+  {
+    nodeId: z.string().describe('Graph node id to inspect'),
+    project: projectField,
+  },
+  async (input) => getObservedDependencies(client, { ...input, project: projectFor(input) }),
 )
 
 server.tool(
@@ -75,15 +98,19 @@ server.tool(
   {
     nodeId: z.string().describe('Graph node id to query'),
     limit: z.number().int().positive().max(100).optional().describe('Max events to return (default 20)'),
+    project: projectField,
   },
-  async (input) => getIncidentHistory(client, input),
+  async (input) => getIncidentHistory(client, { ...input, project: projectFor(input) }),
 )
 
 server.tool(
   'semantic_search',
   'Search nodes by natural-language query. Uses embedding vectors when an embedder is available (Ollama nomic-embed-text → in-process MiniLM → substring fallback) — phrase the query the way you would describe what you want.',
-  { query: z.string().describe('Free-text query, e.g. "service handling checkout payments"') },
-  async (input) => semanticSearch(client, input),
+  {
+    query: z.string().describe('Free-text query, e.g. "service handling checkout payments"'),
+    project: projectField,
+  },
+  async (input) => semanticSearch(client, { ...input, project: projectFor(input) }),
 )
 
 server.tool(
@@ -95,8 +122,9 @@ server.tool(
       .describe(
         'Path or http(s) URL of the snapshot to diff against (the "before" state). The current graph is the "after".',
       ),
+    project: projectField,
   },
-  async (input) => getGraphDiff(client, input),
+  async (input) => getGraphDiff(client, { ...input, project: projectFor(input) }),
 )
 
 server.tool(
@@ -114,8 +142,9 @@ server.tool(
       .string()
       .optional()
       .describe('Filter by edge type — e.g. "CALLS" or "CONNECTS_TO"'),
+    project: projectField,
   },
-  async (input) => getRecentStaleEdges(client, input),
+  async (input) => getRecentStaleEdges(client, { ...input, project: projectFor(input) }),
 )
 
 // Resources sit alongside tools — same data, different access pattern. Read
@@ -127,6 +156,7 @@ const incidentsPollMs = process.env.NEAT_RESOURCE_POLL_MS
   : undefined
 const resourceRegistration = registerResources(server, client, {
   ...(incidentsPollMs !== undefined ? { incidentsPollMs } : {}),
+  ...(defaultProject ? { project: defaultProject } : {}),
 })
 
 async function main(): Promise<void> {
