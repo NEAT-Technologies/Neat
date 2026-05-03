@@ -2,9 +2,9 @@
 
 > **⚠️ Work in progress.** This repository is an MVP under active development. Many architectural decisions were intentionally optimised for development speed.
 
-[![CI](https://github.com/neat-tools/Neat/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/neat-tools/Neat/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/neat-tools/Neat)](https://github.com/neat-tools/Neat)
-[![Release](https://img.shields.io/github/v/release/neat-tools/Neat)](https://github.com/neat-tools/Neat/releases)
+[![CI](https://github.com/NEAT-Technologies/Neat/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/NEAT-Technologies/Neat/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/NEAT-Technologies/Neat)](https://github.com/NEAT-Technologies/Neat)
+[![Release](https://img.shields.io/github/v/release/NEAT-Technologies/Neat)](https://github.com/NEAT-Technologies/Neat/releases)
 [![Website](https://img.shields.io/badge/website-neat.is-black)](https://neat.is)
 
 A unified runtime that maintains a live semantic graph of your codebase, infrastructure, and production. Query it. Assert policies against it. Run agents against it.
@@ -33,7 +33,7 @@ The demo runs two Node services against a Postgres 15 database. `service-b` is p
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/neat-tools/Neat
+git clone https://github.com/NEAT-Technologies/Neat
 cd Neat
 npm install
 npm run build
