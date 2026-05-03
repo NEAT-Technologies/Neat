@@ -14,6 +14,7 @@ import { makeSpanHandler, promoteFrontierNodes, startStalenessLoop } from './ing
 import { buildOtelReceiver } from './otel.js'
 import { startOtelGrpcReceiver } from './otel-grpc.js'
 import { loadGraphFromDisk, startPersistLoop } from './persist.js'
+import { buildSearchIndex, type SearchIndex } from './search.js'
 
 export type ExtractPhase =
   | 'services'
@@ -163,6 +164,7 @@ export interface WatchOptions {
   outPath: string
   errorsPath: string
   staleEventsPath: string
+  embeddingsCachePath?: string
   host?: string
   port?: number
   otelPort?: number
@@ -210,11 +212,24 @@ export async function startWatch(
   const port = opts.port ?? 8080
   const otelPort = opts.otelPort ?? 4318
 
+  const cachePath =
+    opts.embeddingsCachePath ?? path.join(path.dirname(opts.outPath), 'embeddings.json')
+  let searchIndex: SearchIndex | undefined
+  try {
+    searchIndex = await buildSearchIndex(graph, { cachePath })
+    console.log(`semantic_search: ${searchIndex.provider} provider`)
+  } catch (err) {
+    console.warn(
+      `semantic_search: index build failed (${(err as Error).message}); falling back to inline substring`,
+    )
+  }
+
   const api = await buildApi({
     graph,
     scanPath: opts.scanPath,
     errorsPath: opts.errorsPath,
     staleEventsPath: opts.staleEventsPath,
+    searchIndex,
   })
   await api.listen({ port, host })
   console.log(`neat-core listening on http://${host}:${port}`)
@@ -251,6 +266,13 @@ export async function startWatch(
       console.log(
         `[watch] re-extract phases=${result.phases.join(',')} +${result.nodesAdded}n/+${result.edgesAdded}e in ${result.durationMs}ms`,
       )
+      if (searchIndex) {
+        try {
+          await searchIndex.refresh(graph)
+        } catch (err) {
+          console.warn('[watch] semantic_search refresh failed', err)
+        }
+      }
     } catch (err) {
       console.error('[watch] re-extract failed', err)
     }

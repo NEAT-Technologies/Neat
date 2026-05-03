@@ -147,11 +147,16 @@ async function main(): Promise<void> {
         path.join(path.dirname(outPath), 'stale-events.ndjson'),
     )
 
+    const embeddingsCachePath = process.env.NEAT_EMBEDDINGS_CACHE_PATH
+      ? path.resolve(process.env.NEAT_EMBEDDINGS_CACHE_PATH)
+      : undefined
+
     const handle: WatchHandle = await startWatch(getGraph(), {
       scanPath,
       outPath,
       errorsPath,
       staleEventsPath,
+      ...(embeddingsCachePath ? { embeddingsCachePath } : {}),
       host: process.env.HOST ?? '0.0.0.0',
       port: Number(process.env.PORT ?? 8080),
       otelPort: Number(process.env.OTEL_PORT ?? 4318),

@@ -80,8 +80,8 @@ server.tool(
 
 server.tool(
   'semantic_search',
-  'Search nodes by free-text query. Currently a keyword match over node ids and names; vector search lands post-MVP.',
-  { query: z.string().describe('Search text') },
+  'Search nodes by natural-language query. Uses embedding vectors when an embedder is available (Ollama nomic-embed-text → in-process MiniLM → substring fallback) — phrase the query the way you would describe what you want.',
+  { query: z.string().describe('Free-text query, e.g. "service handling checkout payments"') },
   async (input) => semanticSearch(client, input),
 )
 

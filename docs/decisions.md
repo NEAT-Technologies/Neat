@@ -305,16 +305,11 @@ v0.1.2-β #73 populated `InfraNode` from docker-compose, Dockerfile, Terraform, 
 
 ---
 
-<<<<<<< HEAD
 ## ADR-023 — `FrontierNode` as a fifth top-level node type
-=======
-## ADR-024 — Per-edge-type stale thresholds
->>>>>>> 959e891 (Per-edge-type stale thresholds + stale-events log (#78))
 
 **Date:** 2026-05-02
 **Status:** Active.
 
-<<<<<<< HEAD
 v0.1.2-γ #75 added a fifth member to `GraphNodeSchema`: `FrontierNode`. A frontier node is the placeholder ingest writes when an OTel span peer (`server.address`, `net.peer.name`, etc.) doesn't resolve to any known service. The id format is `frontier:<host>`. A later extraction round picks up the host as an alias on a real service, `promoteFrontierNodes` re-links the edges, and the placeholder goes away.
 
 **Why a new node type, not an `InfraNode` kind.** ADR-022 deliberately kept the discriminated union at four. Frontier nodes broke that ceiling because they aren't classified by *what they are* — they're classified by *what they don't yet know*. They have a distinct lifecycle (placeholder → promoted → deleted), they carry temporal fields (`firstObserved`, `lastObserved`) that don't make sense on infra catalog entries, and a frontier node is supposed to disappear once extraction catches up. Cramming that into `InfraNode.kind = "frontier"` would have meant teaching every consumer of `InfraNode` to filter out a special case, and would have leaked frontier semantics into a node type whose whole job is to be permanent.
@@ -328,7 +323,14 @@ v0.1.2-γ #75 added a fifth member to `GraphNodeSchema`: `FrontierNode`. A front
 **Where promotion runs.** At the end of every `extractFromDirectory` pass, after services + databases + configs + calls + infra. Promotion needs the full alias state from the latest extraction round, so it has to run last. Re-running ingest doesn't trigger promotion directly — it just keeps pinning frontier `lastObserved` — which is fine because the next extraction round will sweep them up.
 
 **When to revisit.** If frontier nodes start sticking around (a host that never resolves no matter how many rounds pass), they become a UX signal: "you have unknown peers." That's a γ #76 concern (per-edge confidence) or δ ergonomics, not this ADR. The placeholder will continue to do its job until then.
-=======
+
+---
+
+## ADR-024 — Per-edge-type stale thresholds
+
+**Date:** 2026-05-02
+**Status:** Active.
+
 A single 24h `STALE_THRESHOLD_MS` doesn't survive contact with diverse traffic. HTTP `CALLS` recur in seconds — 24h means a service could go down for the whole afternoon and the graph would still claim everything was fine. Infra `DEPENDS_ON` is the opposite — a docker-compose service idle overnight isn't a problem. v0.1.2-γ #78 splits the threshold per edge type: `CALLS` go stale at 1h, `CONNECTS_TO` / `PUBLISHES_TO` / `CONSUMES_FROM` at 4h, infra `DEPENDS_ON` / `CONFIGURED_BY` / `RUNS_ON` at 24h.
 
 **Why a hardcoded default map, not a single tunable.** The defaults encode operational knowledge — "HTTP traffic is chatty, infra dependencies aren't" — and shouldn't have to be rediscovered per deployment. The map lives next to `markStaleEdges` in `ingest.ts`; new edge types fall back to 24h via a single sentinel constant, so adding to `EdgeType` doesn't silently bypass staleness sweeps.
@@ -342,4 +344,38 @@ A single 24h `STALE_THRESHOLD_MS` doesn't survive contact with diverse traffic. 
 **Where this could go wrong.** A flapping integration that calls every 65 minutes will oscillate between OBSERVED and STALE under the 1h `CALLS` default. The fix is to nudge the threshold (`NEAT_STALE_THRESHOLDS={"CALLS":7200000}`); the ndjson log will record both transitions so the oscillation itself is observable.
 
 **When to revisit.** When δ #79's `neat watch` daemon runs continuously, the stale-events log will grow unbounded. Rotation / TTL belongs there, not here — this ADR's job is to define the shape; that one will define the lifecycle.
->>>>>>> 959e891 (Per-edge-type stale thresholds + stale-events log (#78))
+
+---
+
+## ADR-025 — `semantic_search` embedding model: Ollama → Transformers.js → substring fallback chain
+
+**Date:** 2026-05-03
+**Status:** Active.
+
+`semantic_search` shipped in M4 as a substring match over `id` and `name`. It works for "show me the payments service" — but loses to "what handles checkout payments?" because the literal token doesn't appear. v0.1.2-δ #82 replaces the keyword path with real embeddings while keeping the substring path as the lowest-tier fallback so the tool never disappears even on minimal hosts.
+
+The embedding choice is the load-bearing decision in this work. We pick *one* default model and a fallback chain rather than a configurable provider matrix.
+
+**The chain.** First match wins:
+
+1. **Ollama** with `nomic-embed-text`, when `OLLAMA_HOST` is set (or `http://localhost:11434` is reachable on first use). 768-dim, 8K context, MIT-licensed, designed for retrieval. The user already pays the Ollama install cost; we just embed.
+2. **Transformers.js** running `Xenova/all-MiniLM-L6-v2` in-process, when Ollama isn't around. 384-dim, ~25MB on-disk, fully offline, no model server needed. Cold-start cost is the model download (~25MB once, cached in `~/.neat/models/`) plus ~1s of WASM init.
+3. **Substring fallback** — the existing M4 implementation, kept verbatim. Whatever was returned before still gets returned when neither embedder is available.
+
+Every tier returns the same MCP-shaped response, so consumers don't branch on which one ran.
+
+**Why Ollama as the default top tier.** It's the path of least resistance for users who already have it. Local, private, free, and the API surface (`POST /api/embeddings`) is small enough that we don't need an SDK dependency. `nomic-embed-text` consistently wins on retrieval benchmarks at its size class, and 768-dim cosine over a ≤10K-node graph is ~30ms — graph scale isn't the bottleneck.
+
+**Why Transformers.js as the in-process fallback, not a server-side embed.** The fallback exists for the case "the user hasn't installed Ollama and we don't want to make them." Anything that requires a separate process or network call would just become the new "you have to install X" friction. Transformers.js runs inside Node via WASM/ONNX with no external server. The chosen model (`all-MiniLM-L6-v2`) is the de facto default for "I need embeddings, I don't have infrastructure." It's smaller and weaker than nomic, which is exactly why we order Ollama first.
+
+**Why not OpenAI / Voyage / Cohere as defaults.** A hosted API would be the easiest to integrate but introduces an outbound network dependency and a credit cost on a tool that should "just work" against a local repo. NEAT runs against private codebases — sending node names to a third-party embedding endpoint is a category of decision a project should opt into, not inherit. Hosted providers can land later as a fourth tier (`NEAT_EMBED_PROVIDER=openai`) without changing the default.
+
+**Why a flat in-memory cosine, not a vector DB.** The graph caps out at ~10K nodes for any realistic repo. A `Float32Array` per node and a linear scan is ~3ms at 10K × 768. Indexing structures (HNSW, IVF) are faster only above ~100K vectors and add a dependency that has to compile native bindings. ADR-002 already paid that price for tree-sitter; we don't pay it twice.
+
+**What gets embedded.** Per node: `id + name + (description fragments — `language` for services, `engine`/`engineVersion` for databases, `kind` for infra)`. Edges are not embedded. Frontier nodes are not embedded — they're noise by design. The embed input is deterministic from node attrs so re-extracts hash-identical, and we use that hash to skip re-embedding nodes whose attrs didn't change.
+
+**Cache shape.** A sidecar cache at `<scanPath>/neat-out/embeddings.json` keyed by `{ provider, model, dim }` plus per-entry `{ nodeId, attrsHash, vector }`. On startup the search index loads the cache, drops entries whose `attrsHash` doesn't match the current node, and embeds anything new. The cache is regenerable, gitignore-friendly (lives under `neat-out/` with the snapshot), and never touches the snapshot's `schemaVersion: 2` envelope.
+
+**What this ADR isn't deciding.** Whether the substring tier should compute Jaro-Winkler or BM25 — the existing M4 substring code stays as-is. Whether the cache should be sqlite — JSON is fine at 10K vectors and the diff against an existing snapshot pattern works the same way. Whether `semantic_search` should accept a `provider` arg — let environment config drive the choice; the tool surface stays a one-arg `query`.
+
+**When to revisit.** When (a) graph scale exceeds ~50K nodes (then the linear scan becomes the bottleneck and a vector index earns its complexity), (b) a hosted embedding provider lands as a tier (then the chain extends), or (c) the embed input materially changes (e.g. embedding evidence snippets from γ #71's edge metadata — a different decision than node-only embeddings).
