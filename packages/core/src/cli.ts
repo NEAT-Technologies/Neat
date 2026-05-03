@@ -3,26 +3,58 @@
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import type { GraphEdge, GraphNode, ServiceNode } from '@neat/types'
-import { getGraph, resetGraph } from './graph.js'
+import { DEFAULT_PROJECT, getGraph, resetGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
 import { saveGraphToDisk } from './persist.js'
 import { startWatch, type WatchHandle } from './watch.js'
+import { pathsForProject } from './projects.js'
 
 interface InitOptions {
   scanPath: string
   outPath: string
+  project: string
 }
 
 function usage(): void {
-  console.log('usage: neat <command> [args]')
+  console.log('usage: neat <command> [args] [--project <name>]')
   console.log('')
   console.log('commands:')
   console.log('  init <path>    Scan <path>, build the static graph, save a snapshot.')
-  console.log('                 Snapshot lands in <path>/neat-out/graph.json by default,')
-  console.log('                 or NEAT_OUT_PATH if set.')
+  console.log('                 Snapshot lands in <path>/neat-out/graph.json by default')
+  console.log('                 (or <path>/neat-out/<project>.json for non-default).')
   console.log('  watch <path>   Start neat-core, watch <path>, re-extract on changes.')
   console.log('                 PORT (default 8080), OTEL_PORT (4318), HOST (0.0.0.0)')
   console.log('                 control listeners. NEAT_OTLP_GRPC=true also opens 4317.')
+  console.log('')
+  console.log('flags:')
+  console.log('  --project <name>   Name the project this command targets. Default: "default".')
+}
+
+// Tiny argv parser — pulls `--project <name>` out of `rest` and returns the
+// rest as positional args. Doesn't try to be a full flags library; just
+// enough for #83 without pulling commander in.
+function pluckProject(rest: string[]): { project: string; positional: string[] } {
+  const positional: string[] = []
+  let project = DEFAULT_PROJECT
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i] as string
+    if (arg === '--project') {
+      const next = rest[i + 1]
+      if (!next) {
+        console.error('neat: --project requires a value')
+        process.exit(2)
+      }
+      project = next
+      i++
+      continue
+    }
+    if (arg.startsWith('--project=')) {
+      project = arg.slice('--project='.length)
+      continue
+    }
+    positional.push(arg)
+  }
+  return { project, positional }
 }
 
 function summarise(nodes: GraphNode[], edges: GraphEdge[]): string {
@@ -72,8 +104,8 @@ async function runInit(opts: InitOptions): Promise<void> {
     process.exit(2)
   }
 
-  resetGraph()
-  const graph = getGraph()
+  resetGraph(opts.project)
+  const graph = getGraph(opts.project)
   const result = await extractFromDirectory(graph, opts.scanPath)
   await saveGraphToDisk(graph, opts.outPath)
 
@@ -83,6 +115,7 @@ async function runInit(opts: InitOptions): Promise<void> {
   graph.forEachEdge((_id, attrs) => edges.push(attrs))
 
   console.log(`scanned: ${opts.scanPath}`)
+  console.log(`project: ${opts.project}`)
   console.log(`snapshot: ${opts.outPath}`)
   console.log(`added: ${result.nodesAdded} nodes, ${result.edgesAdded} edges`)
   console.log(`total:  ${graph.order} nodes, ${graph.size} edges`)
@@ -108,23 +141,26 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
+  const { project, positional } = pluckProject(rest)
+
   if (cmd === 'init') {
-    const target = rest[0]
+    const target = positional[0]
     if (!target) {
       console.error('neat init: missing <path>')
       usage()
       process.exit(2)
     }
     const scanPath = path.resolve(target)
-    const outPath = path.resolve(
-      process.env.NEAT_OUT_PATH ?? path.join(scanPath, 'neat-out', 'graph.json'),
-    )
-    await runInit({ scanPath, outPath })
+    // Default project keeps writing to graph.json (ADR-026 back-compat);
+    // named projects use <project>.json under the same neat-out directory.
+    const fallback = pathsForProject(project, path.join(scanPath, 'neat-out')).snapshotPath
+    const outPath = path.resolve(process.env.NEAT_OUT_PATH ?? fallback)
+    await runInit({ scanPath, outPath, project })
     return
   }
 
   if (cmd === 'watch') {
-    const target = rest[0]
+    const target = positional[0]
     if (!target) {
       console.error('neat watch: missing <path>')
       usage()
@@ -136,26 +172,27 @@ async function main(): Promise<void> {
       console.error(`neat watch: ${scanPath} is not a directory`)
       process.exit(2)
     }
-    const outPath = path.resolve(
-      process.env.NEAT_OUT_PATH ?? path.join(scanPath, 'neat-out', 'graph.json'),
-    )
+    const projectPaths = pathsForProject(project, path.join(scanPath, 'neat-out'))
+    const outPath = path.resolve(process.env.NEAT_OUT_PATH ?? projectPaths.snapshotPath)
     const errorsPath = path.resolve(
-      process.env.NEAT_ERRORS_PATH ?? path.join(path.dirname(outPath), 'errors.ndjson'),
+      process.env.NEAT_ERRORS_PATH ??
+        path.join(path.dirname(outPath), path.basename(projectPaths.errorsPath)),
     )
     const staleEventsPath = path.resolve(
       process.env.NEAT_STALE_EVENTS_PATH ??
-        path.join(path.dirname(outPath), 'stale-events.ndjson'),
+        path.join(path.dirname(outPath), path.basename(projectPaths.staleEventsPath)),
     )
 
     const embeddingsCachePath = process.env.NEAT_EMBEDDINGS_CACHE_PATH
       ? path.resolve(process.env.NEAT_EMBEDDINGS_CACHE_PATH)
       : undefined
 
-    const handle: WatchHandle = await startWatch(getGraph(), {
+    const handle: WatchHandle = await startWatch(getGraph(project), {
       scanPath,
       outPath,
       errorsPath,
       staleEventsPath,
+      project,
       ...(embeddingsCachePath ? { embeddingsCachePath } : {}),
       host: process.env.HOST ?? '0.0.0.0',
       port: Number(process.env.PORT ?? 8080),

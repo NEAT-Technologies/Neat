@@ -15,6 +15,8 @@ import { buildOtelReceiver } from './otel.js'
 import { startOtelGrpcReceiver } from './otel-grpc.js'
 import { loadGraphFromDisk, startPersistLoop } from './persist.js'
 import { buildSearchIndex, type SearchIndex } from './search.js'
+import { DEFAULT_PROJECT } from './graph.js'
+import { Projects, pathsForProject } from './projects.js'
 
 export type ExtractPhase =
   | 'services'
@@ -165,6 +167,9 @@ export interface WatchOptions {
   errorsPath: string
   staleEventsPath: string
   embeddingsCachePath?: string
+  // Project name this watch instance owns. Defaults to `default` for the
+  // single-project workflow that's been the only one until #83.
+  project?: string
   host?: string
   port?: number
   otelPort?: number
@@ -224,13 +229,24 @@ export async function startWatch(
     )
   }
 
-  const api = await buildApi({
+  const projectName = opts.project ?? DEFAULT_PROJECT
+  const registry = new Projects()
+  registry.set(projectName, {
     graph,
     scanPath: opts.scanPath,
-    errorsPath: opts.errorsPath,
-    staleEventsPath: opts.staleEventsPath,
+    paths: {
+      // Paths are derived from the explicit options the watch caller passes
+      // — pathsForProject is only used to fill in the embeddings/snapshot
+      // fields so the registry shape is complete.
+      ...pathsForProject(projectName, path.dirname(opts.outPath)),
+      snapshotPath: opts.outPath,
+      errorsPath: opts.errorsPath,
+      staleEventsPath: opts.staleEventsPath,
+    },
     searchIndex,
   })
+
+  const api = await buildApi({ projects: registry })
   await api.listen({ port, host })
   console.log(`neat-core listening on http://${host}:${port}`)
   console.log(`  scan path:     ${opts.scanPath} (watching for changes)`)

@@ -40,12 +40,21 @@ function nodeUri(id: string): string {
   return `neat://node/${encodeURIComponent(id)}`
 }
 
+// Project-aware URL prefix for the underlying core. When unset, hit the
+// legacy unprefixed routes (which the core resolves to project=`default`).
+function corePrefix(project: string | undefined): string {
+  return project ? `/projects/${encodeURIComponent(project)}` : ''
+}
+
 function nameFromAttrs(attrs: GraphNode): string {
   return (attrs as { name?: string }).name ?? attrs.id
 }
 
-export async function listNodeResources(client: HttpClient): Promise<ListResourcesResult> {
-  const graph = await client.get<SerializedGraph>('/graph')
+export async function listNodeResources(
+  client: HttpClient,
+  project?: string,
+): Promise<ListResourcesResult> {
+  const graph = await client.get<SerializedGraph>(`${corePrefix(project)}/graph`)
   return {
     resources: graph.nodes.map((n) => ({
       uri: nodeUri(n.id),
@@ -59,12 +68,14 @@ export async function listNodeResources(client: HttpClient): Promise<ListResourc
 export async function readNodeResource(
   client: HttpClient,
   id: string,
+  project?: string,
 ): Promise<ReadResourceResult> {
   const uri = nodeUri(id)
+  const prefix = corePrefix(project)
   try {
     const [attrs, edges] = await Promise.all([
-      client.get<GraphNode>(`/graph/node/${encodeURIComponent(id)}`),
-      client.get<EdgesResponse>(`/graph/edges/${encodeURIComponent(id)}`),
+      client.get<GraphNode>(`${prefix}/graph/node/${encodeURIComponent(id)}`),
+      client.get<EdgesResponse>(`${prefix}/graph/edges/${encodeURIComponent(id)}`),
     ])
     const body = {
       node: attrs,
@@ -101,8 +112,9 @@ export async function readNodeResource(
 export async function readRecentIncidentsResource(
   client: HttpClient,
   limit: number = INCIDENTS_DEFAULT_LIMIT,
+  project?: string,
 ): Promise<ReadResourceResult> {
-  const events = await client.get<ErrorEvent[]>('/incidents')
+  const events = await client.get<ErrorEvent[]>(`${corePrefix(project)}/incidents`)
   // ndjson order is append-time = oldest first. Reverse so most-recent leads.
   const ordered = [...events].reverse().slice(0, limit)
   return {
@@ -138,6 +150,9 @@ export function incidentsChanged(
 export interface RegisterResourcesOptions {
   // Poll interval for /incidents in ms. 5s by default; 0 disables polling.
   incidentsPollMs?: number
+  // Project this MCP instance reports against. Unset → core's `default`
+  // project via the legacy unprefixed URLs.
+  project?: string
 }
 
 export interface ResourceRegistration {
@@ -152,13 +167,14 @@ export function registerResources(
   options: RegisterResourcesOptions = {},
 ): ResourceRegistration {
   const pollMs = options.incidentsPollMs ?? 5000
+  const project = options.project
 
   // neat://node/<id> — templated. The list callback enumerates current nodes;
   // the read callback resolves a specific id.
   server.registerResource(
     'graph-node',
     new ResourceTemplate('neat://node/{id}', {
-      list: async () => listNodeResources(client),
+      list: async () => listNodeResources(client, project),
     }),
     {
       description:
@@ -171,10 +187,8 @@ export function registerResources(
       if (typeof id !== 'string' || id.length === 0) {
         throw new Error('neat://node/{id} requires an id')
       }
-      // RFC 6570 hands us a percent-decoded value, but be defensive in case a
-      // client double-encoded the colon.
       const decoded = id.includes('%') ? decodeURIComponent(id) : id
-      return readNodeResource(client, decoded)
+      return readNodeResource(client, decoded, project)
     },
   )
 
@@ -188,7 +202,7 @@ export function registerResources(
         'Most recent error events recorded by neat-core, newest first. JSON: { count, total, events[] }.',
       mimeType: NODE_RESOURCE_MIME,
     },
-    async () => readRecentIncidentsResource(client),
+    async () => readRecentIncidentsResource(client, INCIDENTS_DEFAULT_LIMIT, project),
   )
 
   let stopped = false
@@ -198,7 +212,7 @@ export function registerResources(
   const tick = async (): Promise<void> => {
     if (stopped) return
     try {
-      const events = await client.get<ErrorEvent[]>('/incidents')
+      const events = await client.get<ErrorEvent[]>(`${corePrefix(project)}/incidents`)
       const next = {
         total: events.length,
         lastId: events.length > 0 ? events[events.length - 1].id : undefined,

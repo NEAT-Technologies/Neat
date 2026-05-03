@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { getGraph } from './graph.js'
+import { DEFAULT_PROJECT, getGraph } from './graph.js'
 import { buildApi } from './api.js'
 import { extractFromDirectory } from './extract.js'
 import { loadGraphFromDisk, startPersistLoop } from './persist.js'
@@ -7,68 +7,102 @@ import { buildOtelReceiver } from './otel.js'
 import { startOtelGrpcReceiver } from './otel-grpc.js'
 import { makeSpanHandler, startStalenessLoop } from './ingest.js'
 import { buildSearchIndex } from './search.js'
+import { Projects, parseExtraProjects, pathsForProject } from './projects.js'
+
+async function bootProject(
+  registry: Projects,
+  name: string,
+  scanPath: string | undefined,
+  baseDir: string,
+): Promise<void> {
+  const paths = pathsForProject(name, baseDir)
+  const graph = getGraph(name)
+  await loadGraphFromDisk(graph, paths.snapshotPath)
+
+  if (scanPath) {
+    const r = await extractFromDirectory(graph, scanPath)
+    console.log(
+      `[${name}] extract: ${r.nodesAdded} new nodes, ${r.edgesAdded} new edges (graph total ${graph.order}/${graph.size})`,
+    )
+  } else {
+    console.log(`[${name}] loaded ${graph.order} nodes / ${graph.size} edges from snapshot`)
+  }
+
+  startPersistLoop(graph, paths.snapshotPath)
+  startStalenessLoop(graph, { staleEventsPath: paths.staleEventsPath })
+
+  const searchIndex = await buildSearchIndex(graph, {
+    cachePath: paths.embeddingsCachePath,
+  }).catch((err) => {
+    console.warn(
+      `[${name}] semantic_search: index build failed (${(err as Error).message}); falling back to inline substring`,
+    )
+    return undefined
+  })
+  if (searchIndex) {
+    console.log(`[${name}] semantic_search: ${searchIndex.provider} provider`)
+  }
+
+  registry.set(name, {
+    scanPath,
+    paths,
+    searchIndex,
+  })
+}
 
 async function main(): Promise<void> {
-  const graph = getGraph()
-  const scanPath = path.resolve(process.env.NEAT_SCAN_PATH ?? './demo')
-  const outPath = path.resolve(process.env.NEAT_OUT_PATH ?? './neat-out/graph.json')
-  const errorsPath = path.resolve(
-    process.env.NEAT_ERRORS_PATH ?? path.join(path.dirname(outPath), 'errors.ndjson'),
-  )
-  const staleEventsPath = path.resolve(
-    process.env.NEAT_STALE_EVENTS_PATH ??
-      path.join(path.dirname(outPath), 'stale-events.ndjson'),
-  )
+  const baseDirEnv = process.env.NEAT_OUT_DIR
+  const legacyOutPath = process.env.NEAT_OUT_PATH
+  const baseDir = baseDirEnv
+    ? path.resolve(baseDirEnv)
+    : legacyOutPath
+      ? path.resolve(path.dirname(legacyOutPath))
+      : path.resolve('./neat-out')
 
-  // Load any existing snapshot first so a restart doesn't lose runtime
-  // (M2 OBSERVED) edges that won't be reproduced by a fresh extract.
-  await loadGraphFromDisk(graph, outPath)
+  const defaultScanPath = path.resolve(process.env.NEAT_SCAN_PATH ?? './demo')
+  const registry = new Projects()
 
-  // Then re-run extraction over the source. Existing nodes/edges are dedup'd
-  // by id, so this is a refresh, not a wipe.
-  const extractResult = await extractFromDirectory(graph, scanPath)
-  console.log(
-    `extract: ${extractResult.nodesAdded} new nodes, ${extractResult.edgesAdded} new edges (graph total ${graph.order}/${graph.size})`,
-  )
+  // Default project always exists. NEAT_SCAN_PATH still wires it to a scan
+  // root so existing single-project users see no behaviour change.
+  await bootProject(registry, DEFAULT_PROJECT, defaultScanPath, baseDir)
 
-  startPersistLoop(graph, outPath)
-  startStalenessLoop(graph, { staleEventsPath })
+  // Extra projects come from NEAT_PROJECTS=a,b,c. Their snapshots load from
+  // <baseDir>/<name>.json; they have no scan path by default (callers can
+  // POST /projects/<name>/graph/scan after wiring NEAT_PROJECT_SCAN_PATH_<NAME>).
+  for (const name of parseExtraProjects(process.env.NEAT_PROJECTS)) {
+    const envKey = `NEAT_PROJECT_SCAN_PATH_${name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`
+    const projectScan = process.env[envKey]
+    await bootProject(registry, name, projectScan ? path.resolve(projectScan) : undefined, baseDir)
+  }
 
   const host = process.env.HOST ?? '0.0.0.0'
   const port = Number(process.env.PORT ?? 8080)
   const otelPort = Number(process.env.OTEL_PORT ?? 4318)
 
-  const cachePath = path.resolve(
-    process.env.NEAT_EMBEDDINGS_CACHE_PATH ??
-      path.join(path.dirname(outPath), 'embeddings.json'),
-  )
-  const searchIndex = await buildSearchIndex(graph, { cachePath }).catch((err) => {
-    console.warn(`semantic_search: index build failed (${(err as Error).message}); falling back to inline substring`)
-    return undefined
-  })
-  if (searchIndex) {
-    console.log(`semantic_search: ${searchIndex.provider} provider`)
-  }
-
-  const app = await buildApi({ graph, scanPath, errorsPath, staleEventsPath, searchIndex })
+  const app = await buildApi({ projects: registry })
   await app.listen({ port, host })
   console.log(`neat-core listening on http://${host}:${port}`)
-  console.log(`  scan path:     ${scanPath}`)
-  console.log(`  snapshot path: ${outPath}`)
-  console.log(`  errors log:    ${errorsPath}`)
+  console.log(`  base dir:      ${baseDir}`)
+  console.log(`  projects:      ${registry.list().join(', ')}`)
 
-  const onSpan = makeSpanHandler({ graph, errorsPath })
-  const otelApp = await buildOtelReceiver({ onSpan })
-  await otelApp.listen({ port: otelPort, host })
-  console.log(`neat-core OTLP receiver on http://${host}:${otelPort}/v1/traces`)
+  // OTel ingest stays single-project for now: spans always land in the
+  // default project's graph + errors log. Multi-project routing for spans
+  // is a future concern (would need a header / resource attr).
+  const defaultCtx = registry.get(DEFAULT_PROJECT)
+  if (defaultCtx) {
+    const onSpan = makeSpanHandler({
+      graph: defaultCtx.graph,
+      errorsPath: defaultCtx.paths.errorsPath,
+    })
+    const otelApp = await buildOtelReceiver({ onSpan })
+    await otelApp.listen({ port: otelPort, host })
+    console.log(`neat-core OTLP receiver on http://${host}:${otelPort}/v1/traces`)
 
-  // gRPC OTLP receiver — off by default. Most NEAT installs run the HTTP path
-  // because that's what docker-compose's collector ships, but plenty of OTel
-  // deployments default to gRPC, so this is the "drop NEAT in" affordance.
-  if (process.env.NEAT_OTLP_GRPC === 'true') {
-    const grpcPort = Number(process.env.NEAT_OTLP_GRPC_PORT ?? 4317)
-    const grpcReceiver = await startOtelGrpcReceiver({ onSpan, host, port: grpcPort })
-    console.log(`neat-core OTLP/gRPC receiver on ${grpcReceiver.address}`)
+    if (process.env.NEAT_OTLP_GRPC === 'true') {
+      const grpcPort = Number(process.env.NEAT_OTLP_GRPC_PORT ?? 4317)
+      const grpcReceiver = await startOtelGrpcReceiver({ onSpan, host, port: grpcPort })
+      console.log(`neat-core OTLP/gRPC receiver on ${grpcReceiver.address}`)
+    }
   }
 }
 

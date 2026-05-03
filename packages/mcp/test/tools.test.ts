@@ -531,3 +531,60 @@ describe('getRecentStaleEdges', () => {
     expect(capture.paths[0]).toContain('edgeType=CALLS')
   })
 })
+
+describe('project routing', () => {
+  it('threads project through every tool URL when set', async () => {
+    const { client, capture } = clientFor({
+      '/projects/alpha/traverse/root-cause/database:payments-db': {
+        rootCauseNode: 'service:service-b',
+        rootCauseReason: 'reason',
+        traversalPath: ['database:payments-db', 'service:service-b'],
+        edgeProvenances: [Provenance.OBSERVED],
+        confidence: 0.9,
+      },
+      '/projects/alpha/traverse/blast-radius/service:a': {
+        origin: 'service:a',
+        totalAffected: 0,
+        affectedNodes: [],
+      },
+      '/projects/alpha/graph/edges/service:a': { inbound: [], outbound: [] },
+      '/projects/alpha/incidents/service:a': [],
+      '/projects/alpha/search?q=foo': { query: 'foo', provider: 'substring', matches: [] },
+      '/projects/alpha/graph/diff?against=snap.json': {
+        base: { exportedAt: '2026-01-01' },
+        current: { exportedAt: '2026-02-01' },
+        added: { nodes: [], edges: [] },
+        removed: { nodes: [], edges: [] },
+        changed: { nodes: [], edges: [] },
+      },
+      '/projects/alpha/incidents/stale': [],
+    })
+
+    await getRootCause(client, { errorNode: 'database:payments-db', project: 'alpha' })
+    await getBlastRadius(client, { nodeId: 'service:a', project: 'alpha' })
+    await getDependencies(client, { nodeId: 'service:a', project: 'alpha' })
+    await getObservedDependencies(client, { nodeId: 'service:a', project: 'alpha' })
+    await getIncidentHistory(client, { nodeId: 'service:a', project: 'alpha' })
+    await semanticSearch(client, { query: 'foo', project: 'alpha' })
+    await getGraphDiff(client, { againstSnapshot: 'snap.json', project: 'alpha' })
+    await getRecentStaleEdges(client, { project: 'alpha' })
+
+    for (const p of capture.paths) {
+      expect(p.startsWith('/projects/alpha/')).toBe(true)
+    }
+  })
+
+  it('falls back to legacy unprefixed URLs when project is omitted', async () => {
+    const { client, capture } = clientFor({
+      '/traverse/root-cause/database:payments-db': {
+        rootCauseNode: 'service:b',
+        rootCauseReason: 'r',
+        traversalPath: ['database:payments-db'],
+        edgeProvenances: [],
+        confidence: 1,
+      },
+    })
+    await getRootCause(client, { errorNode: 'database:payments-db' })
+    expect(capture.paths[0]).toBe('/traverse/root-cause/database%3Apayments-db')
+  })
+})
