@@ -12,37 +12,61 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-03. **v0.1.2 is shipped and tagged.** All four δ PRs merged (#102/#103/#104/#105). The release lives at https://github.com/NEAT-Technologies/Neat/releases/tag/v0.1.2. Workspace at HEAD is green: `npx turbo build test lint` clean, **214 core / 30 types / 35 mcp** tests passing. The v0.1.2 milestone is closed; issues #67–#83 stay attached for the historical record (per ADR-005 the user closes individual issues by hand).
+**Last session ended:** 2026-05-04 evening. **v0.1.2 + v0.1.3 shipped.** Workspace at HEAD is green: `npx turbo build test lint` clean, **214 core / 30 types / 35 mcp** tests passing.
 
-A generic `Dockerfile` lives at the repo root (separate from `packages/core/Dockerfile`, which still bakes in the demo). Mount your codebase at `/workspace`, point a volume at `/neat-out`, and the image runs the REST + OTLP daemon by default. CMD overrides: `neat init /workspace --project <name>` for a one-shot snapshot, `neat watch /workspace` for the live re-extraction daemon, `neat-mcp` for the stdio MCP binary.
+**Two parallel tracks share `main`:**
 
-**Next release is v0.2.0 — Frontend.** `packages/web/` was a shell through v0.1.2 (ADR-004); v0.2.0 fills it in. Open issues under that milestone:
+- **Track 1 — v0.3.0 Frontend (Jed).** Renumbered from old v0.2.0 on 2026-05-04. Builds against the stable v0.1.2 API. Issues #28-#31 + #106-#108. Doesn't gate the MVP success criterion; this track delivers investor-legibility.
+- **Track 2 — v0.2.x Engineering (Cem + Kurt).** Three releases:
+  - **v0.2.0 — Sunrise** — audit-driven cleanup. Seven audits (`docs/audits/`) define the contract NEAT v0.1.x grew toward organically; v0.2.0 closes the gap.
+  - **v0.2.1 — Policies.** Renumbered from old v0.3.0. Closes the four-feature gap (OTel + graph + MCP + policies). Issues #115-#118 + #123 follow-on.
+  - **v0.2.2 — `neat init` + Claude Code skill.** Renumbered from old v0.3.1. Distribution layer for the MVP-success PR experiment. Issue #119.
 
-- **#28 — Implement graph explorer with Cytoscape.js**
-- **#29 — Implement node inspector panel**
-- **#30 — Implement incident log page**
-- **#31 — Apply NEAT branding**
-- **#106 — Multi-project switcher in the web UI** (reads `GET /projects`, persists selection, threads through every API call)
-- **#107 — `semantic_search` bar — natural-language node lookup** (hits `/search`, surfaces provider + score, click-through to inspector)
-- **#108 — Live graph updates via SSE / WebSocket from `neat watch`** (server emits a "graph_changed" event after each `runExtractPhases` flush; UI hot-refetches)
+Engineering ships first; that order is what the user named when they renumbered. The two tracks are still independent — v0.2.x and v0.3.0 don't depend on each other — but the engineering numbering communicates priority.
 
-Suggested order: #31 (branding) → #28 (graph explorer) → #29 (inspector) → #106 (project switcher) → #107 (search bar) → #30 (incident log) → #108 (live updates). Branding first because it shapes the rest of the visual decisions; live updates last because it depends on a stable explorer to render the deltas into.
+### Tomorrow's work — start here
 
-### M6 manual verification — STILL DEFERRED
+**Issue [#126](https://github.com/NEAT-Technologies/Neat/issues/126)** — v0.2.0-α audit verification pass. The first concrete deliverable for Sunrise.
 
-The two unchecked Railway gates remain unchecked. They were rescheduled to post-δ in PR #87 and the user has indicated AWS deployment is the more likely production target. Treat them as informational rather than blocking.
+The seven audits in `docs/audits/` are interlocking contracts NEAT v0.1.x must redeem itself against. The verification pass produces one document — `docs/audits/verification.md` — grading every `Verify:` checkbox (~150 of them) against the codebase at HEAD with file-and-line citations. **Findings only — no code changes, no issue creation in the same pass.** After the verification doc lands, the user reads it, sorts findings into three piles (open as new v0.2.0 issues / amend existing / defer), and the issue/amendment work happens in a follow-up.
 
-### Gotchas a fresh v0.2.0 session will benefit from
+Branch: `v0.2.0-audit-verification`. Open as draft PR for inline review of findings.
 
-- **`packages/web/` is a Next.js shell.** It exists but does nothing useful — every page is a placeholder. The v0.2.0 work is greenfield UI on top of a stable, tested core API.
-- **Core API is project-aware everywhere.** Routes mount at both `/X` (default project) and `/projects/:project/X`. The web client should use the prefixed shape from day one — see ADR-026 and `packages/mcp/src/tools.ts` for the routing pattern.
-- **Snapshot schema is at v2.** Frontend doesn't touch it; everything goes through HTTP. If you find yourself reading `neat-out/graph.json` directly from the web layer, stop and use `/graph` instead — it'll keep working through future schema migrations.
-- **NodeType has 5 values** (ServiceNode, DatabaseNode, ConfigNode, InfraNode, FrontierNode). EdgeType has 7 (CALLS, CONNECTS_TO, DEPENDS_ON, CONFIGURED_BY, RUNS_ON, PUBLISHES_TO, CONSUMES_FROM). The graph explorer needs styling rules for each.
-- **Provenance has four states** (OBSERVED, INFERRED, EXTRACTED, STALE) plus FRONTIER for placeholder edges. Confidence is per-edge with a `signal: { spanCount, errorCount, lastObservedAgeMs }` shape from γ #76. The inspector should surface signal numbers verbatim, not just confidence — see `packages/mcp/src/tools.ts` for how the MCP tools format these.
-- **Real-time updates need a new transport on core.** Currently the only push is MCP `notifications/resources/updated` for the incidents resource (5s poll). Issue #108 will add an SSE or WebSocket route on neat-core; web consumes it.
-- **Branching convention unchanged.** One issue → one branch `<num>-<slug>` → one PR (`Refs #N`, not `Closes #N`). Plain-English commits, no `Co-Authored-By: Claude`. Branch off the latest `main`.
-- **No emojis in commits / code / docs unless explicitly requested.** Memory has this; easy to forget under autopilot.
-- **Force-push needs explicit user approval.** Same as v0.1.2 — the harness blocks `git push --force-with-lease` unless authorised.
+**The audits in dependency order** (verify in this order, downstream audits reference upstream findings):
+1. types — `docs/audits/NEAT-audit-types(1).md`
+2. graph — `docs/audits/NEAT-audit-graph.md`
+3. tree-sitter — `docs/audits/NEAT-audit-treesitter.md`
+4. OTel — `docs/audits/NEAT-audit-otel.md`
+5. traversal — `docs/audits/NEAT-audit-traversal.md`
+6. policies (prospective — feature not built) — `docs/audits/NEAT-audit-policies.md`
+7. MCP — `docs/audits/NEAT-audit-mcp.md`
+8. init (prospective — feature not built) — `docs/audits/NEAT-audit-init.md`
+
+Two of the eight (policies, init) are prospective ADRs against unbuilt features — verification translates their `Verify:` checkboxes into spec amendments for issues #115-#119, not code citations. Track those separately in the verification doc.
+
+### Closing gate — the MVP-success PR
+
+After v0.2.x lands: point NEAT at an open-source codebase, identify a real divergence-shaped bug (OBSERVED layer must be load-bearing), propose a fix, get the PR merged. ADR-027 is the framing. Static-only finds (FastAPI #12901-shaped) don't earn NEAT its category — a Graphify fork could match them.
+
+The Railway gates from M6 are still informational. AWS is the more likely production target.
+
+### Gotchas a fresh agent will benefit from
+
+- **The audits are scope-disciplined.** Every audit has an explicit `[v1.0]` not-in-scope list (NeatScript, Memgraph, Salsa, OPA/Rego, eBPF, Firecracker, Qdrant). Don't drift toward those — they belong to the Rust v1.0, not the TypeScript MVP.
+- **The provenance contract is load-bearing.** Five values (`OBSERVED` / `INFERRED` / `EXTRACTED` / `STALE` / `FRONTIER`), one definition in `@neat/types`, propagated everywhere, never duplicated as raw strings. Three audits independently flag this as "the most important contract in the MVP."
+- **Hardcoded demo names is the recurring red flag.** Four audits explicitly check for `service-a` / `service-b` / `payments-db` references in non-fixture code. Any hit is critical-severity — the MVP success criterion (real PR on unfamiliar codebase) requires these be absent.
+- **`packages/web/` already has a basic Cytoscape viewer (v0.1.3).** Track 1 (v0.3.0) builds on it incrementally over `packages/web/app/components/GraphView.tsx`.
+- **Core API is project-aware everywhere.** Routes mount at both `/X` (default project) and `/projects/:project/X`. New work uses the prefixed shape from day one — see ADR-026 and `packages/mcp/src/tools.ts`.
+- **NodeType has 5 values** (ServiceNode, DatabaseNode, ConfigNode, InfraNode, FrontierNode). EdgeType has 7 (CALLS, CONNECTS_TO, DEPENDS_ON, CONFIGURED_BY, RUNS_ON, PUBLISHES_TO, CONSUMES_FROM).
+- **Provenance has four states** plus FRONTIER for placeholder edges. Confidence is per-edge with `signal: { spanCount, errorCount, lastObservedAgeMs }` from γ #76.
+- **Real-time updates** are still TODO. Currently the only push is MCP `notifications/resources/updated` for incidents (5s poll). #108 will add SSE/WebSocket on neat-core; v0.2.1 policies can subscribe to the same channel.
+- **Branching convention unchanged.** One issue → one branch `<num>-<slug>` → one PR (`Refs #N`, not `Closes #N`). Plain-English commits, no `Co-Authored-By: Claude`. Branch off latest `main`.
+- **No emojis in commits / code / docs unless explicitly requested.**
+- **Force-push needs explicit user approval.** Harness blocks `git push --force-with-lease` unless authorised.
+
+### Open PRs awaiting merge
+
+- **#125** — ADR-027 + parallel-tracks reframe of CLAUDE.md and milestones.md. Note: this PR's body still references the old milestone numbering (v0.2.0 = Frontend, v0.3.0 = Policies). The renumbering happened after #125 was opened. The PR's content is still correct in shape; the reviewer should treat the milestone numbers as having shifted by one bucket.
 
 ---
 
