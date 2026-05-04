@@ -2,6 +2,8 @@
 
 Append-only ADR log. Each entry: what was decided, why, and the date. New decisions go to the bottom.
 
+For the process — when to write an ADR, what shape, how supersession works, who ratifies — see [`docs/adr/README.md`](./adr/README.md). The starting shape for a new ADR is [`docs/adr/template.md`](./adr/template.md).
+
 ---
 
 ## ADR-001 — Monorepo with pnpm + Turborepo
