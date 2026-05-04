@@ -137,23 +137,26 @@ Stitcher rules — non-negotiable:
 
 ### 8. OBSERVED edge upsert — MVP
 
-When an OTel span confirms a relationship already in the graph, upgrade the edge — do not duplicate it.
+When an OTel span confirms a relationship already in the graph, an OBSERVED edge is written **alongside** the EXTRACTED edge under a distinct id pattern, not in place of it. The two layers coexist so the gap between declared intent and observed reality stays visible (see `packages/core/src/ingest.ts:15-17` and graph audit §7). Traversal selects the highest-priority edge per pair via `PROV_RANK`.
 
-Update rules:
-- `lastObserved` → set to the span's timestamp
-- `callCount` → increment by 1
-- `provenance` → upgrade from EXTRACTED or INFERRED to OBSERVED if currently lower trust
-- `confidence` → remove from the edge (not applicable to OBSERVED)
+Edge id pattern for OBSERVED: `${type}:OBSERVED:${source}->${target}`.
+
+Update rules for the OBSERVED edge:
+- `lastObserved` → set to the span's timestamp (ISO8601 from `startTimeUnixNano`)
+- `callCount` → increment by 1 on each span
+- `provenance` → `OBSERVED`
+- `confidence` → `1.0` (OBSERVED is direct measurement; the constant is a max-trust marker, not a guess)
 
 **Verify:**
-- Is there an upsert function that finds an existing edge before creating a new one?
-- Is `callCount` incremented or reset on each span?
-- Is `provenance` upgraded when OTel confirms a relationship previously only known via EXTRACTED or INFERRED?
+- Is there an upsert function that finds an existing OBSERVED edge by its distinct id before creating a new one?
+- Does the OBSERVED edge live under its own id pattern (`${type}:OBSERVED:src->tgt`), not under the EXTRACTED id?
+- Is `callCount` incremented (not reset) on each span?
+- Is `confidence: 1.0` set on OBSERVED edges?
 - Is the upsert logic general — does it work for any service pair — or is it coupled to the demo service names?
 
 ### 9. Staleness transition — MVP
 
-OBSERVED edges must become STALE when `lastObserved` exceeds 24 hours. Background process, not read-time computation.
+OBSERVED edges must become STALE when `lastObserved` exceeds the per-edge-type threshold (CALLS=1h, CONNECTS_TO=4h, others=24h per ADR-024; overridable via `NEAT_STALE_THRESHOLDS`). Background process, not read-time computation.
 
 **Verify:**
 - Is `lastObserved` stored as ISO8601 from the span's `startTimeUnixNano`, not from `Date.now()`?
