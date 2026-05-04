@@ -43,7 +43,7 @@ The Railway gates are still informational rather than blocking. AWS deployment l
 
 ## Decisions already made
 
-`docs/decisions.md` is the ADR log. Read it before reopening any of these:
+`docs/decisions.md` is the ADR log. `docs/adr/README.md` is the process — when to write one, the template, supersession, ratification. Read decisions.md before reopening any of these:
 
 - pnpm → npm (ADR-007)
 - `tree-sitter` native bindings, not `web-tree-sitter` (ADR-002)
