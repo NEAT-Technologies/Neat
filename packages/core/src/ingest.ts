@@ -11,10 +11,15 @@ import type { ParsedSpan } from './otel.js'
 //     DatabaseNode resolved by host.
 //   * Span with status.code === 2 → ErrorEvent appended to errors.ndjson.
 //
-// Observed edges live alongside extracted ones with a distinct id pattern
-// (`${type}:OBSERVED:...`) so static and runtime signal coexist instead of
-// stomping each other. Provenance, lastObserved, callCount, and confidence
-// are set on the OBSERVED edge; the static edge is untouched.
+// Contract anchors (see /docs/contracts.md):
+//   * Rule 1 — Provenance: every edge here carries Provenance.X from @neat/types.
+//   * Rule 2 — Coexistence: OBSERVED edges live alongside EXTRACTED ones with a
+//     distinct id pattern (`${type}:OBSERVED:src->tgt`). Never write OBSERVED
+//     under the EXTRACTED id; that erases the gap NEAT exists to surface.
+//   * Rule 4 — Per-edge-type staleness (ADR-024): STALE_THRESHOLDS_BY_EDGE_TYPE
+//     governs decay; never hardcode a flat 24h threshold.
+//   * Rule 8 — No demo names: derive driver/engine identifiers from node
+//     properties, not literals.
 
 export interface IngestContext {
   graph: NeatGraph

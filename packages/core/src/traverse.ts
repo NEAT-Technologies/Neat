@@ -13,6 +13,14 @@ import { NodeType } from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import { checkCompatibility, compatPairs } from './compat.js'
 
+// Contract anchors (see /docs/contracts.md):
+//   * Rule 2 — Coexistence: walk by provenance priority, never collapse edges.
+//   * Rule 3 — FRONTIER edges must be skipped, not merely deprioritized.
+//     If a node's only edges are FRONTIER, traversal stops there.
+//   * Rule 5 — Validate results against RootCauseResultSchema /
+//     BlastRadiusResultSchema before returning.
+//   * Rule 8 — No demo-name hardcoding: driver/engine identifiers come from
+//     node properties + compatPairs(), never literals.
 const PROV_RANK: Record<ProvenanceValue, number> = {
   OBSERVED: 3,
   INFERRED: 2,
