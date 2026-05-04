@@ -6,9 +6,15 @@ This is the agent guide for the NEAT repo. If you're a fresh Claude session (or 
 
 NEAT keeps a live semantic graph of a software system — code, infrastructure, runtime — and exposes it to AI agents over MCP. The core demo: a service running `pg` 7.4.0 against PostgreSQL 15 fails at runtime, and NEAT traces that failure back to the version mismatch two hops away through the graph. The extraction pipeline reads static code (tree-sitter) and live OTel traces to build and maintain that graph.
 
+## What success looks like (read this first)
+
+**MVP success = closing a real PR on an open-source codebase NEAT was not engineered for.** Not running the pg demo. The demo proves the stack works in a controlled environment we built to fail in a specific shape; the MVP earns its keep when NEAT finds a real bug in a real repo, where the OBSERVED layer was load-bearing — not just static analysis a Graphify fork could match.
+
+ADR-027 records this reframe. The trace stitcher (γ #75 INFERRED edges bridging missing OTel coverage for pg 7.4.0) is evidence — not a workaround — that the gap between declared intent and observed reality is the load-bearing problem NEAT addresses. Policies (v0.2.1) are the formalisation of that gap.
+
 ## Where you are in the build
 
-**v0.1.2 "Ubiquity" is shipped and tagged.** Release: https://github.com/NEAT-Technologies/Neat/releases/tag/v0.1.2. The MVP sprint (M0–M6) before it is also complete. Active work is the **v0.2.0 frontend release**.
+**v0.1.2 "Ubiquity" is shipped and tagged.** Release: https://github.com/NEAT-Technologies/Neat/releases/tag/v0.1.2. **v0.1.3** added a basic Cytoscape graph viewer on top. The MVP sprint (M0–M6) before all of that is also complete.
 
 Sub-milestones in v0.1.2, all merged on `main`:
 
@@ -19,27 +25,54 @@ Sub-milestones in v0.1.2, all merged on `main`:
 
 A generic `Dockerfile` at the repo root builds the demo-free image. Mount your codebase at `/workspace`, optional volume at `/neat-out`, default CMD runs the REST + OTLP daemon. CMD overrides: `neat init /workspace --project <name>`, `neat watch /workspace`, `neat-mcp`. (`packages/core/Dockerfile` is the older demo-flavored variant for the local docker-compose stack.)
 
-`docs/milestones.md` has the full verification gates. Always check it before starting any work — it's still the source of truth for what's done and what's next.
+**Two parallel tracks now share `main`:**
 
-## What's next: v0.2.0 — Frontend
+- **Track 1 — v0.3.0 Frontend (Jed).** Builds against the stable v0.1.2 API. Doesn't gate the MVP success criterion; this track delivers investor-legibility. Issues #28-#31 + #106-#108.
+- **Track 2 — v0.2.x Engineering (Cem + Kurt).** Three releases, sequential. v0.2.0 ships first.
 
-`packages/web/` was a shell through v0.1.2 (ADR-004). v0.2.0 fills it in. The core API is stable, project-aware, and exhaustively tested; this release is greenfield UI on top of it.
+`docs/milestones.md` has the full verification gates and the "Pick up here" handoff. Always check it before starting any work — it's the source of truth for what's done and what's next.
 
-Open issues on the v0.2.0 milestone:
+## What's next on each track
 
-- **#28** — Implement graph explorer with Cytoscape.js
-- **#29** — Implement node inspector panel
-- **#30** — Implement incident log page
-- **#31** — Apply NEAT branding
-- **#106** — Multi-project switcher in the web UI
-- **#107** — `semantic_search` bar — natural-language node lookup
+### Track 2 — v0.2.x Engineering
+
+**v0.2.0 — Sunrise.** Audit-driven cleanup. Seven contract documents (`docs/audits/`) define what NEAT v0.1.x must redeem itself against. The first concrete deliverable is **issue #126** — a verification pass that grades every `Verify:` checkbox across all seven audits with file-and-line citations and outputs `docs/audits/verification.md`. Findings only — no code changes in the verification pass itself. After it lands, the user sorts findings into three piles (open as issues / amend existing / defer), and the cleanup work begins from there.
+
+**v0.2.1 — Policies.** Closes the four-feature gap (OTel + graph + MCP + policies). α/β/γ/δ pattern mirroring v0.1.2:
+
+- **#115 — α** — Policy schema + YAML parser in `@neat/types`
+- **#116 — β** — Evaluation engine + `policy-violations.ndjson`
+- **#117 — γ** — REST + MCP surface (`/policies`, `check_policies` tool, `neat://policies/violations`)
+- **#118 — δ** — Real-world policy library exercising OBSERVED-vs-EXTRACTED divergence
+- **#123** — generalize `getRootCause` beyond DatabaseNode origins (follow-on after #116 + #118 expose `PolicyViolation` as a node-shaped concept)
+
+**v0.2.2 — `neat init` + Claude Code skill.** Distribution layer for the MVP-success PR experiment.
+
+- **#119** — zero-config init on any codebase, Claude skill packaging
+
+Pulls P-001 (zero-touch instrumentation) out of `docs/v0.x-proposals.md` once #119 starts.
+
+### Track 1 — v0.3.0 Frontend (Jed)
+
+`packages/web/` was a shell through v0.1.2 (ADR-004); v0.1.3 added a basic Cytoscape canvas; v0.3.0 fills the rest in. Builds against the stable v0.1.2 API.
+
+Open issues on the v0.3.0 milestone:
+
+- **#31** — Apply NEAT branding (recommended first — shapes visual decisions)
+- **#28** — Graph explorer (richer than the v0.1.3 viewer)
+- **#29** — Node inspector panel
+- **#106** — Multi-project switcher
+- **#107** — `semantic_search` bar
+- **#30** — Incident log page
 - **#108** — Live graph updates via SSE / WebSocket from `neat watch`
 
-Suggested order: #31 (branding shapes the rest of the visual decisions) → #28 (graph explorer) → #29 (inspector) → #106 (project switcher) → #107 (search bar) → #30 (incident log) → #108 (live updates — depends on a stable explorer to render the deltas into).
+This track is independent of v0.2.x — Jed should not block on engineering work.
 
-### Closing gate — M6 manual verification
+### Closing gate — the MVP-success PR
 
-The Railway gates are still informational rather than blocking. AWS deployment looks like the more likely production target; the runbook in `docs/railway.md` is one option but not the canonical path.
+After v0.2.x lands: point NEAT at an open-source codebase, identify a real divergence-shaped bug (OBSERVED layer load-bearing, not static-only), propose a fix, get the PR merged. ADR-027 sets the bar.
+
+The Railway gates from M6 are still informational. AWS is the more likely production target; `docs/railway.md` is one option, not canonical.
 
 ## Decisions already made
 
@@ -61,6 +94,7 @@ The Railway gates are still informational rather than blocking. AWS deployment l
 - Per-edge-type stale thresholds + `stale-events.ndjson` transition log (ADR-024)
 - `semantic_search` uses an Ollama → Transformers.js → substring fallback chain; flat in-memory cosine, sidecar `embeddings.json` cache (ADR-025)
 - Multi-project lives behind `Map<string, NeatGraph>`; routes dual-mount at `/X` and `/projects/:project/X`; default project keeps the legacy filenames; OTel ingest stays single-project (ADR-026)
+- MVP success is closing a real PR on an unfamiliar open-source codebase, not running the pg demo; OBSERVED layer must be load-bearing (ADR-027)
 
 ## Conventions
 
