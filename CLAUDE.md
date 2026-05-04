@@ -6,9 +6,22 @@ This is the agent guide for the NEAT repo. If you're a fresh Claude session (or 
 
 NEAT keeps a live semantic graph of a software system — code, infrastructure, runtime — and exposes it to AI agents over MCP. The core demo: a service running `pg` 7.4.0 against PostgreSQL 15 fails at runtime, and NEAT traces that failure back to the version mismatch two hops away through the graph. The extraction pipeline reads static code (tree-sitter) and live OTel traces to build and maintain that graph.
 
+## What success looks like (read this first)
+
+**MVP success = closing a real PR on an open-source codebase NEAT was not engineered for.** Not running the pg demo. The demo proves the stack works in a controlled environment; the MVP earns its keep when NEAT finds a real bug in a real repo, where the OBSERVED layer was load-bearing — not just static analysis a Graphify fork could match.
+
+ADR-027 records this reframe. The trace stitcher (INFERRED edges bridging missing OTel coverage) is evidence the gap between declared intent and observed reality is the load-bearing problem NEAT addresses; policies are the formalization of that gap.
+
 ## Where you are in the build
 
-**v0.1.2 "Ubiquity" is shipped and tagged.** Release: https://github.com/NEAT-Technologies/Neat/releases/tag/v0.1.2. The MVP sprint (M0–M6) before it is also complete. Active work is the **v0.2.0 frontend release**.
+**v0.1.2 "Ubiquity" is shipped and tagged.** Release: https://github.com/NEAT-Technologies/Neat/releases/tag/v0.1.2. v0.1.3 (basic Cytoscape viewer) shipped on top. The MVP sprint (M0–M6) before all of that is also complete.
+
+**Two parallel tracks now share `main`:**
+
+- **Track 1 — v0.2.0 Frontend.** Jed's track. Builds against the stable v0.1.2 API. Doesn't gate the MVP success criterion; this track delivers investor-legibility. Issues #28-#31 + #106-#108.
+- **Track 2 — v0.3.0 Policies → v0.3.1 `neat init` + Claude skill.** Engineering track (Cem + Kurt). v0.3.0 closes the four-feature gap — OTel + graph + MCP + **policies** — and gives NEAT the data model where declared intent and observed reality can diverge in a first-class way. v0.3.1 makes NEAT installable on any codebase with one command. Together they unlock the MVP-success PR experiment. Issues #115-#118 (v0.3.0 α/β/γ/δ) and #119 (v0.3.1).
+
+The two tracks ship independently. v0.2.0 might land before v0.3.0 or after; either is fine.
 
 Sub-milestones in v0.1.2, all merged on `main`:
 
@@ -21,9 +34,11 @@ A generic `Dockerfile` at the repo root builds the demo-free image. Mount your c
 
 `docs/milestones.md` has the full verification gates. Always check it before starting any work — it's still the source of truth for what's done and what's next.
 
-## What's next: v0.2.0 — Frontend
+## What's next on each track
 
-`packages/web/` was a shell through v0.1.2 (ADR-004). v0.2.0 fills it in. The core API is stable, project-aware, and exhaustively tested; this release is greenfield UI on top of it.
+### Track 1 — v0.2.0 Frontend (Jed)
+
+`packages/web/` was a shell through v0.1.2 (ADR-004). v0.1.3 added a basic Cytoscape canvas. v0.2.0 fills the rest in. Builds against the stable v0.1.2 API.
 
 Open issues on the v0.2.0 milestone:
 
@@ -37,9 +52,24 @@ Open issues on the v0.2.0 milestone:
 
 Suggested order: #31 (branding shapes the rest of the visual decisions) → #28 (graph explorer) → #29 (inspector) → #106 (project switcher) → #107 (search bar) → #30 (incident log) → #108 (live updates — depends on a stable explorer to render the deltas into).
 
-### Closing gate — M6 manual verification
+### Track 2 — v0.3.0 Policies, then v0.3.1 distribution (Cem + Kurt)
 
-The Railway gates are still informational rather than blocking. AWS deployment looks like the more likely production target; the runbook in `docs/railway.md` is one option but not the canonical path.
+**v0.3.0 (Policies)** closes the four-feature gap. α/β/γ/δ pattern mirroring v0.1.2:
+
+- **#115 — α** — Policy schema + YAML parser in `@neat/types`. Built-in policy library starts here.
+- **#116 — β** — Evaluation engine + `policy-violations.ndjson` transition log mirroring `errors.ndjson` and `stale-events.ndjson`.
+- **#117 — γ** — REST + MCP surface. `GET /policies`, `GET /policies/violations`, `check_policies` MCP tool, `neat://policies/violations` resource. Project-aware via the dual-mount routes from #83.
+- **#118 — δ** — Real-world policy library that exercises the OBSERVED-vs-EXTRACTED divergence — runtime call not declared, declared call never observed, compat-must-not-merge, stale-frontier-must-be-resolved, db-driver-pinned-major. The thing a Graphify fork can't trivially replicate.
+
+**v0.3.1 (`neat init` + Claude skill)** is the sub-release after v0.3.0:
+
+- **#119** — zero-config init on any codebase, auto-instrumentation strategy picker (codemod / Beyla / mesh / DB-proxy from P-001), Claude Code skill packaging that registers the eight tools + the new `check_policies` tool against the running core.
+
+Pulls P-001 (zero-touch instrumentation) out of `docs/v0.x-proposals.md` once v0.3.1 starts.
+
+### Closing gate — the MVP-success PR
+
+After v0.3.0 + v0.3.1 land, point NEAT at an open-source codebase neither we nor anyone else engineered, identify a real bug NEAT alone surfaces (load-bearing OBSERVED signal, not static-only), propose a fix, get the PR merged. That's the bar ADR-027 sets. The Railway / AWS deploy is a means to that end, not the end itself.
 
 ## Decisions already made
 
@@ -61,6 +91,7 @@ The Railway gates are still informational rather than blocking. AWS deployment l
 - Per-edge-type stale thresholds + `stale-events.ndjson` transition log (ADR-024)
 - `semantic_search` uses an Ollama → Transformers.js → substring fallback chain; flat in-memory cosine, sidecar `embeddings.json` cache (ADR-025)
 - Multi-project lives behind `Map<string, NeatGraph>`; routes dual-mount at `/X` and `/projects/:project/X`; default project keeps the legacy filenames; OTel ingest stays single-project (ADR-026)
+- MVP success is closing a real PR on an open-source codebase, not running the pg demo; OBSERVED layer must be load-bearing (ADR-027)
 
 ## Conventions
 

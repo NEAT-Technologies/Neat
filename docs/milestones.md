@@ -12,37 +12,61 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-03. **v0.1.2 is shipped and tagged.** All four δ PRs merged (#102/#103/#104/#105). The release lives at https://github.com/NEAT-Technologies/Neat/releases/tag/v0.1.2. Workspace at HEAD is green: `npx turbo build test lint` clean, **214 core / 30 types / 35 mcp** tests passing. The v0.1.2 milestone is closed; issues #67–#83 stay attached for the historical record (per ADR-005 the user closes individual issues by hand).
+**Last session ended:** 2026-05-04. **v0.1.2 + v0.1.3 shipped.** Workspace at HEAD is green: `npx turbo build test lint` clean, **214 core / 30 types / 35 mcp** tests passing.
 
-A generic `Dockerfile` lives at the repo root (separate from `packages/core/Dockerfile`, which still bakes in the demo). Mount your codebase at `/workspace`, point a volume at `/neat-out`, and the image runs the REST + OTLP daemon by default. CMD overrides: `neat init /workspace --project <name>` for a one-shot snapshot, `neat watch /workspace` for the live re-extraction daemon, `neat-mcp` for the stdio MCP binary.
+**The MVP success criterion has been reframed (ADR-027).** Headline metric is now: **closing a real PR on an open-source codebase NEAT was not engineered for, where the OBSERVED layer was load-bearing.** Not running the pg demo. Static-only finds (FastAPI #12901-shaped) don't earn NEAT its category — a Graphify fork could match them. The PR has to be one where the gap between declared intent and observed reality is the load-bearing fact.
 
-**Next release is v0.2.0 — Frontend.** `packages/web/` was a shell through v0.1.2 (ADR-004); v0.2.0 fills it in. Open issues under that milestone:
+**Two parallel tracks share `main`. They don't depend on each other.**
 
-- **#28 — Implement graph explorer with Cytoscape.js**
-- **#29 — Implement node inspector panel**
-- **#30 — Implement incident log page**
-- **#31 — Apply NEAT branding**
-- **#106 — Multi-project switcher in the web UI** (reads `GET /projects`, persists selection, threads through every API call)
-- **#107 — `semantic_search` bar — natural-language node lookup** (hits `/search`, surfaces provider + score, click-through to inspector)
-- **#108 — Live graph updates via SSE / WebSocket from `neat watch`** (server emits a "graph_changed" event after each `runExtractPhases` flush; UI hot-refetches)
+### Track 1 — v0.2.0 Frontend (Jed)
 
-Suggested order: #31 (branding) → #28 (graph explorer) → #29 (inspector) → #106 (project switcher) → #107 (search bar) → #30 (incident log) → #108 (live updates). Branding first because it shapes the rest of the visual decisions; live updates last because it depends on a stable explorer to render the deltas into.
+Builds against the stable v0.1.2 API. v0.1.3 already shipped a basic Cytoscape canvas; v0.2.0 fills the rest in. Open issues:
 
-### M6 manual verification — STILL DEFERRED
+- **#31** — Apply NEAT branding (recommended first — shapes visual decisions)
+- **#28** — Graph explorer (richer than the v0.1.3 viewer)
+- **#29** — Node inspector panel
+- **#106** — Multi-project switcher
+- **#107** — `semantic_search` bar
+- **#30** — Incident log page
+- **#108** — Live graph updates via SSE / WebSocket from `neat watch`
 
-The two unchecked Railway gates remain unchecked. They were rescheduled to post-δ in PR #87 and the user has indicated AWS deployment is the more likely production target. Treat them as informational rather than blocking.
+This track is independent — Jed should not block on Track 2.
 
-### Gotchas a fresh v0.2.0 session will benefit from
+### Track 2 — v0.3.0 Policies → v0.3.1 distribution (Cem + Kurt)
 
-- **`packages/web/` is a Next.js shell.** It exists but does nothing useful — every page is a placeholder. The v0.2.0 work is greenfield UI on top of a stable, tested core API.
-- **Core API is project-aware everywhere.** Routes mount at both `/X` (default project) and `/projects/:project/X`. The web client should use the prefixed shape from day one — see ADR-026 and `packages/mcp/src/tools.ts` for the routing pattern.
-- **Snapshot schema is at v2.** Frontend doesn't touch it; everything goes through HTTP. If you find yourself reading `neat-out/graph.json` directly from the web layer, stop and use `/graph` instead — it'll keep working through future schema migrations.
-- **NodeType has 5 values** (ServiceNode, DatabaseNode, ConfigNode, InfraNode, FrontierNode). EdgeType has 7 (CALLS, CONNECTS_TO, DEPENDS_ON, CONFIGURED_BY, RUNS_ON, PUBLISHES_TO, CONSUMES_FROM). The graph explorer needs styling rules for each.
-- **Provenance has four states** (OBSERVED, INFERRED, EXTRACTED, STALE) plus FRONTIER for placeholder edges. Confidence is per-edge with a `signal: { spanCount, errorCount, lastObservedAgeMs }` shape from γ #76. The inspector should surface signal numbers verbatim, not just confidence — see `packages/mcp/src/tools.ts` for how the MCP tools format these.
-- **Real-time updates need a new transport on core.** Currently the only push is MCP `notifications/resources/updated` for the incidents resource (5s poll). Issue #108 will add an SSE or WebSocket route on neat-core; web consumes it.
+**v0.3.0 — Policies.** Closes the four-feature gap (OTel + graph + MCP + **policies**). The data model where declared intent and observed reality diverge in a first-class way. α/β/γ/δ pattern mirroring v0.1.2:
+
+1. **#115 — α** — Policy schema + YAML parser in `@neat/types`. Built-in policy library starts here.
+2. **#116 — β** — Evaluation engine + `policy-violations.ndjson` transition log mirroring `errors.ndjson` + `stale-events.ndjson`.
+3. **#117 — γ** — REST + MCP surface. `GET /policies`, `GET /policies/violations`, `check_policies` MCP tool, `neat://policies/violations` resource. Project-aware via dual-mount.
+4. **#118 — δ** — Real-world policies that surface OBSERVED-vs-EXTRACTED divergences. Runtime call not declared, declared call never observed, compat-must-not-merge, stale-frontier, db-driver-pinned-major.
+
+α first (no schema impact). β depends on α. γ + δ can run in parallel after β.
+
+**v0.3.1 — `neat init` for arbitrary codebases + Claude Code skill.** Sub-release after v0.3.0:
+
+- **#119** — zero-config init that detects the target's language, picks the right instrumentation strategy from P-001 (codemod / Beyla / mesh / DB-proxy), defaults to dry-run, writes `NEAT_INSTRUMENT.md` on `--apply`. Claude Code skill packaging registers the eight tools + `check_policies` against the running core.
+
+Pulls P-001 out of `docs/v0.x-proposals.md` once #119 starts.
+
+### Closing gate — the MVP-success PR
+
+After v0.3.0 + v0.3.1 land: point NEAT at an open-source codebase, identify a real divergence-shaped bug, propose a fix, get the PR merged. That's the bar from ADR-027.
+
+The Railway gates from M6 are still informational. AWS is the more likely production target; `docs/railway.md` is one option, not canonical.
+
+### Gotchas a fresh agent will benefit from (either track)
+
+- **`packages/web/` already has a basic Cytoscape viewer (v0.1.3).** v0.2.0 builds on it, doesn't replace it. Track 1 work is incremental over `packages/web/app/components/GraphView.tsx`.
+- **Core API is project-aware everywhere.** Routes mount at both `/X` (default project) and `/projects/:project/X`. New work should use the prefixed shape from day one — see ADR-026 and `packages/mcp/src/tools.ts` for the routing pattern.
+- **Snapshot schema is at v2.** v0.3.0 policies live in `policies/*.yaml` separate from the graph file; no schema bump expected. Policy violations append to ndjson, not the snapshot.
+- **NodeType has 5 values** (ServiceNode, DatabaseNode, ConfigNode, InfraNode, FrontierNode). EdgeType has 7 (CALLS, CONNECTS_TO, DEPENDS_ON, CONFIGURED_BY, RUNS_ON, PUBLISHES_TO, CONSUMES_FROM). Both tracks reference these.
+- **Provenance has four states** (OBSERVED, INFERRED, EXTRACTED, STALE) plus FRONTIER for placeholder edges. Confidence is per-edge with `signal: { spanCount, errorCount, lastObservedAgeMs }` from γ #76. Track 1 inspector + Track 2 policies both consume these.
+- **The trace stitcher (INFERRED) is load-bearing, not a workaround.** PROVENANCE.md + ADR-027 explain why. Track 2 policies should treat the OBSERVED-vs-INFERRED-vs-EXTRACTED gap as the data model's central fact, not an edge case.
+- **Real-time updates** are still TODO. Currently the only push is MCP `notifications/resources/updated` for incidents (5s poll). #108 (Track 1) will add SSE/WebSocket on neat-core; v0.3.0-γ (Track 2) can subscribe to the same channel for `policies/violations`.
 - **Branching convention unchanged.** One issue → one branch `<num>-<slug>` → one PR (`Refs #N`, not `Closes #N`). Plain-English commits, no `Co-Authored-By: Claude`. Branch off the latest `main`.
-- **No emojis in commits / code / docs unless explicitly requested.** Memory has this; easy to forget under autopilot.
-- **Force-push needs explicit user approval.** Same as v0.1.2 — the harness blocks `git push --force-with-lease` unless authorised.
+- **No emojis in commits / code / docs unless explicitly requested.**
+- **Force-push needs explicit user approval.** Harness blocks `git push --force-with-lease` unless authorised.
 
 ---
 
@@ -338,3 +362,49 @@ A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the sam
 | #106  | Multi-project switcher in the web UI                           |
 | #107  | `semantic_search` bar — natural-language node lookup           |
 | #108  | Live graph updates via SSE / WebSocket from `neat watch`       |
+
+---
+
+## v0.3.0 — Policies (engineering track)
+
+**End state:** NEAT carries declared intent as data, not as ad-hoc code. A user-defined policy library is evaluated against the live graph; violations land in `policy-violations.ndjson` like errors and stale events; the REST + MCP surface lets agents and CI ask "what's wrong" against typed expectations rather than reading the graph and guessing. Closes the four-feature gap (OTel + graph + MCP + **policies**) and gives NEAT a data model where declared intent and observed reality diverge first-class.
+
+**Status:** NOT_STARTED.
+
+| Issue | Title                                                                                    | Sub |
+|-------|------------------------------------------------------------------------------------------|-----|
+| #115  | Policy schema + YAML parser in `@neat/types`; built-in policy library                    | α   |
+| #116  | Evaluation engine + `policy-violations.ndjson` transition log                            | β   |
+| #117  | REST + MCP surface (`/policies`, `/policies/violations`, `check_policies` tool, `neat://policies/violations` resource) | γ   |
+| #118  | Real-world policy library that exercises OBSERVED-vs-EXTRACTED divergence                | δ   |
+| #123  | Generalize `getRootCause` beyond DatabaseNode origins (lands once #116 + #118 expose `PolicyViolation` as a node-shaped concept) | follow-on |
+
+α first (no schema impact). β depends on α. γ + δ can run in parallel after β.
+
+ADR-027 records the reframe that puts this milestone where it is: MVP success = closing a real PR on an unfamiliar codebase, not running the pg demo. Policies are the data primitive that makes the OBSERVED-vs-EXTRACTED divergence — the gap PROVENANCE.md and the trace stitcher already encode — first-class for downstream consumers (agents, CI, the eventual UI).
+
+---
+
+## v0.3.1 — `neat init` for arbitrary codebases + Claude Code skill (sub-release)
+
+**End state:** `neat init <path>` on any codebase auto-detects language, picks the right instrumentation strategy (codemod / Beyla / mesh / DB-proxy from P-001), defaults to dry-run, and on `--apply` writes a `NEAT_INSTRUMENT.md` explaining what changed and how to revert. The Claude Code skill registers the eight tools + `check_policies` against the running core. Together this is the distribution layer that makes the MVP-success PR experiment runnable on a repo neither we nor anyone else engineered.
+
+**Status:** NOT_STARTED.
+
+| Issue | Title                                                                       |
+|-------|-----------------------------------------------------------------------------|
+| #119  | `neat init` for arbitrary codebases + Claude Code skill                     |
+
+When this milestone starts, `docs/v0.x-proposals.md` P-001 (zero-touch instrumentation) graduates out of the proposals doc into ADRs sized to the strategy adapters that ship.
+
+---
+
+## Cross-track follow-ups (no milestone yet)
+
+| Issue | Title                                                                                 | Kind |
+|-------|---------------------------------------------------------------------------------------|------|
+| #120  | Edge id encodes provenance; `markStaleEdges` mutates the attribute but leaves the id stale | bug |
+| #121  | Collapse legacy `callCount` into `signal.spanCount`                                   | architecture cleanup |
+| #122  | Migrate api tests to projects-aware `buildApi` shape; drop `buildLegacyRegistry`      | dx cleanup |
+
+These came out of an architecture audit. #120 is a real correctness gap in `get_graph_diff`. #121 and #122 are cleanup work to bundle with whatever next change is adjacent to the affected lines.

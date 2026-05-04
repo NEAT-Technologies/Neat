@@ -402,3 +402,29 @@ v0.1.2-δ #83 replaces the `getGraph()` singleton with a `Map<string, NeatGraph>
 **MCP tools take an optional `project` arg.** Tools omit it by default, the HTTP client uses the legacy unprefixed URL, and the core resolves that to `default`. When `NEAT_DEFAULT_PROJECT=alpha` is set on the MCP server, every tool call without an explicit `project` routes through `/projects/alpha/...`. The arg can override per-call. Same shape for resources — `neat://node/<id>` always resolves against the configured project, and `neat://incidents/recent` polls `/projects/<project>/incidents` (or `/incidents` when no project is set) for change detection.
 
 **When to revisit.** Per-project OTel ingest (when a real multi-project deployment surfaces and one collector emitting to multiple project graphs becomes a thing). Auto-loading projects from disk (when manual `NEAT_PROJECTS` becomes the source of bug reports). Per-project default thresholds, embedders, or scan depth (when a project actually needs to override these — none does today, so they all stay process-global).
+
+---
+
+## ADR-027 — MVP success is closing a real PR on an unfamiliar open-source codebase, not running the pg demo
+
+**Date:** 2026-05-04
+**Status:** Active.
+
+The pg demo (a service running pg 7.4.0 against PostgreSQL 15) was stood up to prove the graph + provenance + traversal stack works end to end. It does. But the demo was scaffolded against a failure mode we engineered ourselves, in a controlled environment we built to fail in a specific shape. Closing a real PR on a codebase we did not engineer — where the bug is not pre-staged, the maintainers do not know about it, and the fix has to be correct enough to merge — is a different and much higher bar.
+
+This ADR records that the second bar is the actual MVP success criterion. The pg demo was a stepping stone that became the destination by accident of incremental delivery.
+
+**Why this is the right bar.** A static-only find on a real repo (e.g. the FastAPI lexicographic-version-comparison shape — `"3.10" < "3.9"` because string compare) is reproducible by any tree-sitter-based tool. Graphify in particular already does this category of thing for ~39K users. A NEAT PR that closes a static-shaped bug doesn't differentiate the product; it confirms a Graphify fork could match it. The PR that earns NEAT its category is one where the OBSERVED layer was load-bearing — runtime signal that tree-sitter alone could not have predicted, connected back to a code decision through the graph.
+
+**The trace stitcher is evidence, not a workaround.** PROVENANCE.md records that pg 7.4.0 is too old for `@opentelemetry/instrumentation-pg`, so the demo's own database spans never emit; the INFERRED layer was added to bridge the gap. We had been treating that as a demo-environment compromise. It is in fact a small instance of the load-bearing fact NEAT exists to surface: in real systems, OBSERVED ground truth requires instrumentation that does not always exist, and the gap between what you can see and what you must infer is not a clean line. Every real codebase has a much larger version of this gap. NEAT's job is to make that gap navigable.
+
+**What follows for the roadmap.** Two parallel tracks share `main`:
+
+- **Track 1 — v0.2.0 (frontend).** Investor-legibility. Jed's work, against the stable v0.1.2 API. Doesn't gate the MVP success criterion; the headline metric is "PR merged on a repo we didn't engineer," not "graph renders pretty."
+- **Track 2 — v0.3.0 (policies) → v0.3.1 (`neat init` + Claude skill).** Engineering work. v0.3.0 closes the four-feature gap (OTel + graph + MCP + policies) and gives NEAT the data model that makes intent-vs-observed-reality first class. v0.3.1 collapses NEAT's installation to one command + a Claude skill so it can be pointed at any codebase. Together they are what makes the MVP-success PR experiment runnable.
+
+**What's deferred until after the MVP-success PR.** Auto-PR generation (NEAT writes the patch, not just identifies the divergence). Hosted MCP. Multi-tenant policy stores. None of these change whether NEAT can find a real bug; they only matter once it can.
+
+**What this ADR is not deciding.** Which open-source repo we point NEAT at first; that's a product call once the platform is in shape. Whether the codemod or eBPF route is the v0.3.1 default; that's ADR-029's call when v0.3.1 starts. Whether v0.2.0 frontend ships before or after v0.3.0 platform; the tracks are independent.
+
+**When to revisit.** When the first real PR closes — flip the framing from "can NEAT do this" to "what's the next bar." Until then this ADR stays the active project gravity.
