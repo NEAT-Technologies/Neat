@@ -8,7 +8,7 @@ This runbook is a step-by-step. None of it is automated yet — Railway's IaC is
 
 - A Railway account on a plan that allows six services and one Postgres plugin (the free hobby plan is enough for the demo).
 - The Railway CLI installed (`brew install railwayapp/railway/railway` or `npm i -g @railway/cli`) — only required for the optional MCP-from-anywhere step at the end.
-- `gh` and `git` set up against `neat-tools/Neat`.
+- `gh` and `git` set up against `NEAT-Technologies/Neat`.
 
 ## Service map
 
@@ -25,13 +25,13 @@ Public means "Generate a Domain" in Railway's networking tab. Private services o
 
 ## 1. Create the project and the database
 
-1. New project → "Deploy from GitHub repo" → pick `neat-tools/Neat`. Don't deploy any services yet — we'll add them one by one.
+1. New project → "Deploy from GitHub repo" → pick `NEAT-Technologies/Neat`. Don't deploy any services yet — we'll add them one by one.
 2. Add → Database → PostgreSQL. Once it provisions, change the version to `15` from the plugin's settings (Railway defaults to the latest major; the demo's failure mode requires 14+ specifically).
 3. From the plugin's Variables tab, note the `DATABASE_URL`. Railway also exposes individual `PG*` vars; we'll wire those into `service-b` directly rather than parsing the URL.
 
 ## 2. Deploy `neat-core`
 
-1. New service → "GitHub repo" → `neat-tools/Neat`. Set the root directory to `/` (the `packages/core/Dockerfile` build context is the repo root).
+1. New service → "GitHub repo" → `NEAT-Technologies/Neat`. Set the root directory to `/` (the `packages/core/Dockerfile` build context is the repo root).
 2. Settings → Build → Dockerfile Path: `packages/core/Dockerfile`.
 3. Variables:
 
