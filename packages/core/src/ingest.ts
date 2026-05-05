@@ -6,7 +6,10 @@ import {
   NodeType,
   Provenance,
   databaseId,
+  frontierEdgeId,
   frontierId,
+  inferredEdgeId,
+  observedEdgeId,
   serviceId,
   type EdgeTypeValue,
 } from '@neat/types'
@@ -112,12 +115,15 @@ function pickAddress(span: ParsedSpan): string | undefined {
   )
 }
 
+// Edge id helpers live in @neat/types/identity.ts (ADR-029). The local
+// signatures below preserve the (type, source, target) argument order ingest.ts
+// has used historically while delegating to the canonical wire-format helpers.
 function makeObservedEdgeId(type: EdgeTypeValue, source: string, target: string): string {
-  return `${type}:OBSERVED:${source}->${target}`
+  return observedEdgeId(source, target, type)
 }
 
 function makeInferredEdgeId(type: EdgeTypeValue, source: string, target: string): string {
-  return `${type}:INFERRED:${source}->${target}`
+  return inferredEdgeId(source, target, type)
 }
 
 const INFERRED_CONFIDENCE = 0.6
@@ -179,7 +185,7 @@ function upsertFrontierEdge(
   target: string,
   ts: string,
 ): void {
-  const id = `${type}:FRONTIER:${source}->${target}`
+  const id = frontierEdgeId(source, target, type)
   if (graph.hasEdge(id)) {
     const existing = graph.getEdgeAttributes(id) as GraphEdge
     const updated: GraphEdge = {

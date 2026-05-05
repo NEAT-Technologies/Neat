@@ -240,6 +240,91 @@ describe('Rule 16 — Node identity helpers (ADR-028)', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// Provenance contract — Edge identity helpers + PROV_RANK (ADR-029)
+// ──────────────────────────────────────────────────────────────────────────
+describe('Provenance contract — edge identity (ADR-029)', () => {
+  it('no hand-rolled `:OBSERVED:`/`:INFERRED:`/`:FRONTIER:` edge id template literals', () => {
+    const offenders: string[] = []
+    // Match a template literal with `:OBSERVED:` / `:INFERRED:` / `:FRONTIER:` followed by `${...}`.
+    const re = /`[^`]*:(OBSERVED|INFERRED|FRONTIER):\$\{/
+    for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC)]) {
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim()
+        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+          offenders.push(`${file}:${i + 1}: ${trimmed}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('no hand-rolled EXTRACTED edge id template literals (`${type}:${source}->${target}`)', () => {
+    const offenders: string[] = []
+    // Catches the EXTRACTED pattern: `${anything}:${anything}->${anything}` where the
+    // first two interpolations are followed by literal `:` and `->`. Allow the helpers
+    // themselves (in @neat/types) and test fixtures.
+    const re = /`\$\{[^}]+\}:\$\{[^}]+\}->\$\{[^}]+\}`/
+    for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC)]) {
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim()
+        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+          offenders.push(`${file}:${i + 1}: ${trimmed}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('edge id helpers produce stable wire format', async () => {
+    const { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierEdgeId } = await import('@neat/types')
+    expect(extractedEdgeId('service:a', 'service:b', 'CALLS')).toBe('CALLS:service:a->service:b')
+    expect(observedEdgeId('service:a', 'service:b', 'CALLS')).toBe('CALLS:OBSERVED:service:a->service:b')
+    expect(inferredEdgeId('service:a', 'service:b', 'CALLS')).toBe('CALLS:INFERRED:service:a->service:b')
+    expect(frontierEdgeId('service:a', 'frontier:unknown:8080', 'CALLS')).toBe(
+      'CALLS:FRONTIER:service:a->frontier:unknown:8080',
+    )
+  })
+
+  it('parseEdgeId round-trips all four provenance variants', async () => {
+    const { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierEdgeId, parseEdgeId } =
+      await import('@neat/types')
+    const cases = [
+      { make: extractedEdgeId, prov: 'EXTRACTED' as const },
+      { make: observedEdgeId, prov: 'OBSERVED' as const },
+      { make: inferredEdgeId, prov: 'INFERRED' as const },
+      { make: frontierEdgeId, prov: 'FRONTIER' as const },
+    ]
+    for (const { make, prov } of cases) {
+      const id = make('service:a', 'service:b', 'CALLS')
+      expect(parseEdgeId(id)).toEqual({
+        type: 'CALLS',
+        provenance: prov,
+        source: 'service:a',
+        target: 'service:b',
+      })
+    }
+    expect(parseEdgeId('not-an-edge-id')).toBe(null)
+    expect(parseEdgeId('CALLS:no-arrow')).toBe(null)
+  })
+
+  it('PROV_RANK ordering is OBSERVED > INFERRED > EXTRACTED > {STALE, FRONTIER}', async () => {
+    const { PROV_RANK } = await import('@neat/types')
+    expect(PROV_RANK.OBSERVED).toBeGreaterThan(PROV_RANK.INFERRED)
+    expect(PROV_RANK.INFERRED).toBeGreaterThan(PROV_RANK.EXTRACTED)
+    expect(PROV_RANK.EXTRACTED).toBeGreaterThan(PROV_RANK.STALE)
+    expect(PROV_RANK.FRONTIER).toBe(0)
+    expect(PROV_RANK.STALE).toBe(0)
+  })
+
+  it('PROV_RANK is frozen (Object.isFrozen)', async () => {
+    const { PROV_RANK } = await import('@neat/types')
+    expect(Object.isFrozen(PROV_RANK)).toBe(true)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // Rule 8 — No demo-name hardcoding in branching logic
 // ──────────────────────────────────────────────────────────────────────────
 describe('Rule 8 — No demo-name hardcoding', () => {

@@ -5,15 +5,14 @@ import type {
   ErrorEvent,
   GraphEdge,
   GraphNode,
-  ProvenanceValue,
   RootCauseResult,
   ServiceNode,
 } from '@neat/types'
-import { NodeType } from '@neat/types'
+import { NodeType, PROV_RANK } from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import { checkCompatibility, compatPairs } from './compat.js'
 
-// Contract anchors (see /docs/contracts.md):
+// Contract anchors (see /docs/contracts.md + docs/contracts/provenance.md):
 //   * Rule 2 — Coexistence: walk by provenance priority, never collapse edges.
 //   * Rule 3 — FRONTIER edges must be skipped, not merely deprioritized.
 //     If a node's only edges are FRONTIER, traversal stops there.
@@ -21,13 +20,8 @@ import { checkCompatibility, compatPairs } from './compat.js'
 //     BlastRadiusResultSchema before returning.
 //   * Rule 8 — No demo-name hardcoding: driver/engine identifiers come from
 //     node properties + compatPairs(), never literals.
-const PROV_RANK: Record<ProvenanceValue, number> = {
-  OBSERVED: 3,
-  INFERRED: 2,
-  EXTRACTED: 1,
-  STALE: 0,
-  FRONTIER: 0,
-}
+//   * ADR-029 — PROV_RANK is the canonical provenance ranking, imported
+//     from @neat/types so consumers (traversal, MCP, policies) all agree.
 
 const ROOT_CAUSE_MAX_DEPTH = 5
 const BLAST_RADIUS_DEFAULT_DEPTH = 10

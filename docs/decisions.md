@@ -475,3 +475,56 @@ Edge identity (different ADR — comes next as #2 in the contract list). Provena
 **When to revisit.**
 
 When a real codebase trips the workspace-collision case (item 5) or the host:port-collision case (item 6) — at that point write a successor ADR introducing scoped ids, and migrate snapshots via the v2→v3 path persist.ts already supports.
+
+---
+
+## ADR-029 — Edge identity and provenance ranking
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+Edges are the second layer of identity, downstream of nodes (ADR-028). Today four edge id patterns exist — one per provenance variant — and they live in three different places:
+
+- `makeEdgeId(source, target, type)` in `packages/core/src/extract/shared.ts:67` produces EXTRACTED ids (`${type}:${source}->${target}`).
+- `makeObservedEdgeId(type, source, target)` in `packages/core/src/ingest.ts:115` (local) produces OBSERVED ids (`${type}:OBSERVED:${source}->${target}`).
+- `makeInferredEdgeId(type, source, target)` in `packages/core/src/ingest.ts:119` (local) produces INFERRED ids (`${type}:INFERRED:${source}->${target}`).
+- A bare template literal at `packages/core/src/ingest.ts:182` produces FRONTIER ids (`${type}:FRONTIER:${source}->${target}`).
+
+Three patterns have helpers, one is inline. The helpers themselves are scattered. The traversal layer also encodes a separate concern — the `PROV_RANK` constant in `packages/core/src/traverse.ts:16-22` that orders edges by trust during walks. That ranking is part of the provenance contract; it doesn't belong only to traversal.
+
+**Decision.**
+
+1. **Edge id helpers move into `@neat/types/identity.ts`.** Five exports: `extractedEdgeId`, `observedEdgeId`, `inferredEdgeId`, `frontierEdgeId`, plus `parseEdgeId(id)` returning `{ type, provenance, source, target }` or `null`. Producers call the helpers; nobody constructs an edge id by template literal.
+
+2. **The wire format stays what it is today.** ADR-029 doesn't change the edge id strings — it gives them a single source of truth. EXTRACTED has no provenance segment; OBSERVED, INFERRED, and FRONTIER carry the provenance segment between type and source. STALE never appears in an edge id because STALE is a transition of an existing OBSERVED edge, not a creation pattern (ADR-024).
+
+3. **`PROV_RANK` moves into `@neat/types`.** The ordering `OBSERVED > INFERRED > EXTRACTED > STALE | FRONTIER` is part of the provenance contract, not traversal-private. Traversal imports it. Future consumers (policies, MCP tools, the daemon's reconciliation layer) import the same constant.
+
+4. **Coexistence rule reaffirmed.** Multiple edges between the same node pair under distinct provenance ids coexist — they do not collapse. The id pattern is what makes coexistence mechanically possible: the EXTRACTED id and OBSERVED id are different strings, so `graph.hasEdge(...)` doesn't conflate them. This was already true in the code (ingest.ts:15-17 documents intent); ADR-029 ratifies it as the contract.
+
+5. **Per-edge confidence semantics per provenance:**
+   - **OBSERVED** — `confidence: 1.0` always. Direct measurement; the value is a max-trust marker, not a derived score.
+   - **INFERRED** — `confidence ≤ 0.7`, default `0.6` (`INFERRED_CONFIDENCE` constant). Set at edge creation by the trace stitcher; never exceeds 0.7 because INFERRED is by definition less trustworthy than OBSERVED.
+   - **EXTRACTED** — confidence is **not stored** on EXTRACTED edges. EXTRACTED edges either exist (the static analyzer found them) or they don't. They don't decay on a clock; their confidence is implicit in their existence.
+   - **STALE** — confidence drops to `≤ 0.3` on transition, set at transition time. The original `lastObserved` is preserved.
+   - **FRONTIER** — confidence is implicit in the FRONTIER provenance itself; not stored as a numeric field. FRONTIER is excluded from traversal (contracts.md Rule 3) so its confidence is never compared.
+
+6. **Round-trip guarantee.** `parseEdgeId(extractedEdgeId('A', 'B', 'CALLS'))` returns `{ type: 'CALLS', provenance: 'EXTRACTED', source: 'A', target: 'B' }`. Same for the other three variants. This lets consumers (traversal, MCP tools, debugging code) walk back from an id to its parts without re-deriving the format inline.
+
+**Why these helpers are in `@neat/types`, not `@neat/core`.**
+
+Same reason as ADR-028: producers and consumers both need them. The traversal layer reads edge ids when walking; the persist layer reads them on snapshot load; the MCP layer reads them when surfacing edges. `@neat/types` already owns the schema for the edge structure; it should own the wire format too.
+
+**Enforcement.**
+
+`packages/core/test/audits/contracts.test.ts` adds a regression test that scans `packages/core/src/` and `packages/mcp/src/` for hand-rolled edge id template literals — patterns like `` `${type}:${source}->...` ``, `` `:OBSERVED:` ``, `` `:INFERRED:` ``, `` `:FRONTIER:` `` outside `@neat/types/identity.ts`. CI fails any future session that drifts.
+
+`docs/contracts/provenance.md` records the binding rules in short form, governs `packages/core/src/{ingest,traverse,persist}.ts` and `packages/core/src/extract/**` (anywhere edges are constructed or compared).
+
+**What this ADR is not deciding.**
+
+Lifecycle transitions (OBSERVED→STALE, FrontierNode promotion, ghost-edge cleanup) — that's contract #3, the next ADR. Edge schema field-set (`source`, `target`, `evidence`, `signal`, `lastObserved`, etc.) — already locked in `packages/types/src/edges.ts`. Provenance enum values — already locked in `packages/types/src/constants.ts`.
+
+**When to revisit.**
+
+If a new provenance variant is introduced (e.g. `OBSERVED-NET` if eBPF capture lands post-v1.0 — see the v0.x discussion thread), this ADR gets a successor that adds the new id pattern and PROV_RANK entry without changing the existing four.
