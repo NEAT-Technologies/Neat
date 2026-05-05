@@ -12,8 +12,9 @@ This file is the index. Each rule has a short summary and a link to its full per
 |---|----------|------|---------|
 | 16 | Node identity | [`contracts/identity.md`](./contracts/identity.md) | Node ids constructed via `@neat/types/identity` helpers, never literals (ADR-028) |
 | 17 | Edge identity + provenance | [`contracts/provenance.md`](./contracts/provenance.md) | Edge id wire format per provenance, `PROV_RANK` ordering, coexistence rule, confidence semantics (ADR-029) |
+| 18 | Node + edge lifecycle | [`contracts/lifecycle.md`](./contracts/lifecycle.md) | When nodes/edges are created, transition, get rewritten, retire. Mutation authority is locked to ingest.ts and extract/* (ADR-030) |
 
-*(More land as the v0.2.x sequence progresses: lifecycle, traversal, MCP surface, persistence, policies, init/install. See `docs/milestones.md` for sequencing.)*
+*(More land as the v0.2.x sequence progresses: schema growth vs shape, traversal, MCP surface, persistence, policies, init/install. See `docs/milestones.md` for sequencing.)*
 
 ## Cross-cutting rules (applied everywhere; not yet split out)
 

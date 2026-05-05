@@ -528,3 +528,103 @@ Lifecycle transitions (OBSERVED→STALE, FrontierNode promotion, ghost-edge clea
 **When to revisit.**
 
 If a new provenance variant is introduced (e.g. `OBSERVED-NET` if eBPF capture lands post-v1.0 — see the v0.x discussion thread), this ADR gets a successor that adds the new id pattern and PROV_RANK entry without changing the existing four.
+
+---
+
+## ADR-030 — Node and edge lifecycle
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+The third data-layer contract. ADR-028 locked node identity, ADR-029 locked edge identity and provenance ranking. This ADR locks the rules for **when** nodes and edges enter the graph, **how** they transition, and **who** has authority over each transition.
+
+Today the lifecycle is implemented across `packages/core/src/ingest.ts`, `packages/core/src/extract/index.ts`, and `packages/core/src/watch.ts` — the rules are correct but scattered, with no single document specifying them. This ADR records them so future producers, consumers, and tests don't have to reverse-engineer the policy from code.
+
+**Decision.**
+
+### 1. Node creation
+
+- **Static creation** lives in `packages/core/src/extract/`. `services.ts`, `databases/index.ts`, `configs.ts`, and `infra/*` are the only sites that produce typed nodes (Service, Database, Config, Infra). Each producer constructs the id via `@neat/types/identity` helpers (ADR-028). Each producer is idempotent — `graph.hasNode(id)` guards every `addNode` call, so a re-extract does not duplicate.
+
+- **Auto-creation from OTel** is queued under issue #134. When an OTel span arrives for a `service.name` not present in the graph, `ingest.ts` will create a minimal `ServiceNode` at `serviceId(span.service)`. Static extraction that later finds the same service merges into the auto-created node by id; static fields (language, version, dependencies) override; OTel-derived fields (`lastObserved` on associated edges) survive untouched. **The id is the merge key.** This is the reconciliation rule from ADR-028 §3 applied at the lifecycle layer.
+
+- **FrontierNode creation** lives in `ingest.ts`. When `handleSpan` resolves a peer host that doesn't match any known service or database, it creates a `FrontierNode` at `frontierId(host)` and an OBSERVED edge from the source service to the FrontierNode (the FRONTIER edge variant of the same call). The FrontierNode is a placeholder; the call itself is real and stays observed.
+
+### 2. Node transitions
+
+- **FrontierNode → typed node (promotion).** `promoteFrontierNodes(graph)` in `ingest.ts:408` runs after each extract pass (`extract/index.ts:42`) and after each `watch` tick (`watch.ts:153`). For every FrontierNode whose `host` matches a known service alias, the FrontierNode is dropped and edges that pointed at it are rewritten to point at the typed node. The FrontierNode never persists as a partial state — promotion is atomic per node.
+
+- **Edge rewrite during promotion.** Each edge incident to the promoted FrontierNode is dropped and rebuilt under the typed-node id (`rewireFrontierEdges` + `rebuildEdge` in `ingest.ts:436-470`). On rewrite, `FRONTIER` provenance is **upgraded to `OBSERVED`** because the call certainty was always there — only the target identity was unknown, and now it isn't. Other provenance values pass through unchanged.
+
+### 3. Node retirement
+
+- **Today: only via FrontierNode promotion.** A FrontierNode is dropped when promoted; nothing else gets retired automatically.
+
+- **Ghost-node cleanup (queued under #140).** When a service disappears from source between extract passes, the `ServiceNode` (and its associated edges) should be retired. The contract is: retirement is **driven by source absence**, not by clock decay. Static-extracted nodes don't have a `lastObserved`; they exist while their source declaration exists. This is the lifecycle counterpart to ghost-edge cleanup; both block on the source-mtime tracking work in #140.
+
+### 4. Edge creation
+
+- **Static (EXTRACTED).** `extract/*` producers via `extractedEdgeId(...)`. Idempotent via `graph.hasEdge(id)` guard.
+- **Observed (OBSERVED).** `upsertObservedEdge` in `ingest.ts:218`. Idempotent: if the edge id exists, attributes are replaced; otherwise the edge is created. **Returns `null` if either endpoint node is missing** (`ingest.ts:226`) — this is the gap issue #134 closes by auto-creating missing nodes.
+- **Inferred (INFERRED).** `upsertInferredEdge` in `ingest.ts:298`. Created by the trace stitcher on error spans, depth ≤ 2 from the originating service. Confidence ≤ 0.7, default 0.6.
+- **Frontier (FRONTIER).** `upsertFrontierEdge` in `ingest.ts:181`. Created when OTel resolves a peer to no known node.
+
+### 5. Edge transitions (binding rules)
+
+- **OBSERVED → STALE.** `markStaleEdges` in `ingest.ts:521`, called by the background staleness loop (`startStalenessLoop`, default 60s tick). Per-edge-type thresholds (ADR-024). The transition is in place — the edge id stays at `${type}:OBSERVED:${source}->${target}`; only `provenance` flips to `STALE` and `confidence` drops to `0.3`. `lastObserved` is preserved. Each transition appended to `stale-events.ndjson`.
+
+- **STALE → OBSERVED (resurrection).** When a new span arrives for an existing STALE edge, `upsertObservedEdge` overwrites `provenance` back to `OBSERVED` and `confidence` back to `1.0` (`ingest.ts:233-244`). **The transition is implicit — there is no explicit "resurrect" function.** The id stayed the same through the STALE phase, so the upsert finds the existing edge and replaces attributes.
+
+- **FRONTIER → OBSERVED.** Only via FrontierNode promotion (see §2). Never standalone — a FRONTIER edge cannot become OBSERVED without its FrontierNode endpoint resolving to a typed node.
+
+- **No other transitions exist.** EXTRACTED never decays. INFERRED never transitions. STALE never goes anywhere except back to OBSERVED via resurrection.
+
+### 6. Edge retirement
+
+- **Today: only via FrontierNode promotion.** Edges incident to a promoted FrontierNode get dropped and rebuilt; the old edge is gone.
+
+- **Ghost-edge cleanup (issue #140).** When a source file is edited or removed, EXTRACTED edges that were derived from that file should be retired. Today this doesn't happen — re-extraction adds new edges but never removes old ones. The fix is part of the v0.2.1 tree-sitter rebuild and depends on `evidence.file` being present on every EXTRACTED edge (queued under the same issue).
+
+### 7. Authority — who owns what transition
+
+| Transition                        | Owner module                  |
+|-----------------------------------|-------------------------------|
+| Static node creation              | `extract/*`                   |
+| Static edge creation              | `extract/*`                   |
+| OBSERVED edge upsert              | `ingest.ts` `upsertObservedEdge` |
+| INFERRED edge creation            | `ingest.ts` `upsertInferredEdge` (via `stitchTrace`) |
+| FRONTIER node creation            | `ingest.ts` `handleSpan`      |
+| FRONTIER edge creation            | `ingest.ts` `upsertFrontierEdge` |
+| OBSERVED → STALE                  | `ingest.ts` `markStaleEdges` (background loop) |
+| STALE → OBSERVED                  | `ingest.ts` `upsertObservedEdge` (implicit on re-arrival) |
+| FrontierNode → typed (+ edge rewrite + FRONTIER → OBSERVED) | `ingest.ts` `promoteFrontierNodes`, triggered by `extract/index.ts` and `watch.ts` |
+| Ghost-edge / ghost-node cleanup   | `watch.ts` (queued under #140)|
+| Auto-create ServiceNode/DatabaseNode from OTel | `ingest.ts` `handleSpan` (queued under #134) |
+
+`traverse.ts`, `compat.ts`, `persist.ts`, `api.ts`, and `packages/mcp/src/` **never** mutate node or edge state. They are read-only consumers of the lifecycle.
+
+### 8. Idempotency
+
+Every creation path is idempotent: re-running the same producer with the same input produces the same graph state. `graph.hasNode(id)` and `graph.hasEdge(id)` guards make this hold even when watch-driven re-extraction fires the same producer many times. Tests in `packages/core/test/` exercise idempotency directly (e.g. `discover-services.test.ts`).
+
+### 9. Atomicity
+
+Each lifecycle operation is synchronous within a single call to its owner function. `handleSpan` runs to completion against the graph before yielding (the only `await` is the trailing `appendErrorEvent` after mutations are settled). `promoteFrontierNodes` rewires all incident edges and drops the FrontierNode in one synchronous pass. `markStaleEdges` walks the edge set in a single pass. There is no point at which a partial transition is observable to a concurrent reader.
+
+This relies on Node's single-threaded event loop and is sufficient for MVP scale. If NEAT later needs concurrent multi-process ingest, atomicity becomes an explicit concern and gets its own ADR.
+
+**Enforcement.**
+
+`packages/core/test/audits/contracts.test.ts` adds:
+- An assertion that no module outside `packages/core/src/ingest.ts` and `packages/core/src/extract/` mutates the graph (no `dropNode`, `dropEdge`, `addNode`, `addEdge*`, `replaceEdgeAttributes`, `replaceNodeAttributes` calls).
+- Behavioral assertions: STALE → OBSERVED resurrection (edit a STALE edge's lastObserved → call upsertObservedEdge → confirm provenance flips back, confidence is 1.0); FRONTIER → OBSERVED on promotion.
+
+`docs/contracts/lifecycle.md` records the binding rules in short form, governs the same files as the provenance contract plus `watch.ts` and `extract/index.ts`.
+
+**What this ADR is not deciding.**
+
+Schema growth versus shape changes (contract #4, the next ADR). The exact shape of `evidence` on EXTRACTED edges (queued under #140 + the v0.2.1 tree-sitter rebuild). Auto-creation of ServiceNode/DatabaseNode from OTel (queued under #134, lands in v0.2.2). Ghost cleanup (queued under #140, lands in v0.2.1). Each of those is an implementation; this ADR specifies the rules they must implement.
+
+**When to revisit.**
+
+When ghost cleanup ships (#140) or auto-creation ships (#134) — both will refine the lifecycle table and move items out of "queued" status. When concurrent multi-process ingest becomes a real requirement (post-v1.0 or post-eBPF), atomicity needs its own ADR.

@@ -240,6 +240,175 @@ describe('Rule 16 — Node identity helpers (ADR-028)', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// Lifecycle contract — only ingest.ts and extract/* may mutate the graph (ADR-030)
+// ──────────────────────────────────────────────────────────────────────────
+describe('Lifecycle contract — mutation authority (ADR-030)', () => {
+  it('graph mutation methods are only called from ingest.ts and extract/*', () => {
+    const offenders: string[] = []
+    const mutators = [
+      'addNode',
+      'addEdge',
+      'addEdgeWithKey',
+      'addDirectedEdge',
+      'addDirectedEdgeWithKey',
+      'dropNode',
+      'dropEdge',
+      'replaceEdgeAttributes',
+      'replaceNodeAttributes',
+      'mergeEdgeAttributes',
+      'mergeNodeAttributes',
+    ]
+    const re = new RegExp(`\\b(graph|g)\\.(${mutators.join('|')})\\s*\\(`)
+
+    for (const file of walkSrc(CORE_SRC)) {
+      // Allowed mutation sites: ingest.ts and everything under extract/.
+      if (file.endsWith('/ingest.ts')) continue
+      if (file.includes('/extract/')) continue
+
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim()
+        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+          offenders.push(`${file}:${i + 1}: ${trimmed}`)
+        }
+      })
+    }
+
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('mcp/src never mutates the graph', () => {
+    const offenders: string[] = []
+    const re = /\b(graph|g)\.(addNode|addEdge|dropNode|dropEdge|replaceEdgeAttributes|replaceNodeAttributes|mergeEdgeAttributes|mergeNodeAttributes)\s*\(/
+    for (const file of walkSrc(MCP_SRC)) {
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim()
+        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+          offenders.push(`${file}:${i + 1}: ${trimmed}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+})
+
+describe('Lifecycle contract — STALE → OBSERVED resurrection (ADR-030)', () => {
+  it('a span on a STALE edge flips provenance back to OBSERVED with confidence 1.0', async () => {
+    const { observedEdgeId } = await import('@neat/types')
+    const { handleSpan } = await import('../../src/ingest.js')
+    const { mkdtempSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', {
+      id: 'service:caller',
+      type: NodeType.ServiceNode,
+      name: 'caller',
+      language: 'javascript',
+    })
+    g.addNode('service:callee', {
+      id: 'service:callee',
+      type: NodeType.ServiceNode,
+      name: 'callee',
+      language: 'javascript',
+    })
+
+    // Seed a STALE edge under the OBSERVED id pattern. STALE never has its own
+    // id pattern — it's a transitioned-in-place OBSERVED edge.
+    const id = observedEdgeId('service:caller', 'service:callee', EdgeType.CALLS)
+    const seeded: GraphEdge = {
+      id,
+      source: 'service:caller',
+      target: 'service:callee',
+      type: EdgeType.CALLS,
+      provenance: Provenance.STALE,
+      lastObserved: '2026-04-01T00:00:00.000Z',
+      callCount: 5,
+      confidence: 0.3,
+    }
+    g.addEdgeWithKey(id, 'service:caller', 'service:callee', seeded)
+
+    const errorsPath = join(mkdtempSync(join(tmpdir(), 'contract-test-')), 'errors.ndjson')
+    await handleSpan(
+      { graph: g, errorsPath, now: () => Date.parse('2026-05-05T12:00:00.000Z') },
+      {
+        traceId: 't1',
+        spanId: 's1',
+        service: 'caller',
+        name: 'GET /things',
+        statusCode: 0,
+        startTimeUnixNano: '0',
+        endTimeUnixNano: '0',
+        durationNanos: 0n,
+        attributes: {
+          'server.address': 'callee',
+          'http.method': 'GET',
+        },
+      },
+    )
+
+    const after = g.getEdgeAttributes(id) as GraphEdge
+    expect(after.provenance).toBe(Provenance.OBSERVED)
+    expect(after.confidence).toBe(1.0)
+    expect(after.callCount).toBeGreaterThanOrEqual(6)
+  })
+})
+
+describe('Lifecycle contract — FRONTIER → OBSERVED on promotion (ADR-030)', () => {
+  it('promoteFrontierNodes upgrades a FRONTIER edge to OBSERVED', async () => {
+    const { frontierId, frontierEdgeId } = await import('@neat/types')
+    const { promoteFrontierNodes } = await import('../../src/ingest.js')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', {
+      id: 'service:caller',
+      type: NodeType.ServiceNode,
+      name: 'caller',
+      language: 'javascript',
+    })
+    g.addNode('service:callee', {
+      id: 'service:callee',
+      type: NodeType.ServiceNode,
+      name: 'callee',
+      language: 'javascript',
+      aliases: ['callee.internal'],
+    })
+    const fid = frontierId('callee.internal')
+    g.addNode(fid, {
+      id: fid,
+      type: NodeType.FrontierNode,
+      name: 'callee.internal',
+      host: 'callee.internal',
+    })
+
+    const oldEdgeId = frontierEdgeId('service:caller', fid, EdgeType.CALLS)
+    g.addEdgeWithKey(oldEdgeId, 'service:caller', fid, {
+      id: oldEdgeId,
+      source: 'service:caller',
+      target: fid,
+      type: EdgeType.CALLS,
+      provenance: Provenance.FRONTIER,
+      lastObserved: '2026-05-05T12:00:00.000Z',
+      callCount: 3,
+    })
+
+    const promoted = promoteFrontierNodes(g)
+    expect(promoted).toBe(1)
+    expect(g.hasNode(fid)).toBe(false)
+    expect(g.hasEdge(oldEdgeId)).toBe(false)
+
+    // After promotion, an OBSERVED edge from caller to callee exists.
+    const promotedEdges = g.outboundEdges('service:caller').map((id) => g.getEdgeAttributes(id) as GraphEdge)
+    const callsCallee = promotedEdges.find(
+      (e) => e.target === 'service:callee' && e.type === EdgeType.CALLS,
+    )
+    expect(callsCallee).toBeDefined()
+    expect(callsCallee!.provenance).toBe(Provenance.OBSERVED)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // Provenance contract — Edge identity helpers + PROV_RANK (ADR-029)
 // ──────────────────────────────────────────────────────────────────────────
 describe('Provenance contract — edge identity (ADR-029)', () => {
