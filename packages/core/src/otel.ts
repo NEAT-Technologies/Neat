@@ -1,4 +1,7 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import Fastify, { type FastifyInstance } from 'fastify'
+import protobuf from 'protobufjs'
 
 // OTLP/HTTP receiver. Listens on /v1/traces and decodes the JSON wire format
 // (collector's `otlphttp` exporter with `encoding: json`). Each span is
@@ -55,6 +58,12 @@ export type SpanHandler = (span: ParsedSpan) => void | Promise<void>
 
 export interface BuildOtelReceiverOptions {
   onSpan: SpanHandler
+  // Synchronous handler for spans with statusCode === 2. The receiver awaits
+  // it before replying, so a write failure can return 500 → OTel SDK retries.
+  // Optional — wiring is expected to plumb appendErrorEvent here when error
+  // durability matters; ad-hoc receivers leave it undefined.
+  // See docs/contracts/otel-ingest.md §Error events.
+  onErrorSpanSync?: (span: ParsedSpan) => Promise<void>
   // Fastify body limit. OTLP batches can be large; default is 16 MB.
   bodyLimit?: number
 }
@@ -217,6 +226,37 @@ export interface OtelReceiver {
   flushPending: () => Promise<void>
 }
 
+// Lazy-loaded protobuf decoder for ExportTraceServiceRequest. The bundled
+// .proto tree at packages/core/proto/ is shared with the gRPC receiver
+// (ADR-020). Cached after first load so successive receiver builds reuse it.
+let exportTraceServiceRequestType: protobuf.Type | null = null
+
+function loadProtobufDecoder(): protobuf.Type {
+  if (exportTraceServiceRequestType) return exportTraceServiceRequestType
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const protoRoot = path.resolve(here, '..', 'proto')
+  const root = new protobuf.Root()
+  root.resolvePath = (_origin, target) => path.resolve(protoRoot, target)
+  root.loadSync(
+    'opentelemetry/proto/collector/trace/v1/trace_service.proto',
+    { keepCase: true },
+  )
+  exportTraceServiceRequestType = root.lookupType(
+    'opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest',
+  )
+  return exportTraceServiceRequestType
+}
+
+async function decodeProtobufBody(buf: Buffer): Promise<OtlpTracesRequest> {
+  const Type = loadProtobufDecoder()
+  // Decode keeps the proto field names verbatim (keepCase: true), matching the
+  // GrpcExportRequest shape that reshapeGrpcRequest already understands.
+  // Dynamic import sidesteps the circular module dep with otel-grpc.ts.
+  const decoded = Type.decode(buf).toJSON() as Record<string, unknown>
+  const { reshapeGrpcRequest } = await import('./otel-grpc.js')
+  return reshapeGrpcRequest(decoded as never)
+}
+
 export async function buildOtelReceiver(
   opts: BuildOtelReceiverOptions,
 ): Promise<FastifyInstance & { flushPending: () => Promise<void> }> {
@@ -260,23 +300,51 @@ export async function buildOtelReceiver(
     drainPromise = drainPromise.then(() => drain())
   }
 
+  // Buffer application/x-protobuf bodies as raw bytes; the route handler
+  // decodes them via the bundled .proto tree (ADR-020).
+  app.addContentTypeParser(
+    'application/x-protobuf',
+    { parseAs: 'buffer', bodyLimit: opts.bodyLimit ?? 16 * 1024 * 1024 },
+    (_req, body, done) => {
+      done(null, body)
+    },
+  )
+
   app.get('/health', async () => ({ ok: true }))
 
   app.post('/v1/traces', async (req, reply) => {
-    // Content-Type dispatch (ADR-033). JSON is the only encoding decoded today;
-    // application/x-protobuf is a documented OTLP/HTTP encoding but the bundled
-    // .proto decoder isn't wired in yet. Reject explicitly with 415 instead of
-    // letting Fastify's default JSON parser silently fail on protobuf bytes.
+    // Content-Type dispatch (ADR-033). Both JSON and protobuf decode to the
+    // same OtlpTracesRequest shape, then feed parseOtlpRequest unchanged.
     const ct = (req.headers['content-type'] ?? '').toString().split(';')[0]!.trim().toLowerCase()
+    let body: OtlpTracesRequest
     if (ct === 'application/x-protobuf') {
-      return reply.code(415).send({
-        error: 'protobuf encoding not yet supported on the HTTP receiver — use OTLP/gRPC',
-      })
-    }
-    if (ct && ct !== 'application/json') {
+      try {
+        body = await decodeProtobufBody(req.body as Buffer)
+      } catch (err) {
+        return reply.code(400).send({
+          error: `protobuf decode failed: ${(err as Error).message}`,
+        })
+      }
+    } else if (!ct || ct === 'application/json') {
+      body = (req.body ?? {}) as OtlpTracesRequest
+    } else {
       return reply.code(415).send({ error: `unsupported content-type: ${ct}` })
     }
-    const spans = parseOtlpRequest((req.body ?? {}) as OtlpTracesRequest)
+    const spans = parseOtlpRequest(body)
+    // Synchronous error-event write before reply (ADR-033 §Error events).
+    // Graph mutation stays on the async queue, but the receiver awaits the
+    // file write so a write failure surfaces as 500 → OTel SDK retries.
+    if (opts.onErrorSpanSync) {
+      try {
+        for (const span of spans) {
+          if (span.statusCode === 2) await opts.onErrorSpanSync(span)
+        }
+      } catch (err) {
+        return reply.code(500).send({
+          error: `error-event write failed: ${(err as Error).message}`,
+        })
+      }
+    }
     enqueue(spans)
     // OTLP success response is `{ partialSuccess: {} }` for "all accepted".
     return reply.code(200).send({ partialSuccess: {} })

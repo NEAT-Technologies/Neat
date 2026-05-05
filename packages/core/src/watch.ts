@@ -11,7 +11,12 @@ import { addConfigNodes } from './extract/configs.js'
 import { addCallEdges } from './extract/calls/index.js'
 import { addInfra } from './extract/infra/index.js'
 import { retireEdgesByFile } from './extract/retire.js'
-import { makeSpanHandler, promoteFrontierNodes, startStalenessLoop } from './ingest.js'
+import {
+  makeErrorSpanWriter,
+  makeSpanHandler,
+  promoteFrontierNodes,
+  startStalenessLoop,
+} from './ingest.js'
 import { buildOtelReceiver } from './otel.js'
 import { startOtelGrpcReceiver } from './otel-grpc.js'
 import { loadGraphFromDisk, startPersistLoop } from './persist.js'
@@ -254,15 +259,30 @@ export async function startWatch(
   console.log(`  snapshot path: ${opts.outPath}`)
   console.log(`  errors log:    ${opts.errorsPath}`)
 
-  const onSpan = makeSpanHandler({ graph, errorsPath: opts.errorsPath })
-  const otelHttp = await buildOtelReceiver({ onSpan })
+  // The receiver writes ErrorEvents synchronously before reply (durability).
+  // makeSpanHandler runs on the async queue and skips the inline write
+  // because the receiver already handled it. Ad-hoc callers that bypass the
+  // receiver (CLI tests, fixtures) leave writeErrorEventInline at its default
+  // and get the in-handleSpan write. ADR-033 §Error events.
+  const onSpan = makeSpanHandler({
+    graph,
+    errorsPath: opts.errorsPath,
+    writeErrorEventInline: false,
+  })
+  const onErrorSpanSync = makeErrorSpanWriter(opts.errorsPath)
+  const otelHttp = await buildOtelReceiver({ onSpan, onErrorSpanSync })
   await otelHttp.listen({ port: otelPort, host })
   console.log(`neat-core OTLP receiver on http://${host}:${otelPort}/v1/traces`)
 
   let grpcReceiver: { stop: () => Promise<void> } | null = null
   if (opts.otelGrpc) {
     const grpcPort = opts.otelGrpcPort ?? 4317
-    const r = await startOtelGrpcReceiver({ onSpan, host, port: grpcPort })
+    // gRPC handler keeps the inline ErrorEvent write — the gRPC receiver
+    // awaits onSpan synchronously (otel-grpc.ts), so the same durability
+    // guarantee is met without a separate sync hook. Non-blocking gRPC
+    // ingest is out of scope for the v0.2.2 batch.
+    const onSpanGrpc = makeSpanHandler({ graph, errorsPath: opts.errorsPath })
+    const r = await startOtelGrpcReceiver({ onSpan: onSpanGrpc, host, port: grpcPort })
     console.log(`neat-core OTLP/gRPC receiver on ${r.address}`)
     grpcReceiver = r
   }

@@ -211,9 +211,62 @@ describe('buildOtelReceiver', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/traces',
-      headers: { 'content-type': 'application/x-protobuf' },
-      payload: Buffer.from([0x00]),
+      headers: { 'content-type': 'application/xml' },
+      payload: '<not-otlp/>',
     })
     expect(res.statusCode).toBe(415)
+  })
+
+  it('returns 400 for malformed protobuf bodies', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/traces',
+      headers: { 'content-type': 'application/x-protobuf' },
+      payload: Buffer.from([0xff, 0xff, 0xff]),
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('decodes a valid application/x-protobuf body via the bundled .proto', async () => {
+    const protobuf = (await import('protobufjs')).default
+    const path = await import('node:path')
+    const { fileURLToPath } = await import('node:url')
+    const here = path.dirname(fileURLToPath(import.meta.url))
+    const protoRoot = path.resolve(here, '..', 'proto')
+    const root = new protobuf.Root()
+    root.resolvePath = (_o, t) => path.resolve(protoRoot, t)
+    root.loadSync(
+      'opentelemetry/proto/collector/trace/v1/trace_service.proto',
+      { keepCase: true },
+    )
+    const Type = root.lookupType(
+      'opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest',
+    )
+    const buf = Buffer.from(
+      Type.encode({
+        resource_spans: [
+          {
+            resource: {
+              attributes: [
+                { key: 'service.name', value: { string_value: 'service-pb' } },
+              ],
+            },
+            scope_spans: [
+              { spans: [{ name: 'op-pb', start_time_unix_nano: '0', end_time_unix_nano: '0' }] },
+            ],
+          },
+        ],
+      }).finish(),
+    )
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/traces',
+      headers: { 'content-type': 'application/x-protobuf' },
+      payload: buf,
+    })
+    expect(res.statusCode).toBe(200)
+    await (app as unknown as { flushPending: () => Promise<void> }).flushPending()
+    expect(collected.find((s) => s.service === 'service-pb' && s.name === 'op-pb')).toBeDefined()
   })
 })
