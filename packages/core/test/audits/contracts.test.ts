@@ -1203,12 +1203,10 @@ describe('Schema sanity — Zod parses', () => {
 // ──────────────────────────────────────────────────────────────────────────
 // Queued — flipped from todo to live as cleanup issues land
 // ──────────────────────────────────────────────────────────────────────────
-describe('Queued contracts (issues #131-#145)', () => {
-  it.todo('OTel receiver replies before mutation (issue #131)')
-  it.todo('lastObserved sourced from span startTimeUnixNano (issue #132)')
-  it.todo('parent-span cache correlates cross-service CALLS (issue #133)')
-  it.todo('OTel auto-creates ServiceNode/DatabaseNode for unknown peers (issue #134)')
-  it.todo('span events with name=exception parsed into ErrorEvent (issue #135)')
+describe('Queued contracts (issues #136-#145)', () => {
+  // v0.2.2 OTel-ingest todos (#131-#135) used to live here as duplicates of
+  // the ADR-033 describe block above. They were removed when v0.2.2 closed —
+  // every ADR-033 assertion is live in its dedicated describe block now.
   it.todo('FRONTIER edges skipped by traversal (issue #136)')
   it.todo('BlastRadiusAffectedNode carries path and confidence (issue #137)')
   it.todo('BlastRadius distance schema rejects 0 (issue #138)')
