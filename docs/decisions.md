@@ -756,3 +756,148 @@ The shape of source-level DB-connection detection (issue #141 — that's an impl
 **When to revisit.**
 
 When source-level DB-connection detection (#141) lands — that introduces a new producer pattern (`new pg.Pool(...)` etc.) and the contract may need to specify its evidence shape more precisely (e.g. constructor-name in the snippet). When ghost-edge cleanup (#140) ships — the contract's path-keyed retire step becomes load-bearing and might surface edge cases.
+
+---
+
+## ADR-033 — OTel ingest contract
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+The first of three v0.2.2 producer-layer contracts. Governs the OTel ingest path in `packages/core/src/ingest.ts` plus the receiver in `otel.ts` and `otel-grpc.ts`. Sibling contracts: ADR-034 (trace stitcher) and ADR-035 (FrontierNode promotion). They share vocabulary and govern overlapping concerns; together they lock the OBSERVED layer.
+
+**Decision.**
+
+1. **Receiver replies before mutation (issue #131).** The OTLP/HTTP receiver in `packages/core/src/otel.ts` and the gRPC receiver in `packages/core/src/otel-grpc.ts` reply 200 OK immediately on receipt. Mutation runs through a non-blocking handler — either an in-process queue drained on the next tick, or a fire-and-forget pattern with bounded concurrency. **The sender is never blocked on graph mutation.** OTel SDK exporters retry on timeout, so blocking ingest causes observable backpressure on the system being observed; ambient observation requires no observable effect.
+
+2. **`lastObserved` is sourced from `span.startTimeUnixNano`, not `Date.now()` (issue #132).** Every OBSERVED edge's `lastObserved` field is derived from the parsed span's start time, converted to ISO8601. Replayed traces, out-of-order spans, and historical fill-ins must produce a `lastObserved` that reflects when the span actually fired — not when the receiver happened to receive it. The ISO8601 conversion lives in `parseOtlpRequest` (otel.ts) so every consumer of `ParsedSpan.startTimeUnixNano` gets a normalized form.
+
+3. **Cross-service CALLS edges correlate via parent-span cache (issue #133).** Today peer resolution uses `server.address` / `net.peer.name` / `url.full` only. That misses non-HTTP RPCs and any span whose peer is opaque. The contract adds a bounded TTL cache keyed by `${traceId}:${spanId}` storing each span's service. On span arrival, peer resolution falls through to a `parentSpanId` lookup in the cache: if the parent's service is known and differs from the current service, that's a cross-service CALLS edge. Cache size and TTL are constants near the other ingest tunables in `ingest.ts`. Out-of-order arrival (child before parent) drops the child cleanly; we don't buffer.
+
+4. **Auto-creation of ServiceNode and DatabaseNode for unseen peers (issue #134).** When `handleSpan` resolves a `service.name` not present in the graph, it creates a minimal ServiceNode at `serviceId(span.service)` with `language: 'unknown'`, no `version`, no `dependencies`. Same for unseen `db.system` + host — a minimal DatabaseNode at `databaseId(host)`. Auto-created nodes carry `discoveredVia: 'otel'` (schema growth governed by ADR-031 — adds an optional field to ServiceNode/DatabaseNode, snapshot regenerates). Static extraction that later finds the same id **merges** attributes per ADR-028 §3 reconciliation rule; static fields override OTel-derived fields where both exist, but `discoveredVia` is only updated to `'merged'` if both layers recorded the node independently.
+
+5. **Exception data parsed from span events (issue #135).** `OtlpSpan` is extended with `events: Array<{ name, timeUnixNano, attributes }>` in the parser. When a span has an `events[]` entry with `name === 'exception'`, the parser extracts `exception.type`, `exception.message`, and `exception.stacktrace` from its attributes. `handleSpan`'s ErrorEvent path prefers `exception.message` over `status.message` over `span.name`. `exception.type` is added to ErrorEvent as an optional field (schema growth via ADR-031).
+
+6. **HTTP receiver supports both JSON and protobuf bodies.** Today only JSON. The receiver checks `Content-Type` and dispatches to either `parseOtlpJsonRequest` or `parseOtlpProtobufRequest`. Protobuf parsing uses the bundled `.proto` definitions (ADR-020). gRPC continues to handle protobuf natively.
+
+7. **`db.system` is data, not a switch.** Engine identification is read from the span attribute as a string and never compared against a hardcoded list (no `if (db.system === 'postgresql')` branches). Engine-specific behavior lives in `compat.json` and is consulted via `compat.ts` per the demo-name-freedom contract (Rule 8 in `docs/contracts.md`).
+
+8. **Error events are ndjson-appended, never lost on receiver shutdown.** `appendErrorEvent` writes to `errors.ndjson` synchronously after the graph mutation but before the receiver replies — this is the one explicit ordering point. If the file write fails, the receiver returns 500 so the OTel SDK retries. ErrorEvent shape stays as defined in `@neat/types` per the schema-growth contract; new fields land via the snapshot guard.
+
+**Authority.**
+
+The OTel ingest contract is owned by `packages/core/src/ingest.ts` per ADR-030 lifecycle authority. The receiver shape lives in `otel.ts` / `otel-grpc.ts`; mutation logic lives in `ingest.ts`. Neither file may be mutated outside the producer-author's edits during v0.2.2.
+
+**Enforcement.**
+
+`packages/core/test/audits/contracts.test.ts` adds `it.todo` items keyed to issues #131-#135. They flip to live assertions as each issue ships:
+- non-blocking ingest (timing-based test on the receiver),
+- `lastObserved` from span time (replay-a-backdated-span fixture),
+- parent-span cache correlation (parent-then-child fixture, child-then-parent fixture),
+- auto-creation (span for unseen service produces ServiceNode),
+- exception event parsing (span with `events[]` produces ErrorEvent with exception fields).
+
+**What this ADR is not deciding.**
+
+Trace stitcher rules — see ADR-034. FrontierNode promotion — see ADR-035. Whether `discoveredVia` becomes a generalized provenance-on-nodes field (deferred — today it's a service/database-level concern, not a node-shape concern). eBPF / mesh-Net source variants (deferred to v1.0+ per the v0.2.x discussion).
+
+**When to revisit.**
+
+When auto-creation lands and OTel-only services start landing in real codebases — the merge rules (#4) might surface edge cases the contract didn't anticipate. When a non-Node OTel SDK arrives that uses semconv variants the parser doesn't handle — the address picker (`pickAddress`) might need extension.
+
+---
+
+## ADR-034 — Trace stitcher contract
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+Governs the trace stitcher in `packages/core/src/ingest.ts` (`stitchTrace`, `upsertInferredEdge`). The trace stitcher is what bridges OBSERVED gaps when an instrumentation library can't emit spans for a particular driver — the demo's pg 7.4.0 case (PROVENANCE.md, ADR-027). It's the load-bearing concrete example of NEAT's value: when declared intent and observed reality diverge, NEAT infers the bridge and labels it as inferred.
+
+Sibling contracts: ADR-033 (OTel ingest), ADR-035 (FrontierNode promotion).
+
+**Decision.**
+
+1. **Stitcher fires only on ERROR spans.** `stitchTrace` is called by `handleSpan` only when `span.statusCode === 2`. The stitcher's job is to surface inferred dependency paths when an erroring service was exercising downstream services that may not have been observed directly. Non-error spans don't trigger inference — if the call succeeded, the OBSERVED layer captured what it could and INFERRED edges aren't needed.
+
+2. **Depth limit of 2 hops, hardcoded.** `STITCH_MAX_DEPTH = 2` in `ingest.ts`. Walking deeper produces speculative edges that are too far from the originating error to claim relevance. The constant is a contract value, not a tunable — changing it requires an ADR amendment.
+
+3. **Walks EXTRACTED outbound edges only.** The stitcher BFS-walks `graph.outboundEdges(node)` and considers only edges where `provenance === Provenance.EXTRACTED`. OBSERVED edges already carry the relationship (no inference needed). INFERRED edges are themselves the stitcher's output (no recursion). FRONTIER edges represent unknown territory and are excluded per Rule 3 of `docs/contracts.md`. STALE edges represent decayed observation and are not inferable from a fresh error.
+
+4. **OBSERVED-twin skip rule (issue: refinement).** When the stitcher considers an EXTRACTED edge `(source, target, type)`, it checks whether an OBSERVED edge for the same triplet already exists (`graph.hasEdge(observedEdgeId(source, target, type))`). If so, the OBSERVED edge already provides ground-truth coverage for that hop — the stitcher skips it and does not produce an INFERRED twin. Today the stitcher writes INFERRED edges regardless of OBSERVED twins; the rule closes that gap.
+
+5. **Confidence is `0.6` by default, capped at `0.7`.** `INFERRED_CONFIDENCE = 0.6` is the default applied at edge creation. The stitcher does not produce edges with confidence > 0.7 even if a custom override is added later — INFERRED is by definition less trustworthy than OBSERVED, which carries `1.0`. The cap is a contract value.
+
+6. **Idempotent on re-arrival.** When a second error span produces the same stitched edges, `upsertInferredEdge` updates `lastObserved` on the existing edge — it does not create duplicates, does not increment a confidence score, does not add evidence. The edge id (`inferredEdgeId(source, target, type)`) is the deduplication key.
+
+7. **Origin generality.** `stitchTrace(graph, sourceServiceId, ts)` accepts any `service:*` id as the origin. No special-case for the demo (`service:service-b`); no hardcoded driver ('pg'); no hardcoded engine ('postgresql'). The stitcher walks whatever EXTRACTED edges exist outbound from the erroring service.
+
+8. **No node creation.** The stitcher only writes edges. It never creates nodes; it never modifies existing nodes; it doesn't extend across FrontierNode boundaries.
+
+**Authority.**
+
+`stitchTrace` is owned by `ingest.ts` per ADR-030. Called only from `handleSpan` (error path). No other module triggers stitching.
+
+**Enforcement.**
+
+`contracts.test.ts` includes:
+- A live test asserting `stitchTrace` produces no edges when called with a node that has no outbound EXTRACTED edges.
+- A live test asserting `STITCH_MAX_DEPTH` is enforced (depth-3 EXTRACTED chain produces edges only at depth 1 and 2).
+- An `it.todo` keyed to the OBSERVED-twin-skip refinement, which lands when implementation does.
+- An idempotency test (calling `stitchTrace` twice produces identical edge state).
+
+**What this ADR is not deciding.**
+
+Per-edge confidence beyond the default 0.6 (no implementation requires it today). Stitcher behavior on FRONTIER edges (excluded — never traversable). Stitching across multiple traces (single-trace context only; cross-trace inference is a v1.0 concern).
+
+**When to revisit.**
+
+When a real codebase's INFERRED layer becomes load-bearing for the MVP-success PR (ADR-027) and the depth-2 limit produces too many or too few edges. When OBSERVED coverage improves enough that the stitcher fires rarely — at that point the OBSERVED-twin-skip rule is doing most of the work and the contract may simplify.
+
+---
+
+## ADR-035 — FrontierNode promotion contract
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+Governs `promoteFrontierNodes` in `packages/core/src/ingest.ts`. FrontierNodes (ADR-023) are placeholders for OTel peers that don't match any known service. Promotion is the act of replacing a FrontierNode with a real typed node once an alias resolves the host. The contract locks the trigger conditions, alias-match rules, edge-rewrite semantics, and the FRONTIER → OBSERVED provenance upgrade.
+
+Sibling contracts: ADR-033 (OTel ingest), ADR-034 (trace stitcher).
+
+**Decision.**
+
+1. **Promotion runs after every extract pass.** `promoteFrontierNodes(graph)` is called at the end of `extract/index.ts:extractFromDirectory` and at the end of every watch-driven phase rerun in `watch.ts`. Promotion is **batched per pass**, not per-edge. The ingest path itself does not trigger promotion — only the static-extraction lifecycle does, because aliases land during static extraction.
+
+2. **Alias matching: name first, then alias list.** The function walks every ServiceNode and builds a `Map<string, string>` from `attrs.name → id` and `attrs.aliases[i] → id`. Then it walks every FrontierNode and looks up `attrs.host` in the map. First match wins. If the FrontierNode's host doesn't resolve, the FrontierNode persists for the next extract pass to handle. **Aliases are populated by `extract/aliases.ts`** — typically docker-compose service names, k8s metadata.name, Dockerfile labels.
+
+3. **Promotion is atomic per FrontierNode.** When a FrontierNode is selected for promotion, all of its incident edges (inbound and outbound) are rewired to the typed node id, and the FrontierNode is dropped — in one synchronous pass. There is no point at which a partial state is visible. ADR-030 §9 atomicity applies.
+
+4. **Edge rewrite rebuilds the edge under the new id.** `rewireFrontierEdges` walks `graph.inboundEdges(frontierId)` and `graph.outboundEdges(frontierId)`. For each, `rebuildEdge` drops the old edge and constructs a new edge under the typed-node id. This is the only place in the codebase where an edge id changes — not because the edge content changed, but because one of its endpoints did.
+
+5. **Provenance upgrade rule: FRONTIER → OBSERVED.** When `rebuildEdge` is rewriting an edge whose provenance was `FRONTIER`, the new edge's provenance is `OBSERVED`. The reasoning: the call certainty was always there (the OTel span was observed), only the target identity was unknown. Now it's known, so the edge graduates from placeholder to direct measurement. Other provenance values (EXTRACTED, INFERRED) pass through unchanged.
+
+6. **Edge id construction MUST use the canonical helpers.** `rebuildEdge` constructs the new edge id via `observedEdgeId`, `inferredEdgeId`, etc. from `@neat/types/identity` (ADR-029). Hand-rolling a template literal like `` `${edge.type}:${promotedProvenance}:${newSource}->${newTarget}` `` is a contract violation. **Today's `rebuildEdge` at `ingest.ts:463` does hand-roll this id** — a v0.2.2 cleanup task: replace the literal with a dispatch on `promotedProvenance` to the appropriate canonical helper. The contracts.test.ts scan (#2) didn't catch it because the literal interpolates the provenance variable rather than embedding `:OBSERVED:` directly. The scan is extended in this batch.
+
+7. **Edge merge on collision.** If the rewritten edge id already exists (because an OBSERVED edge between the typed source and target was previously created independently), the rebuilt edge merges into the existing one: `callCount` sums, `lastObserved` takes the later timestamp via `pickLater`. No duplicate edge is created.
+
+8. **No reverse promotion.** A typed node never reverts to a FrontierNode. If OTel later observes a peer that matches no known service, a *new* FrontierNode is created at a different host id; the previously-promoted typed node is unaffected.
+
+**Authority.**
+
+`promoteFrontierNodes` is owned by `ingest.ts` per ADR-030. Triggered by `extract/index.ts` and `watch.ts`. No other module calls it.
+
+**Enforcement.**
+
+`contracts.test.ts` includes:
+- A live test asserting alias-matched FrontierNode is promoted, edges are rewired, FRONTIER provenance becomes OBSERVED on rebuilt edges (already exists from contract #3 lifecycle work — extended here to also assert id construction routes through `observedEdgeId`).
+- A new live test asserting `rebuildEdge` does not hand-roll edge id template literals — extended hand-rolled-template-literal scan that includes the provenance-variable case (catches `${edge.type}:${promotedProvenance}:...`).
+- An `it.todo` keyed to the rebuildEdge-uses-canonical-helpers fix, which lands as part of the v0.2.2 cleanup against this contract.
+
+**What this ADR is not deciding.**
+
+Cross-host-port database ids (deferred per ADR-028 §6). Workspace-scoped service ids that change the alias-matching shape (deferred per ADR-028 §5). Promotion across project scopes (single-project per ADR-026; cross-project promotion is post-multi-project work).
+
+**When to revisit.**
+
+When workspace scoping lands and aliases need to scope to a workspace. When the alias index becomes a bottleneck on large monorepos (today rebuilt every promotion call; could be cached if the call frequency justifies it).
