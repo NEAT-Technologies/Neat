@@ -514,7 +514,10 @@ describe('OTel ingest contract (ADR-033)', () => {
   it('OTel receiver replies before mutation completes (issue #131)', async () => {
     const { buildOtelReceiver } = await import('../../src/otel.js')
 
-    const HANDLER_DELAY_MS = 40
+    // 250ms keeps the gap large enough that scheduling jitter on slow CI
+    // runners can't push replyMs up to HANDLER_DELAY_MS (a 40ms delay tied
+    // the bound on one CI run; bumping fixes the flake).
+    const HANDLER_DELAY_MS = 250
     const handlerEnd: number[] = []
     const app = await buildOtelReceiver({
       onSpan: async () => {
