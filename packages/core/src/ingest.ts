@@ -286,6 +286,12 @@ function stitchTrace(graph: NeatGraph, sourceServiceId: string, ts: string): voi
       const edge = graph.getEdgeAttributes(edgeId) as GraphEdge
       if (edge.provenance !== Provenance.EXTRACTED) continue
 
+      // OBSERVED twin already covers this hop with ground truth — no inference
+      // needed (ADR-034). Stomping it with INFERRED erases the gap NEAT exists
+      // to surface; skipping it keeps the OBSERVED edge as the authoritative
+      // record and avoids cluttering the graph with a redundant INFERRED twin.
+      if (graph.hasEdge(observedEdgeId(edge.source, edge.target, edge.type))) continue
+
       upsertInferredEdge(graph, edge.type, edge.source, edge.target, ts)
 
       if (!visited.has(edge.target)) {
