@@ -54,20 +54,7 @@ The 15 cleanup issues (#131-#145) are open against this milestone today **but be
 
 **v0.2.2 — OTel ingest rebuild.** Opens with contracts #6-#8 (OTel ingest, trace stitcher, FrontierNode promotion). Then ships #131 non-blocking ingest, #132 span-time `lastObserved`, #133 parent-span cache, #134 auto-create services/DBs, #135 exception event parsing.
 
-#### v0.2.2 implementation tracker
-
-Contracts #6-#8 landed in #153 (`3684951`). Issues #131-#135 closed on GitHub via the contract opener; the implementation work — flipping the queued `it.todo` markers in `packages/core/test/audits/contracts.test.ts` — is the actual milestone work. Order is least-blast-radius first; each item is its own branch + PR.
-
-1. [ ] **`rebuildEdge` uses canonical edge-id helpers** (ADR-035, `ingest.ts:463`). Flips the `it.todo` at `contracts.test.ts:558`. Extend the provenance-id scan to catch `${variable}` interpolation form.
-2. [ ] **`lastObserved` from `span.startTimeUnixNano`** (ADR-033, #132). Normalize in `parseOtlpRequest`; production paths drop `nowIso(ctx)`. Flips the `lastObserved derives from span.startTimeUnixNano` todo.
-3. [ ] **OBSERVED-twin-skip in stitcher** (ADR-034). One guard inside the BFS. Flips `stitchTrace skips a hop when an OBSERVED twin already exists` at `contracts.test.ts:548`.
-4. [ ] **Exception event parsing** (ADR-033, #135). Schema growth: `events[]` on `OtlpSpan`, `exceptionType?` on `ErrorEventSchema`. Flips the two #135 todos.
-5. [ ] **Auto-create unseen services + DBs** (ADR-033, #134). Schema growth: `discoveredVia?: 'otel' | 'static' | 'merged'` on `ServiceNodeSchema` / `DatabaseNodeSchema`. Static-then-OTel merge rule. Flips the two #134 todos.
-6. [ ] **Parent-span TTL cache** (ADR-033, #133). Bounded `${traceId}:${spanId} → service` cache; consult after `pickAddress` misses. Flips the #133 todo.
-7. [ ] **Non-blocking ingest + content-type dispatch** (ADR-033, #131). Queue between receiver and `handleSpan`; HTTP receiver dispatches on `Content-Type` to JSON or protobuf. Flips the #131 todo.
-8. [ ] Drop duplicate #131-#135 todos from the `Queued contracts` block once each ADR-033 assertion is live. Land `docs/plans/<date>-v0.2.2-status.md`.
-
-Closes when every ADR-033/034/035 todo is live and passing, schema-snapshot regen is committed, and `npx turbo build && test && lint` is green on `main`.
+v0.2.2 closed on 2026-05-06 — see `docs/plans/2026-05-06-v0.2.2-close.md` for the closing snapshot. All ADR-033/034/035 contract assertions are live in `contracts.test.ts`. The eight implementation PRs (#155, #156, #157, #158, #159, #161, #163) landed in sequence; the contract amendment for non-blocking error-event durability landed alongside #163.
 
 **v0.2.3 — Traversal rebuild.** Opens with contracts #9-#11 (traversal, getRootCause, getBlastRadius). Then ships #136 FRONTIER exclusion, #137 BlastRadius schema fields, #138 distance positive, #139 schema validation, #123 generalize getRootCause.
 

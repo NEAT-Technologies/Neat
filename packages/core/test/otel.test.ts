@@ -182,7 +182,7 @@ describe('buildOtelReceiver', () => {
   it('returns 200 before slow handlers complete and drains them after (ADR-033 non-blocking ingest)', async () => {
     await app.close()
     const observed: string[] = []
-    const HANDLER_DELAY_MS = 30
+    const HANDLER_DELAY_MS = 250
     app = await buildOtelReceiver({
       onSpan: async (s) => {
         await new Promise((r) => setTimeout(r, HANDLER_DELAY_MS))
