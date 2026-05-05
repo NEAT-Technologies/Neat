@@ -901,3 +901,165 @@ Cross-host-port database ids (deferred per ADR-028 §6). Workspace-scoped servic
 **When to revisit.**
 
 When workspace scoping lands and aliases need to scope to a workspace. When the alias index becomes a bottleneck on large monorepos (today rebuilt every promotion call; could be cached if the call frequency justifies it).
+
+---
+
+## ADR-036 — Traversal contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+The first of three v0.2.3 consumer-layer contracts. Governs `packages/core/src/traverse.ts` overall — the shared mechanics (edge priority, confidence cascading, FRONTIER exclusion, no-mutation rule) that both `getRootCause` and `getBlastRadius` rely on. Sibling contracts: ADR-037 (getRootCause), ADR-038 (getBlastRadius). They share vocabulary; the three together lock the read-side of the graph.
+
+**Decision.**
+
+1. **Edge priority is `PROV_RANK` at every hop.** When multiple edges connect the same node pair under different provenances (the coexistence case from contract #2), traversal picks the highest-priority edge via `PROV_RANK` from `@neat/types/identity`. `bestEdgeBySource` and `bestEdgeByTarget` apply this rule per neighbour. Selection happens at every step of the walk, not just the starting node.
+
+2. **FRONTIER edges are excluded, not deprioritized (issue #136).** Today FRONTIER ranks 0 alongside STALE in `PROV_RANK`. That makes it pickable when no other edge exists between a pair — wrong per Rule 3 of `docs/contracts.md`. The contract: `bestEdgeBySource` / `bestEdgeByTarget` skip every edge with `provenance === FRONTIER` before ranking. If a node's only edges are FRONTIER, traversal halts at that node — `getRootCause` returns null, `getBlastRadius` does not enqueue past it.
+
+3. **Confidence cascades via product, not min.** Per-edge confidence is `provenance × volume × recency × cleanliness` (`confidenceForEdge`). Walks of multiple edges multiply per-edge confidences (`confidenceFromMix`). The min-rule from earlier framing is superseded — the multiplicative cascade is the real implementation and the more honest semantic: each hop is an independent piece of evidence, and uncertainty compounds.
+
+4. **No mutation.** `traverse.ts` is read-only per ADR-030 lifecycle authority. It calls only `graph.hasNode`, `graph.getNodeAttributes`, `graph.getEdgeAttributes`, `graph.inboundEdges`, `graph.outboundEdges`. It must never call `addNode`, `addEdge`, `dropNode`, `dropEdge`, `replaceEdgeAttributes`. The mutation-authority scan in `contracts.test.ts` already catches this.
+
+5. **Schema validation before return.** Both `getRootCause` and `getBlastRadius` MUST call `RootCauseResultSchema.parse(...)` / `BlastRadiusResultSchema.parse(...)` on the result before returning (issue #139). A schema violation throws, which the API handler converts to a 500. Better that than shipping a malformed result to MCP or REST consumers.
+
+6. **Origin must exist.** Both functions handle `!graph.hasNode(originId)` gracefully — `getRootCause` returns `null`, `getBlastRadius` returns `{ origin, affectedNodes: [], totalAffected: 0 }`. Neither throws.
+
+7. **Helpers from `@neat/types/identity` for any id construction or parsing.** Traversal occasionally synthesizes ids (e.g. checking for an OBSERVED twin during stitcher work — see contract #7) or parses ids back to their parts. Both operations route through `parseEdgeId` / `observedEdgeId` / etc. Hand-rolled template literals are a contract violation.
+
+**Authority.**
+
+`traverse.ts` is a read-only consumer. Owns no transitions. Reads from the live graphology instance per Rule 6 of `docs/contracts.md` — never reads `graph.json`.
+
+**Enforcement.**
+
+`packages/core/test/audits/contracts.test.ts` includes (or adds for v0.2.3):
+- The mutation-authority scan already covers traverse.ts (assertion: zero mutating calls outside `ingest.ts` / `extract/*`).
+- A live test for FRONTIER exclusion: a graph where the only path between two nodes is via a FRONTIER edge. `getRootCause` returns null; `getBlastRadius` does not include the far-side node. (Issue #136.)
+- A live test for schema validation: the `RootCauseResult` and `BlastRadiusResult` returned by traversal must `.parse()` cleanly against their Zod schemas. (Issue #139.)
+- Round-trip tests on `confidenceFromMix` to assert multiplicative cascading.
+
+**What this ADR is not deciding.**
+
+`getRootCause`-specific concerns (origin generality, reason format) — see ADR-037. `getBlastRadius`-specific concerns (distance shape, per-node fields) — see ADR-038. The shape of FRONTIER promotion (covered by ADR-035). NeatScript-style traversal API or differential dataflow — both v1.0.
+
+**When to revisit.**
+
+When MCP-side consumers surface real-world traversal queries on large graphs and the multiplicative cascade produces confidence values that don't match human intuition. When new edge-confidence signals are added (e.g. per-driver health metrics) and the four-factor product needs a fifth term.
+
+---
+
+## ADR-037 — `getRootCause` contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+The second v0.2.3 consumer contract. Governs `getRootCause` in `packages/core/src/traverse.ts:174-240`. Sibling contracts: ADR-036 (traversal mechanics), ADR-038 (getBlastRadius).
+
+`getRootCause` walks incoming edges from an error-surfacing node looking for an upstream incompatibility that explains the failure. Today it only fires on `DatabaseNode` origins (the driver/engine compat-matrix shape from ADR-014 and the demo). Issue #123 calls for generalization beyond databases.
+
+**Decision.**
+
+1. **Origin generality (issue #123).** `getRootCause` accepts any origin node and dispatches by `node.type` to a shape-specific check:
+
+   - **DatabaseNode** — driver/engine compat shape (today's behavior; preserved unchanged). Walks incoming edges, looks for ServiceNodes whose `dependencies[driver]` declares an incompatible version against the database's `engine` + `engineVersion`.
+   - **ServiceNode** — node-engine and package-conflict shapes via `compat.ts` (`checkNodeEngineConstraint`, `checkPackageConflict`). Walks incoming edges, looks for upstream services with declarations that violate the erroring service's `engines.node` or peer-package requirements.
+   - **InfraNode / ConfigNode** — return null. No matrix shape today; future ADR may extend.
+   - **FrontierNode** — return null. Frontier nodes have no compat surface and are excluded from traversal anyway per ADR-036.
+
+   The dispatch lives in a `rootCauseShapes` table that maps `NodeType → (graph, originId, walk) => RootCauseResult | null`. Adding a new shape is one entry in the table, not a code restructure.
+
+2. **Walks incoming edges to depth 5.** `ROOT_CAUSE_MAX_DEPTH = 5` is hardcoded. Walks deeper produce paths that stretch credulity (the demo's two-hop cause is the typical case). Changing the depth requires an ADR amendment.
+
+3. **`longestIncomingWalk` is DFS; first-incompatibility wins.** The walk explores backward from the origin. The longest path produced becomes the candidate; the first incompatibility found along it is the root cause. If no incompatibility is found, `getRootCause` returns null.
+
+4. **`reason` is human-readable.** Built from the compat result's `reason` field. If an `errorEvent` is provided, the observed error message is appended in parentheses: `${reason} (observed error: ${errorEvent.errorMessage})`. Never a raw `compat.json` entry; always a sentence.
+
+5. **`fixRecommendation` is derived from the compat result.** Today: `Upgrade ${svc.name} ${pair.driver} driver to >= ${result.minDriverVersion}`. The pattern generalizes: each compat shape produces its own fix-recommendation string. The shape-specific check is the only place that knows what the fix is; the dispatcher just propagates it.
+
+6. **Result schema-validated.** `RootCauseResultSchema.parse(result)` runs before return. Throws on violation; the API handler renders a 500.
+
+7. **Returns null cleanly.** When the origin doesn't exist, when no incompatibility is found, when the origin's node type has no shape — `getRootCause` returns `null` with no throw.
+
+8. **Edge provenance in result.** `edgeProvenances` is the array of provenance values along the traversal path, in order from origin to root cause. Length is `traversalPath.length - 1` (one entry per edge). Already enforced in code; reaffirmed in contract.
+
+**Authority.**
+
+Owned by `traverse.ts`, read-only. Calls into `compat.ts` for the actual incompatibility checks; never duplicates that logic.
+
+**Enforcement.**
+
+`contracts.test.ts` adds:
+- A live test that `getRootCause` returns null cleanly when called with an origin whose `node.type` has no registered shape (e.g. ConfigNode).
+- A live test that ServiceNode origins produce a result when an upstream service has a node-engine violation (the #123 generalization).
+- A live test asserting `edgeProvenances.length === traversalPath.length - 1`.
+- A live test asserting `.parse(RootCauseResultSchema, result)` succeeds for every valid return.
+- A live test that the result's `traversalPath[0]` is the origin and the last entry is `rootCauseNode`.
+
+**What this ADR is not deciding.**
+
+The complete list of compat shapes (driver-engine + node-engine + package-conflict + deprecated-api are in `compat.ts` today; new shapes land via `compat.json` data, not contract amendment). Whether `getRootCause` should also surface secondary causes (defer — single root cause is the v0.2.3 contract; multi-cause is post-v1.0). The depth-5 limit (revisit when real codebases produce 5-hop paths and either confirm or reject the bound).
+
+**When to revisit.**
+
+When the second non-DatabaseNode origin shape is added (#123 generalization actually exercised) — the dispatch table should be reviewed for ergonomics. When MCP consumers want secondary-cause output.
+
+---
+
+## ADR-038 — `getBlastRadius` contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+The third v0.2.3 consumer contract. Governs `getBlastRadius` in `packages/core/src/traverse.ts:245+` and the result schemas in `packages/types/src/results.ts`. Sibling contracts: ADR-036 (traversal mechanics), ADR-037 (getRootCause).
+
+**Decision.**
+
+1. **BFS outbound from origin.** Visits each reachable node once, recording the shortest distance from origin. `bestEdgeByTarget` picks the highest-priority edge per neighbour per ADR-036. FRONTIER excluded.
+
+2. **Default depth 10, overridable per call.** `BLAST_RADIUS_DEFAULT_DEPTH = 10` is the default; callers can pass `maxDepth` explicitly. Practical limit: depth past ~10 produces results dominated by graph branching that aren't useful.
+
+3. **Distance is a positive integer (issue #138).** Schema growth toward shape: `BlastRadiusAffectedNodeSchema.distance` becomes `z.number().int().positive()` (effectively `min(1)`). The origin itself is never in `affectedNodes` — distance 0 has no meaning. Today the schema permits `nonnegative` (allows 0); the cleanup tightens it. **This is a schema shape change** — but no production data emits `distance: 0` (the BFS at line 266 explicitly skips frame-0), so the migration is no-op. Persist.ts may not need a migration function; the v2→v3 bump is recorded in the schema-snapshot diff.
+
+4. **Per-node payload (issue #137).** `BlastRadiusAffectedNode` carries:
+   - `nodeId: string`
+   - `distance: number` (positive integer, see above)
+   - `edgeProvenance: Provenance` — the provenance of the edge that brought traversal to this node
+   - `path: string[]` — node ids from origin to this node, inclusive at both ends, length = distance + 1
+   - `confidence: number` — `confidenceFromMix(...edgesAlongPath)`, in `[0, 1]`
+
+   Today only the first three fields are present. `path` and `confidence` are schema growth (new optional fields → required after the cleanup ships). The BFS already tracks parents internally; surfacing the path is wiring, not new computation.
+
+5. **`totalAffected` is the count of `affectedNodes`.** No double-counting, no inclusion of the origin. Identity: `result.totalAffected === result.affectedNodes.length`. Today's code already enforces this; the contract reaffirms it.
+
+6. **Empty origin case.** When the origin doesn't exist or has no outgoing edges, returns `{ origin, affectedNodes: [], totalAffected: 0 }`. Never throws.
+
+7. **Result schema-validated.** `BlastRadiusResultSchema.parse(result)` before return. Same as `getRootCause`.
+
+8. **Path ordering.** `path[0] === origin` and `path[path.length - 1] === affectedNode.nodeId`. Reverse-path or skip-the-origin variations are contract violations.
+
+**Authority.**
+
+Owned by `traverse.ts`, read-only. The BFS frame's `parent` chain is reconstructed into `path` at the moment of first visit (when we discover the shortest distance to a node).
+
+**Enforcement.**
+
+`contracts.test.ts` adds:
+- The existing `it.todo` for `BlastRadiusAffectedNode carries path and confidence` (issue #137) flips to a live assertion.
+- The existing `it.todo` for `BlastRadius distance schema rejects 0` (issue #138) flips to a live assertion.
+- The existing `it.todo` for schema validation (issue #139) flips to a live assertion that calls the function and `.parse()`s the result.
+- A new live test asserting `path[0] === origin` and `path[path.length - 1] === affectedNode.nodeId` for every entry in `affectedNodes`.
+- A live test that `totalAffected === affectedNodes.length`.
+- A live test that the origin itself is not in `affectedNodes`.
+
+**Schema-snapshot impact.**
+
+Adding `path` and `confidence` to `BlastRadiusAffectedNodeSchema` is growth (new fields on an existing schema). The schema-snapshot test will fail until the developer regenerates with `UPDATE_SNAPSHOT=1`. Tightening `distance` from `nonnegative` to `positive` is a shape change in the strict sense — old data with `distance: 0` would no longer parse — but no real producer emits `distance: 0`, so it's an effective no-op. The snapshot diff is the audit trail for both.
+
+**What this ADR is not deciding.**
+
+Whether blast radius should expand to inbound edges (no — by definition, blast radius is downstream impact). Whether the BFS should compute confidence-weighted shortest paths (no — shortest by edge count is the v0.2.3 contract; weighted-shortest is a v1.0 NeatScript concern). Pagination on large blast radii (defer; today's MVP graphs are small enough that returning the full list is fine).
+
+**When to revisit.**
+
+When real codebase blast-radius queries return >100 affected nodes and pagination becomes a UX concern. When the MCP-side three-part response (contract #12 in v0.2.4) needs to format blast radius and the contract's `path` shape doesn't match the formatter's needs.
