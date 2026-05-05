@@ -583,7 +583,7 @@ describe('stitchTrace', () => {
     expect(inferred).toBe(0)
   })
 
-  it('runs from handleSpan when a span has statusCode === 2', async () => {
+  it('runs from handleSpan when a span has statusCode === 2 and honors the OBSERVED-twin-skip rule', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-stitch-'))
     const graph = newGraph()
     addExtractedEdges(graph)
@@ -596,9 +596,17 @@ describe('stitchTrace', () => {
       dbSpan({ statusCode: 2, errorMessage: 'SASL: SCRAM-SERVER-FIRST-MESSAGE' }),
     )
 
+    // handleSpan wrote an OBSERVED CONNECTS_TO and then invoked stitchTrace
+    // from service:service-b. The stitcher walked outbound EXTRACTED edges,
+    // saw the OBSERVED twin for service-b → payments-db, and skipped the hop
+    // per ADR-034. So the OBSERVED edge is present and no INFERRED twin was
+    // created — that's the proof both halves of the integration ran correctly.
+    expect(
+      graph.hasEdge(`${EdgeType.CONNECTS_TO}:OBSERVED:service:service-b->database:payments-db`),
+    ).toBe(true)
     expect(
       graph.hasEdge(`${EdgeType.CONNECTS_TO}:INFERRED:service:service-b->database:payments-db`),
-    ).toBe(true)
+    ).toBe(false)
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 })

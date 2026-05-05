@@ -545,7 +545,50 @@ describe('Trace stitcher contract (ADR-034)', () => {
     expect(g.order).toBe(0)
   })
 
-  it.todo('stitchTrace skips a hop when an OBSERVED twin already exists for the (source, target, type) triplet (refinement)')
+  it('stitchTrace skips a hop when an OBSERVED twin already exists for the (source, target, type) triplet', async () => {
+    const { extractedEdgeId, observedEdgeId, inferredEdgeId } = await import('@neat/types')
+    const { stitchTrace } = await import('../../src/ingest.js')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', {
+      id: 'service:caller',
+      type: NodeType.ServiceNode,
+      name: 'caller',
+      language: 'javascript',
+    })
+    g.addNode('service:callee', {
+      id: 'service:callee',
+      type: NodeType.ServiceNode,
+      name: 'callee',
+      language: 'javascript',
+    })
+
+    // EXTRACTED + OBSERVED twin between the same pair. Coexistence rule (Rule 2).
+    const ext = extractedEdgeId('service:caller', 'service:callee', EdgeType.CALLS)
+    g.addEdgeWithKey(ext, 'service:caller', 'service:callee', {
+      id: ext,
+      source: 'service:caller',
+      target: 'service:callee',
+      type: EdgeType.CALLS,
+      provenance: Provenance.EXTRACTED,
+    })
+    const obs = observedEdgeId('service:caller', 'service:callee', EdgeType.CALLS)
+    g.addEdgeWithKey(obs, 'service:caller', 'service:callee', {
+      id: obs,
+      source: 'service:caller',
+      target: 'service:callee',
+      type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED,
+      lastObserved: '2026-05-05T11:00:00.000Z',
+      callCount: 7,
+      confidence: 1.0,
+    })
+
+    stitchTrace(g, 'service:caller', '2026-05-05T12:00:00.000Z')
+    // No INFERRED twin should appear — the OBSERVED edge already covers it.
+    const inf = inferredEdgeId('service:caller', 'service:callee', EdgeType.CALLS)
+    expect(g.hasEdge(inf)).toBe(false)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
