@@ -8,14 +8,39 @@ This file is the index. Each rule has a short summary and a link to its full per
 
 ## Per-topic contracts
 
-| # | Contract | File | Governs |
-|---|----------|------|---------|
-| 16 | Node identity | [`contracts/identity.md`](./contracts/identity.md) | Node ids constructed via `@neat/types/identity` helpers, never literals (ADR-028) |
-| 17 | Edge identity + provenance | [`contracts/provenance.md`](./contracts/provenance.md) | Edge id wire format per provenance, `PROV_RANK` ordering, coexistence rule, confidence semantics (ADR-029) |
-| 18 | Node + edge lifecycle | [`contracts/lifecycle.md`](./contracts/lifecycle.md) | When nodes/edges are created, transition, get rewritten, retire. Mutation authority is locked to ingest.ts and extract/* (ADR-030) |
-| 19 | Schema growth vs shape | [`contracts/schema.md`](./contracts/schema.md) | Schema additions are growth (commit-and-go). Renames, removals, type changes are shape changes (ADR + persist.ts migration). Mechanically enforced via schema-snapshot test (ADR-031) |
+| # | Contract | File | Governs | Status |
+|---|----------|------|---------|--------|
+| 1 | Node identity | [`contracts/identity.md`](./contracts/identity.md) | Node ids constructed via `@neat/types/identity` helpers, never literals (ADR-028) | ✅ landed |
+| 2 | Edge identity + provenance | [`contracts/provenance.md`](./contracts/provenance.md) | Edge id wire format per provenance, `PROV_RANK` ordering, coexistence, confidence semantics (ADR-029) | ✅ landed |
+| 3 | Node + edge lifecycle | [`contracts/lifecycle.md`](./contracts/lifecycle.md) | Creation, transition, retirement. Mutation authority locked to `ingest.ts` and `extract/*` (ADR-030) | ✅ landed |
+| 4 | Schema growth vs shape | [`contracts/schema.md`](./contracts/schema.md) | Growth = commit-and-go (snapshot diff). Shape change = ADR + `persist.ts` migration (ADR-031) | ✅ landed |
 
-*(More land as the v0.2.x sequence progresses: traversal, MCP surface, persistence, policies, init/install. See `docs/milestones.md` for sequencing.)*
+### Future contracts — opened at the start of each milestone
+
+The data-layer foundation (1-4) is shared across all producers and consumers. Producer-, consumer-, surface-, policy-, and distribution-layer contracts open at the start of the milestone where their layer gets rebuilt.
+
+| # | Contract | Milestone | Governs (target) |
+|---|----------|-----------|------------------|
+| 5 | Static extraction (tree-sitter) | v0.2.1 | What edges static extraction produces, evidence shape, language dispatch, depth limits, ghost-edge cleanup (`packages/core/src/extract/**`) |
+| 6 | OTel ingest | v0.2.2 | Span-time `lastObserved`, parent-span correlation, exception-event parsing, auto-creation, non-blocking ingest (`ingest.ts` ingest path) |
+| 7 | Trace stitcher | v0.2.2 | When INFERRED fires, depth limit, OBSERVED-twin-skip rule (`stitchTrace`) |
+| 8 | FrontierNode promotion | v0.2.2 | When promotion fires, alias-match precedence, attribute merge (`promoteFrontierNodes`) |
+| 9 | Traversal | v0.2.3 | Edge priority per hop, FRONTIER exclusion, confidence cascading, schema validation (`traverse.ts`) |
+| 10 | `getRootCause` | v0.2.3 | Incompatibility-check semantics per upstream node type, reason-string format, fix-recommendation derivation |
+| 11 | `getBlastRadius` | v0.2.3 | Outbound semantics, distance positive integer, per-node path and confidence, total-affected count |
+| 12 | MCP tool surface | v0.2.4 | Three-part response, confidence/provenance footer, transitive vs direct, tool count and naming (`packages/mcp/src/`) |
+| 13 | REST API | v0.2.4 | Endpoint shape per resource, project-scoped routing, error response shape (`packages/core/src/api.ts`) |
+| 14 | Persistence | v0.2.4 | Snapshot schema versioning, migration rules, startup-load behavior (`packages/core/src/persist.ts`) |
+| 15 | Policy schema | v0.2.4 | `policy.json` shape, version literal, type dispatch, rule structure |
+| 16 | Policy evaluation | v0.2.4 | When policies evaluate (post-ingest, post-extract, post-stale), evaluator dispatch, violation-event shape |
+| 17 | Policy onViolation actions | v0.2.4 | alert / log / block — what each does, what authority each carries |
+| 18 | Policy tool surface | v0.2.4 | MCP tool naming and shape, REST endpoints |
+| 19 | `neat init` | v0.2.5 | What init does, what it writes, what it doesn't touch, codemod patch-vs-apply semantics |
+| 20 | SDK install | v0.2.5 | Per-language installer module interface, dependency-file edits, entrypoint modifications, opt-in semantics |
+| 21 | Machine-level project registry | v0.2.5 | `~/.neat/projects.json` shape, daemon discovery rules, project lifecycle |
+| 22 | Daemon | v0.2.5 | Continuous extraction triggers (file mtime, OTel arrival), per-project graph isolation, lifecycle |
+
+The full reasoning and per-milestone sequencing live in `docs/plans/2026-05-04-v0.2.x-sequencing.md`. The current state of the active milestone lives in `docs/plans/<latest-date>-v0.2.x-status.md`.
 
 ## Cross-cutting rules (applied everywhere; not yet split out)
 

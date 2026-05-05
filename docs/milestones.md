@@ -12,37 +12,31 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-04 evening. **v0.1.2 + v0.1.3 shipped.** Workspace at HEAD is green: `npx turbo build test lint` clean, **214 core / 30 types / 35 mcp** tests passing.
+**Last session ended:** 2026-05-05. v0.1.2 + v0.1.3 shipped. v0.2.0 Sunrise nearly closed — three PRs stacked on `main` carry the data-layer foundation (see "Open PRs awaiting merge" below).
+
+**For current operational state of the active milestone, read `docs/plans/2026-05-05-v0.2.0-status.md` first.** That doc is updated per session; this file describes the long-term shape.
 
 **Two parallel tracks share `main`:**
 
-- **Track 1 — v0.3.0 Frontend (Jed).** Renumbered from old v0.2.0 on 2026-05-04. Builds against the stable v0.1.2 API. Issues #28-#31 + #106-#108. Doesn't gate the MVP success criterion; this track delivers investor-legibility.
-- **Track 2 — v0.2.x Engineering (Cem + Kurt).** Three releases:
-  - **v0.2.0 — Sunrise** — audit-driven cleanup. Seven audits (`docs/audits/`) define the contract NEAT v0.1.x grew toward organically; v0.2.0 closes the gap.
-  - **v0.2.1 — Policies.** Renumbered from old v0.3.0. Closes the four-feature gap (OTel + graph + MCP + policies). Issues #115-#118 + #123 follow-on.
-  - **v0.2.2 — `neat init` + Claude Code skill.** Renumbered from old v0.3.1. Distribution layer for the MVP-success PR experiment. Issue #119.
+- **Track 1 — v0.3.0 Frontend (Jed).** Builds against the stable v0.1.2 API. Issues #28-#31 + #106-#108. Doesn't gate the MVP success criterion.
+- **Track 2 — v0.2.x Engineering (Cem + Kurt).** Six releases, sequential. Each milestone owns one layer: it opens with the contract batch that governs that layer, then ships the rebuild + cleanup against the locked contract. **Don't ship cleanup work against an unlocked contract** — that's what produced the v0.1.x drift the verification pass surfaced. Full v0.2.x sequencing in `docs/plans/2026-05-04-v0.2.x-sequencing.md`.
 
-Engineering ships first; that order is what the user named when they renumbered. The two tracks are still independent — v0.2.x and v0.3.0 don't depend on each other — but the engineering numbering communicates priority.
+  - **v0.2.0 — Sunrise** — data-layer foundation. ADRs 028-031 + contract framework + audit verification + AUDIT-DRIFT sync. Pending merge in PRs #146 + #147 + the doc-refresh PR.
+  - **v0.2.1 — Tree-sitter rebuild.** Opens with contract #5 (static extraction). Ships #140, #141, #142, #145.
+  - **v0.2.2 — OTel ingest rebuild.** Opens with contracts #6-#8. Ships #131-#135.
+  - **v0.2.3 — Traversal rebuild.** Opens with contracts #9-#11. Ships #136-#139, #123.
+  - **v0.2.4 — Policies + MCP refresh.** Opens with contracts #12-#18. Ships #115-#118, #143, #144.
+  - **v0.2.5 — `neat init` + SDK install + Claude skill.** Opens with contracts #19-#22. Ships #119.
 
-### Tomorrow's work — start here
+After v0.2.5: the MVP-success PR experiment (ADR-027). Self-hosting on the NEAT codebase activates only after that PR closes — until then NEAT is the target of construction, not the tool.
 
-**Issue [#126](https://github.com/NEAT-Technologies/Neat/issues/126)** — v0.2.0-α audit verification pass. The first concrete deliverable for Sunrise.
+### Active work — start here
 
-The seven audits in `docs/audits/` are interlocking contracts NEAT v0.1.x must redeem itself against. The verification pass produces one document — `docs/audits/verification.md` — grading every `Verify:` checkbox (~150 of them) against the codebase at HEAD with file-and-line citations. **Findings only — no code changes, no issue creation in the same pass.** After the verification doc lands, the user reads it, sorts findings into three piles (open as new v0.2.0 issues / amend existing / defer), and the issue/amendment work happens in a follow-up.
+**Once the three open v0.2.0 PRs (#146, #147, doc refresh) merge:** v0.2.0 closes. Open v0.2.1.
 
-Branch: `v0.2.0-audit-verification`. Open as draft PR for inline review of findings.
+**v0.2.1 first move:** the Contract Author writes contract #5 (static extraction) — ADR + `docs/contracts/static-extraction.md` + regression tests. Then the implementation agent picks up #140 / #141 / #142 / #145 against the locked contract. Each cleanup issue closes when its corresponding `it.todo` in `contracts.test.ts` flips to a live assertion and passes.
 
-**The audits in dependency order** (verify in this order, downstream audits reference upstream findings):
-1. types — `docs/audits/NEAT-audit-types(1).md`
-2. graph — `docs/audits/NEAT-audit-graph.md`
-3. tree-sitter — `docs/audits/NEAT-audit-treesitter.md`
-4. OTel — `docs/audits/NEAT-audit-otel.md`
-5. traversal — `docs/audits/NEAT-audit-traversal.md`
-6. policies (prospective — feature not built) — `docs/audits/NEAT-audit-policies.md`
-7. MCP — `docs/audits/NEAT-audit-mcp.md`
-8. init (prospective — feature not built) — `docs/audits/NEAT-audit-init.md`
-
-Two of the eight (policies, init) are prospective ADRs against unbuilt features — verification translates their `Verify:` checkboxes into spec amendments for issues #115-#119, not code citations. Track those separately in the verification doc.
+The 15 cleanup issues #131-#145 are open against the v0.2.0 milestone today **but belong to v0.2.1-v0.2.4** under the rebuild-contract framing. Migration of issue→milestone on GitHub is pending.
 
 ### Closing gate — the MVP-success PR
 
@@ -66,7 +60,11 @@ The Railway gates from M6 are still informational. AWS is the more likely produc
 
 ### Open PRs awaiting merge
 
-- **#125** — ADR-027 + parallel-tracks reframe of CLAUDE.md and milestones.md. Note: this PR's body still references the old milestone numbering (v0.2.0 = Frontend, v0.3.0 = Policies). The renumbering happened after #125 was opened. The PR's content is still correct in shape; the reviewer should treat the milestone numbers as having shifted by one bucket.
+Three stacked PRs close v0.2.0 Sunrise. Merge in order:
+
+- **#146** — Sync audit text to shipped ADRs (AUDIT-DRIFT resolution). Doc-only. Branch: `audit-drift-sync` → `main`.
+- **#147** — v0.2.0 contract framework + ADRs 028-031. Six commits: contract framework + four data-layer ADRs. Branch: `v0.2.0-contracts-framework` → `audit-drift-sync` (auto-rebases on `main` once #146 merges).
+- **Doc refresh PR** (this one) — CLAUDE.md, milestones.md, contracts.md index, `docs/plans/`. Branched from `v0.2.0-contracts-framework`; auto-rebases on `main` once #147 merges.
 
 ---
 

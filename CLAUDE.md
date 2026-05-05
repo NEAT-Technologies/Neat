@@ -38,21 +38,29 @@ A generic `Dockerfile` at the repo root builds the demo-free image. Mount your c
 
 ### Track 2 — v0.2.x Engineering
 
-**v0.2.0 — Sunrise.** Audit-driven cleanup. Seven contract documents (`docs/audits/`) define what NEAT v0.1.x must redeem itself against. The first concrete deliverable is **issue #126** — a verification pass that grades every `Verify:` checkbox across all seven audits with file-and-line citations and outputs `docs/audits/verification.md`. Findings only — no code changes in the verification pass itself. After it lands, the user sorts findings into three piles (open as issues / amend existing / defer), and the cleanup work begins from there.
+**The v0.2.x sequence is rebuild-against-locked-contract.** Each minor version owns one layer: it opens with the contract batch that governs that layer (ADRs + per-topic markdown under `docs/contracts/` + regression tests), then the rebuild + cleanup against the locked contract. **Don't ship cleanup work against an unlocked contract** — that's what produced the v0.1.x drift the verification pass surfaced.
 
-**v0.2.1 — Policies.** Closes the four-feature gap (OTel + graph + MCP + policies). α/β/γ/δ pattern mirroring v0.1.2:
+The full per-milestone breakdown lives in `docs/plans/2026-05-04-v0.2.x-sequencing.md`. Current state lives in `docs/plans/<date>-v0.2.0-status.md` (the most recent file in `docs/plans/`).
 
-- **#115 — α** — Policy schema + YAML parser in `@neat/types`
-- **#116 — β** — Evaluation engine + `policy-violations.ndjson`
-- **#117 — γ** — REST + MCP surface (`/policies`, `check_policies` tool, `neat://policies/violations`)
-- **#118 — δ** — Real-world policy library exercising OBSERVED-vs-EXTRACTED divergence
-- **#123** — generalize `getRootCause` beyond DatabaseNode origins (follow-on after #116 + #118 expose `PolicyViolation` as a node-shaped concept)
+**v0.2.0 — Sunrise (data-layer foundation).** Closes when:
+- Audit verification pass is shipped (`docs/audits/verification.md`) ✅
+- AUDIT-DRIFT amendments are applied to audit text ✅
+- Data-layer contracts are locked: ADR-028 (node identity), ADR-029 (edge identity + provenance), ADR-030 (lifecycle), ADR-031 (schema growth vs shape) ✅
+- Contract framework is live: index, per-topic files, PreToolUse hook, regression tests, schema-snapshot guard ✅
 
-**v0.2.2 — `neat init` + Claude Code skill.** Distribution layer for the MVP-success PR experiment.
+The 15 cleanup issues (#131-#145) are open against this milestone today **but belong to later milestones** — see the status doc for the redistribution.
 
-- **#119** — zero-config init on any codebase, Claude skill packaging
+**v0.2.1 — Tree-sitter rebuild.** Opens with contract #5 (static extraction). Then ships #140 ghost-edge cleanup, #141 source-level DB/import detection, #142 framework field, #145 drop unused graphology deps.
 
-Pulls P-001 (zero-touch instrumentation) out of `docs/v0.x-proposals.md` once #119 starts.
+**v0.2.2 — OTel ingest rebuild.** Opens with contracts #6-#8 (OTel ingest, trace stitcher, FrontierNode promotion). Then ships #131 non-blocking ingest, #132 span-time `lastObserved`, #133 parent-span cache, #134 auto-create services/DBs, #135 exception event parsing.
+
+**v0.2.3 — Traversal rebuild.** Opens with contracts #9-#11 (traversal, getRootCause, getBlastRadius). Then ships #136 FRONTIER exclusion, #137 BlastRadius schema fields, #138 distance positive, #139 schema validation, #123 generalize getRootCause.
+
+**v0.2.4 — Policies + MCP refresh.** Opens with contracts #12-#18 (MCP, REST, persistence, policy schema/eval/actions/tools). Then ships #115-#118 + #143 three-part response, #144 transitive `get_dependencies`.
+
+**v0.2.5 — `neat init` + SDK install + Claude skill.** Opens with contracts #19-#22 (init, SDK install, machine registry, daemon). Then ships #119.
+
+After v0.2.5: the MVP-success PR experiment (ADR-027) — point NEAT at an open-source codebase. Self-hosting on the NEAT codebase activates only after that PR closes.
 
 ### Track 1 — v0.3.0 Frontend (Jed)
 
@@ -97,6 +105,10 @@ The Railway gates from M6 are still informational. AWS is the more likely produc
 - `semantic_search` uses an Ollama → Transformers.js → substring fallback chain; flat in-memory cosine, sidecar `embeddings.json` cache (ADR-025)
 - Multi-project lives behind `Map<string, NeatGraph>`; routes dual-mount at `/X` and `/projects/:project/X`; default project keeps the legacy filenames; OTel ingest stays single-project (ADR-026)
 - MVP success is closing a real PR on an unfamiliar open-source codebase, not running the pg demo; OBSERVED layer must be load-bearing (ADR-027)
+- Node ids come from `@neat/types/identity` helpers (`serviceId`, `databaseId`, `configId`, `infraId`, `frontierId`); hand-rolled template literals are a contract violation (ADR-028)
+- Edge ids per provenance variant come from `@neat/types/identity` helpers (`extractedEdgeId`, `observedEdgeId`, `inferredEdgeId`, `frontierEdgeId`, `parseEdgeId`); `PROV_RANK` lives there too (ADR-029)
+- Mutation authority on the graph is locked to `ingest.ts` and `extract/*`; OBSERVED↔STALE and FRONTIER→OBSERVED transitions are owned by `ingest.ts` (ADR-030)
+- Schema additions in `@neat/types` are growth (snapshot diff is the audit trail); renames/removals/type-changes are shape changes (require ADR + `persist.ts` migration); enforced via `packages/core/test/audits/schema-snapshot.test.ts` (ADR-031)
 
 ## Conventions
 
