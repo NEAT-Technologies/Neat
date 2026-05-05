@@ -1,6 +1,6 @@
 {
   "name": "@neat/mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "NEAT MCP server: exposes graph queries to AI agents over stdio",
   "type": "module",
