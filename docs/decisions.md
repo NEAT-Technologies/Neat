@@ -628,3 +628,79 @@ Schema growth versus shape changes (contract #4, the next ADR). The exact shape 
 **When to revisit.**
 
 When ghost cleanup ships (#140) or auto-creation ships (#134) — both will refine the lifecycle table and move items out of "queued" status. When concurrent multi-process ingest becomes a real requirement (post-v1.0 or post-eBPF), atomicity needs its own ADR.
+
+---
+
+## ADR-031 — Schema growth versus schema shape
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+The fourth and final data-layer contract. ADR-028, ADR-029, and ADR-030 locked node identity, edge identity + provenance, and lifecycle. Each one expects the underlying schemas in `@neat/types` to remain stable in shape while still being allowed to grow. This ADR pins down the difference.
+
+**The distinction.**
+
+- **Growth** is **additive**. A new optional field on an existing schema. A new helper export. An extra non-breaking method. Code written against the previous schema continues to work; data persisted under the previous schema continues to load. No migration needed.
+
+- **Shape change** is **breaking**. Renaming a field. Changing a field's type (`string` → `number`). Removing a field. Removing or renaming an enum value. Tightening a refinement so previously-valid data no longer parses. Changing a discriminated-union discriminator. Code written against the previous schema breaks; data persisted under the previous schema fails to load without migration.
+
+The two have different costs and different processes. Growth is cheap and frequent. Shape change is expensive, rare, and gated.
+
+**Decision.**
+
+1. **Growth is allowed in any commit, no ADR required.**
+
+   Adding `framework?: string` to `ServiceNodeSchema` (issue #142) is growth. Adding `extractedAt?: string` to GraphEdge `evidence` (issue #140) is growth. Adding a new value to `EdgeType` (e.g. `EMITS` if a new edge type lands) is growth, since older code that switches over `EdgeType` simply doesn't match the new value — it doesn't crash. The schema snapshot is updated in the same commit; the snapshot diff is the audit trail.
+
+2. **Shape change requires an ADR opened in the same PR.**
+
+   The ADR records:
+   - What changed (field removed, type changed, enum value removed, etc.).
+   - Why the breaking change is justified.
+   - How the persistence layer migrates old data (`packages/core/src/persist.ts` v→v+1 migration code).
+   - How long the migration is supported (typically: at least one minor version after introduction).
+
+   Examples of shape changes the project has already made: ADR-019 (`pgDriverVersion` removed from ServiceNode, snapshot v1→v2 migration in `persist.ts`).
+
+3. **Migration path is `persist.ts`.**
+
+   The snapshot loader at `packages/core/src/persist.ts` runs version-keyed migrations. Each shape-change ADR adds a new migration function and bumps the persisted version. The migration is *one-way* (forward only); we don't support downgrade. Old snapshots load cleanly into the new schema; new snapshots can't be loaded by old code, which is fine because we ship newer code in newer releases.
+
+4. **Enforcement is mechanical via a schema snapshot.**
+
+   `packages/core/test/audits/schema-snapshot.test.ts` introspects every binding schema in `@neat/types` (`GraphNodeSchema`, `GraphEdgeSchema`, `ProvenanceSchema`, `EdgeTypeSchema`, `ErrorEventSchema`, `RootCauseResultSchema`, `BlastRadiusResultSchema`, plus the FrontierNode / individual node schemas) and produces a normalized JSON tree describing fields, types, enum values, discriminator keys.
+
+   The tree is compared against `packages/core/test/audits/schemas.snapshot.json`. If they differ, the test fails with a message instructing the developer to either:
+   - Run the snapshot updater (a small script), commit the diff in the same PR if the change is growth.
+   - Or open an ADR documenting the shape change, then update the snapshot.
+
+   The developer can't quietly break shape — the snapshot fails before merge. The git diff on the snapshot is a structural record of every schema change the project has ever made.
+
+5. **What counts as "binding" for the snapshot.**
+
+   Anything in `@neat/types` that consumers depend on:
+   - `GraphNodeSchema` and the five node variants.
+   - `GraphEdgeSchema`.
+   - `ProvenanceSchema` (enum values).
+   - `EdgeTypeSchema` (enum values).
+   - `ErrorEventSchema`.
+   - Result schemas (`RootCauseResultSchema`, `BlastRadiusResultSchema`).
+   - Identity helpers' output types are *not* snapshotted — those are functions, not data structures, and ADR-028 / ADR-029 govern them directly.
+
+   Internal Zod refinements (`.min()`, `.max()`, `.regex()`) are recorded in the snapshot when they're load-bearing for downstream consumers (e.g. `confidence: z.number().min(0).max(1)`). Cosmetic refinements (`.describe()` strings used for LLM hints) are excluded.
+
+6. **Growth is encouraged when consumers ask for it.**
+
+   The contract is permissive for growth specifically because future producer / consumer rebuilds (v0.2.1 tree-sitter, v0.2.2 OTel, v0.2.3 traversal, v0.2.4 policies) will each ask for new optional fields. The default answer is "yes — add the optional field, snapshot the change, ship." The friction is reserved for shape changes, which deserve discussion.
+
+**Why this contract is small.**
+
+ADR-031 doesn't add helpers or refactor code. It's a meta-contract — the rule for how the previous three contracts evolve. The snapshot test is the entire enforcement mechanism. No new module, no new helper, no new abstraction.
+
+**What this ADR is not deciding.**
+
+Specific schema additions queued for v0.2.x cleanup (`framework`, `evidence.file` on every EXTRACTED edge, `path` and `confidence` on `BlastRadiusAffectedNode`). Those land under their respective issues (#142, #140, #137) and trip the snapshot fail in CI; the developer commits the new snapshot alongside the implementation.
+
+**When to revisit.**
+
+When the snapshot file becomes hard to review — say it grows past 500 lines and a real shape change is hard to spot in the diff. At that point we either split the snapshot per schema or write a smarter diff tool. Today the schema set is small enough that a single JSON file is sufficient.
