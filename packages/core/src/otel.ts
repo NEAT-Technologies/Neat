@@ -210,26 +210,91 @@ export function parseOtlpRequest(body: OtlpTracesRequest): ParsedSpan[] {
   return out
 }
 
+export interface OtelReceiver {
+  app: FastifyInstance
+  // Resolves once every span enqueued so far has been handed to opts.onSpan.
+  // Test seam — production code never awaits this.
+  flushPending: () => Promise<void>
+}
+
 export async function buildOtelReceiver(
   opts: BuildOtelReceiverOptions,
-): Promise<FastifyInstance> {
+): Promise<FastifyInstance & { flushPending: () => Promise<void> }> {
   const app = Fastify({
     logger: false,
     bodyLimit: opts.bodyLimit ?? 16 * 1024 * 1024,
   })
 
+  // Non-blocking ingest (ADR-033). The receiver replies 200 OK as soon as the
+  // body is parsed; mutation runs through this queue, drained on the next tick.
+  // OTel SDK exporters retry on timeout, so blocking ingest produces observable
+  // backpressure on the system being observed — ambient observation requires no
+  // observable effect.
+  const queue: ParsedSpan[] = []
+  let draining = false
+  let drainPromise: Promise<void> = Promise.resolve()
+
+  const drain = async (): Promise<void> => {
+    if (draining) return
+    draining = true
+    try {
+      while (queue.length > 0) {
+        const span = queue.shift()!
+        try {
+          await opts.onSpan(span)
+        } catch (err) {
+          console.warn(`[neat] otel handler error: ${(err as Error).message}`)
+        }
+      }
+    } finally {
+      draining = false
+    }
+  }
+
+  const enqueue = (spans: ParsedSpan[]): void => {
+    if (spans.length === 0) return
+    for (const s of spans) queue.push(s)
+    // Schedule on the next tick so the 200 response is on the wire before any
+    // mutation runs. Each call gets its own promise so flushPending() can wait
+    // on the latest drain cycle.
+    drainPromise = drainPromise.then(() => drain())
+  }
+
   app.get('/health', async () => ({ ok: true }))
 
-  app.post<{ Body: OtlpTracesRequest }>('/v1/traces', async (req, reply) => {
-    const spans = parseOtlpRequest(req.body ?? {})
-    for (const span of spans) {
-      await opts.onSpan(span)
+  app.post('/v1/traces', async (req, reply) => {
+    // Content-Type dispatch (ADR-033). JSON is the only encoding decoded today;
+    // application/x-protobuf is a documented OTLP/HTTP encoding but the bundled
+    // .proto decoder isn't wired in yet. Reject explicitly with 415 instead of
+    // letting Fastify's default JSON parser silently fail on protobuf bytes.
+    const ct = (req.headers['content-type'] ?? '').toString().split(';')[0]!.trim().toLowerCase()
+    if (ct === 'application/x-protobuf') {
+      return reply.code(415).send({
+        error: 'protobuf encoding not yet supported on the HTTP receiver — use OTLP/gRPC',
+      })
     }
+    if (ct && ct !== 'application/json') {
+      return reply.code(415).send({ error: `unsupported content-type: ${ct}` })
+    }
+    const spans = parseOtlpRequest((req.body ?? {}) as OtlpTracesRequest)
+    enqueue(spans)
     // OTLP success response is `{ partialSuccess: {} }` for "all accepted".
     return reply.code(200).send({ partialSuccess: {} })
   })
 
-  return app
+  // Attach flushPending so tests can wait for the queue without exporting a
+  // separate handle. The cast goes through `unknown` because Fastify's typing
+  // is parameterised over the raw server type and the simple intersection
+  // confuses TS's structural narrowing.
+  const decorated = app as unknown as FastifyInstance & { flushPending: () => Promise<void> }
+  decorated.flushPending = async () => {
+    // Settle the current drain chain, then loop until the queue is fully empty
+    // (a span enqueued mid-flush would otherwise be missed).
+    while (queue.length > 0 || draining) {
+      await drainPromise
+    }
+  }
+  return decorated
 }
 
 export function logSpanHandler(span: ParsedSpan): void {
