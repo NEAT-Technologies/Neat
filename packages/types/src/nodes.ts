@@ -7,11 +7,19 @@ export const CompatibleDriverSchema = z.object({
 })
 export type CompatibleDriver = z.infer<typeof CompatibleDriverSchema>
 
+// How NEAT first learned of a node. Static-extraction fills in the rich
+// fields (language, version, dependencies); OTel ingest can also create a
+// minimal node when it sees a span for an unknown peer. When both layers
+// recorded the same node, the value is 'merged'. ADR-031 schema growth.
+export const DiscoveredViaSchema = z.enum(['static', 'otel', 'merged'])
+export type DiscoveredVia = z.infer<typeof DiscoveredViaSchema>
+
 export const ServiceNodeSchema = z.object({
   id: z.string(),
   type: z.literal(NodeType.ServiceNode),
   name: z.string(),
   language: z.string(),
+  discoveredVia: DiscoveredViaSchema.optional(),
   version: z.string().optional(),
   dbConnectionTarget: z.string().optional(),
   repoPath: z.string().optional(),
@@ -79,6 +87,7 @@ export const DatabaseNodeSchema = z.object({
   compatibleDrivers: z.array(CompatibleDriverSchema),
   host: z.string().optional(),
   port: z.number().optional(),
+  discoveredVia: DiscoveredViaSchema.optional(),
 })
 export type DatabaseNode = z.infer<typeof DatabaseNodeSchema>
 

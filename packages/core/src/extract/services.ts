@@ -226,9 +226,21 @@ export function addServiceNodes(graph: NeatGraph, services: DiscoveredService[])
   let nodesAdded = 0
   for (const service of services) {
     if (!graph.hasNode(service.node.id)) {
-      graph.addNode(service.node.id, service.node)
+      graph.addNode(service.node.id, { ...service.node, discoveredVia: 'static' })
       nodesAdded++
+      continue
     }
+    // OTel ingest may have auto-created a minimal node at this id. Merge per
+    // ADR-033 / identity contract: static fields override OTel-derived fields,
+    // and discoveredVia flips to 'merged' when both layers contributed.
+    const existing = graph.getNodeAttributes(service.node.id) as ServiceNode
+    const mergedDiscoveredVia: 'static' | 'otel' | 'merged' =
+      existing.discoveredVia === 'otel' ? 'merged' : 'static'
+    graph.replaceNodeAttributes(service.node.id, {
+      ...existing,
+      ...service.node,
+      discoveredVia: mergedDiscoveredVia,
+    })
   }
   return nodesAdded
 }

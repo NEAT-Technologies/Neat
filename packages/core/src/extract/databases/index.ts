@@ -206,8 +206,20 @@ export async function addDatabasesAndCompat(
     for (const config of allConfigs) {
       const dbNode = toDatabaseNode(config)
       if (!graph.hasNode(dbNode.id)) {
-        graph.addNode(dbNode.id, dbNode)
+        graph.addNode(dbNode.id, { ...dbNode, discoveredVia: 'static' })
         nodesAdded++
+      } else {
+        // OTel ingest may have auto-created a minimal node at this id. Merge
+        // per ADR-033: static fields override OTel-derived fields, discoveredVia
+        // flips to 'merged' when both layers contributed.
+        const existing = graph.getNodeAttributes(dbNode.id) as DatabaseNode
+        const mergedDiscoveredVia: 'static' | 'otel' | 'merged' =
+          existing.discoveredVia === 'otel' ? 'merged' : 'static'
+        graph.replaceNodeAttributes(dbNode.id, {
+          ...existing,
+          ...dbNode,
+          discoveredVia: mergedDiscoveredVia,
+        })
       }
       const edge: GraphEdge = {
         id: makeEdgeId(service.node.id, dbNode.id, EdgeType.CONNECTS_TO),

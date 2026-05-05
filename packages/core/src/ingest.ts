@@ -1,6 +1,12 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ErrorEvent, FrontierNode, GraphEdge, ServiceNode } from '@neat/types'
+import type {
+  DatabaseNode,
+  ErrorEvent,
+  FrontierNode,
+  GraphEdge,
+  ServiceNode,
+} from '@neat/types'
 import {
   EdgeType,
   NodeType,
@@ -158,6 +164,47 @@ function resolveServiceId(graph: NeatGraph, host: string): string | null {
 
 export function frontierIdFor(host: string): string {
   return frontierId(host)
+}
+
+// Auto-create a minimal ServiceNode for span.service when no such node exists.
+// Used at the top of handleSpan so subsequent edge upserts always have endpoints
+// — without it, OBSERVED edges silently drop for any service the static
+// extractor hasn't reached yet (and never reaches at all in OTel-only setups).
+// `language: 'unknown'` is the contract's specified placeholder (ADR-033). When
+// static extraction later produces a ServiceNode at the same id, addServiceNodes
+// merges and flips discoveredVia to 'merged' rather than overwriting.
+function ensureServiceNode(graph: NeatGraph, serviceName: string): string {
+  const id = serviceId(serviceName)
+  if (graph.hasNode(id)) return id
+  const node: ServiceNode = {
+    id,
+    type: NodeType.ServiceNode,
+    name: serviceName,
+    language: 'unknown',
+    discoveredVia: 'otel',
+  }
+  graph.addNode(id, node)
+  return id
+}
+
+// Same shape for unseen db.system + host pairs. Engine comes off the OTel
+// attribute as a string per Rule 8 — no hardcoded engine list. compatibleDrivers
+// is empty until static extraction merges in the matrix-derived drivers.
+function ensureDatabaseNode(graph: NeatGraph, host: string, engine: string): string {
+  const id = databaseId(host)
+  if (graph.hasNode(id)) return id
+  const node: DatabaseNode = {
+    id,
+    type: NodeType.DatabaseNode,
+    name: host,
+    engine,
+    engineVersion: 'unknown',
+    compatibleDrivers: [],
+    host,
+    discoveredVia: 'otel',
+  }
+  graph.addNode(id, node)
+  return id
 }
 
 function ensureFrontierNode(graph: NeatGraph, host: string, ts: string): string {
@@ -340,7 +387,10 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
   // actually fired, not when the receiver received it. Wall-clock is only the
   // fallback for spans whose startTimeUnixNano is missing or unparseable.
   const ts = span.startTimeIso ?? nowIso(ctx)
-  const sourceId = serviceId(span.service)
+  // Auto-create a minimal ServiceNode for unseen span.service so OBSERVED
+  // edges land instead of silently dropping. Static extraction merges richer
+  // fields when it later finds the same id (ADR-033).
+  const sourceId = ensureServiceNode(ctx.graph, span.service)
   const isError = span.statusCode === 2
 
   let affectedNode = sourceId
@@ -349,6 +399,9 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     // Database span — try to resolve the DatabaseNode by host.
     const host = pickAddress(span)
     if (host) {
+      // Auto-create a minimal DatabaseNode when this host hasn't been seen.
+      // Engine comes off the OTel attribute as a string per Rule 8.
+      ensureDatabaseNode(ctx.graph, host, span.dbSystem)
       const targetId = databaseId(host)
       const result = upsertObservedEdge(
         ctx.graph,

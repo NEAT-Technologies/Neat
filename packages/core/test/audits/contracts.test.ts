@@ -564,8 +564,78 @@ describe('OTel ingest contract (ADR-033)', () => {
     expect(edge.lastObserved).toBe('2026-04-01T09:00:00.000Z')
   })
   it.todo('parent-span cache resolves cross-service CALLS when address-based resolution fails (issue #133)')
-  it.todo('handleSpan auto-creates ServiceNode at serviceId(span.service) for unseen services (issue #134)')
-  it.todo('handleSpan auto-creates DatabaseNode at databaseId(host) for unseen db.system+host (issue #134)')
+  it('handleSpan auto-creates ServiceNode at serviceId(span.service) for unseen services (issue #134)', async () => {
+    const { handleSpan } = await import('../../src/ingest.js')
+    const { serviceId } = await import('@neat/types')
+    const { mkdtempSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    const errorsPath = join(mkdtempSync(join(tmpdir(), 'contract-test-')), 'errors.ndjson')
+
+    expect(g.hasNode(serviceId('unseen-svc'))).toBe(false)
+    await handleSpan(
+      { graph: g, errorsPath, now: () => Date.parse('2026-05-05T12:00:00.000Z') },
+      {
+        traceId: 't1',
+        spanId: 's1',
+        service: 'unseen-svc',
+        name: 'GET /things',
+        startTimeUnixNano: '0',
+        endTimeUnixNano: '0',
+        durationNanos: 0n,
+        attributes: {},
+      },
+    )
+
+    expect(g.hasNode(serviceId('unseen-svc'))).toBe(true)
+    const node = g.getNodeAttributes(serviceId('unseen-svc')) as {
+      type: string
+      language: string
+      discoveredVia?: string
+    }
+    expect(node.type).toBe(NodeType.ServiceNode)
+    expect(node.language).toBe('unknown')
+    expect(node.discoveredVia).toBe('otel')
+  })
+
+  it('handleSpan auto-creates DatabaseNode at databaseId(host) for unseen db.system+host (issue #134)', async () => {
+    const { handleSpan } = await import('../../src/ingest.js')
+    const { databaseId } = await import('@neat/types')
+    const { mkdtempSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    const errorsPath = join(mkdtempSync(join(tmpdir(), 'contract-test-')), 'errors.ndjson')
+
+    await handleSpan(
+      { graph: g, errorsPath, now: () => Date.parse('2026-05-05T12:00:00.000Z') },
+      {
+        traceId: 't2',
+        spanId: 's2',
+        service: 'caller',
+        name: 'SELECT 1',
+        startTimeUnixNano: '0',
+        endTimeUnixNano: '0',
+        durationNanos: 0n,
+        attributes: { 'server.address': 'analytics.internal', 'db.system': 'postgresql' },
+        dbSystem: 'postgresql',
+      },
+    )
+
+    const dbId = databaseId('analytics.internal')
+    expect(g.hasNode(dbId)).toBe(true)
+    const dbNode = g.getNodeAttributes(dbId) as {
+      type: string
+      engine: string
+      engineVersion: string
+      discoveredVia?: string
+    }
+    expect(dbNode.type).toBe(NodeType.DatabaseNode)
+    expect(dbNode.engine).toBe('postgresql')
+    expect(dbNode.engineVersion).toBe('unknown')
+    expect(dbNode.discoveredVia).toBe('otel')
+  })
   it('parser extracts exception.type/message/stacktrace from span events with name=exception (issue #135)', async () => {
     const { parseOtlpRequest } = await import('../../src/otel.js')
     const spans = parseOtlpRequest({
