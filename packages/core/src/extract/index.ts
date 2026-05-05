@@ -1,3 +1,15 @@
+// Static-extraction pipeline. Phase order is load-bearing:
+//   services → aliases → databases (+ compat) → configs → calls → infra → frontier promotion.
+//
+// Contract anchors (see /docs/contracts.md):
+//   * Rule 1 — Every emitted edge carries Provenance.EXTRACTED from @neat/types.
+//   * Rule 2 — EXTRACTED edges use the plain `${type}:src->tgt` id pattern.
+//     Never write under the OBSERVED id pattern; that's ingest.ts's territory.
+//   * Rule 5 — Nodes/edges constructed against schemas in @neat/types; no
+//     local interface redefinitions in this tree.
+//   * Rule 8 — No demo-name hardcoding. Driver names come from package.json
+//     dependencies; engine names from compat.json via compatPairs().
+//   * Rule 14 — ConfigNodes record file existence only; never the contents.
 import type { NeatGraph } from '../graph.js'
 import { promoteFrontierNodes } from '../ingest.js'
 import { ensureCompatLoaded } from '../compat.js'

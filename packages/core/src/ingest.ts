@@ -1,7 +1,18 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ErrorEvent, FrontierNode, GraphEdge, ServiceNode } from '@neat/types'
-import { EdgeType, NodeType, Provenance, type EdgeTypeValue } from '@neat/types'
+import {
+  EdgeType,
+  NodeType,
+  Provenance,
+  databaseId,
+  frontierEdgeId,
+  frontierId,
+  inferredEdgeId,
+  observedEdgeId,
+  serviceId,
+  type EdgeTypeValue,
+} from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import type { ParsedSpan } from './otel.js'
 
@@ -11,10 +22,15 @@ import type { ParsedSpan } from './otel.js'
 //     DatabaseNode resolved by host.
 //   * Span with status.code === 2 → ErrorEvent appended to errors.ndjson.
 //
-// Observed edges live alongside extracted ones with a distinct id pattern
-// (`${type}:OBSERVED:...`) so static and runtime signal coexist instead of
-// stomping each other. Provenance, lastObserved, callCount, and confidence
-// are set on the OBSERVED edge; the static edge is untouched.
+// Contract anchors (see /docs/contracts.md):
+//   * Rule 1 — Provenance: every edge here carries Provenance.X from @neat/types.
+//   * Rule 2 — Coexistence: OBSERVED edges live alongside EXTRACTED ones with a
+//     distinct id pattern (`${type}:OBSERVED:src->tgt`). Never write OBSERVED
+//     under the EXTRACTED id; that erases the gap NEAT exists to surface.
+//   * Rule 4 — Per-edge-type staleness (ADR-024): STALE_THRESHOLDS_BY_EDGE_TYPE
+//     governs decay; never hardcode a flat 24h threshold.
+//   * Rule 8 — No demo names: derive driver/engine identifiers from node
+//     properties, not literals.
 
 export interface IngestContext {
   graph: NeatGraph
@@ -99,19 +115,22 @@ function pickAddress(span: ParsedSpan): string | undefined {
   )
 }
 
+// Edge id helpers live in @neat/types/identity.ts (ADR-029). The local
+// signatures below preserve the (type, source, target) argument order ingest.ts
+// has used historically while delegating to the canonical wire-format helpers.
 function makeObservedEdgeId(type: EdgeTypeValue, source: string, target: string): string {
-  return `${type}:OBSERVED:${source}->${target}`
+  return observedEdgeId(source, target, type)
 }
 
 function makeInferredEdgeId(type: EdgeTypeValue, source: string, target: string): string {
-  return `${type}:INFERRED:${source}->${target}`
+  return inferredEdgeId(source, target, type)
 }
 
 const INFERRED_CONFIDENCE = 0.6
 const STITCH_MAX_DEPTH = 2
 
 function resolveServiceId(graph: NeatGraph, host: string): string | null {
-  const direct = `service:${host}`
+  const direct = serviceId(host)
   if (graph.hasNode(direct)) return direct
 
   // Service hostnames in the demo can match either the package name (which the
@@ -137,7 +156,7 @@ function resolveServiceId(graph: NeatGraph, host: string): string | null {
 }
 
 export function frontierIdFor(host: string): string {
-  return `frontier:${host}`
+  return frontierId(host)
 }
 
 function ensureFrontierNode(graph: NeatGraph, host: string, ts: string): string {
@@ -166,7 +185,7 @@ function upsertFrontierEdge(
   target: string,
   ts: string,
 ): void {
-  const id = `${type}:FRONTIER:${source}->${target}`
+  const id = frontierEdgeId(source, target, type)
   if (graph.hasEdge(id)) {
     const existing = graph.getEdgeAttributes(id) as GraphEdge
     const updated: GraphEdge = {
@@ -310,7 +329,7 @@ async function appendErrorEvent(ctx: IngestContext, ev: ErrorEvent): Promise<voi
 
 export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<void> {
   const ts = nowIso(ctx)
-  const sourceId = `service:${span.service}`
+  const sourceId = serviceId(span.service)
   const isError = span.statusCode === 2
 
   let affectedNode = sourceId
@@ -319,7 +338,7 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     // Database span — try to resolve the DatabaseNode by host.
     const host = pickAddress(span)
     if (host) {
-      const targetId = `database:${host}`
+      const targetId = databaseId(host)
       const result = upsertObservedEdge(
         ctx.graph,
         EdgeType.CONNECTS_TO,

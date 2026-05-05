@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { infraId } from '@neat/types'
 import { lineOf, snippet, type ExternalEndpoint, type SourceFile } from './shared.js'
 
 // Redis URLs in source — `redis://host[:port]` or `rediss://...`. We only
@@ -20,7 +21,7 @@ export function redisEndpointsFromFile(
     seen.add(host)
     const line = lineOf(file.content, host)
     out.push({
-      infraId: `infra:redis:${host}`,
+      infraId: infraId('redis', host),
       name: host,
       kind: 'redis',
       edgeType: 'CALLS',

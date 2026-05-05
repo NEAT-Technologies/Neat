@@ -1,0 +1,377 @@
+{
+  "BlastRadiusResultSchema": {
+    "_object": {
+      "affectedNodes": {
+        "_array": {
+          "_object": {
+            "distance": {
+              "_number": [
+                "int",
+                "min"
+              ]
+            },
+            "edgeProvenance": {
+              "_enum": [
+                "EXTRACTED",
+                "FRONTIER",
+                "INFERRED",
+                "OBSERVED",
+                "STALE"
+              ]
+            },
+            "nodeId": "_string"
+          }
+        }
+      },
+      "origin": "_string",
+      "totalAffected": {
+        "_number": [
+          "int",
+          "min"
+        ]
+      }
+    }
+  },
+  "EdgeTypeSchema": {
+    "_enum": [
+      "CALLS",
+      "CONFIGURED_BY",
+      "CONNECTS_TO",
+      "CONSUMES_FROM",
+      "DEPENDS_ON",
+      "PUBLISHES_TO",
+      "RUNS_ON"
+    ]
+  },
+  "ErrorEventSchema": {
+    "_object": {
+      "affectedNode": "_string",
+      "errorMessage": "_string",
+      "errorType": {
+        "_optional": "_string"
+      },
+      "id": "_string",
+      "service": "_string",
+      "spanId": "_string",
+      "timestamp": {
+        "_string": [
+          "datetime"
+        ]
+      },
+      "traceId": "_string"
+    }
+  },
+  "GraphEdgeSchema": {
+    "_object": {
+      "callCount": {
+        "_optional": {
+          "_number": [
+            "int",
+            "min"
+          ]
+        }
+      },
+      "confidence": {
+        "_optional": {
+          "_number": [
+            "max",
+            "min"
+          ]
+        }
+      },
+      "evidence": {
+        "_optional": {
+          "_object": {
+            "file": "_string",
+            "line": {
+              "_number": [
+                "int",
+                "min"
+              ]
+            },
+            "snippet": "_string"
+          }
+        }
+      },
+      "id": "_string",
+      "lastObserved": {
+        "_optional": {
+          "_string": [
+            "datetime"
+          ]
+        }
+      },
+      "provenance": {
+        "_enum": [
+          "EXTRACTED",
+          "FRONTIER",
+          "INFERRED",
+          "OBSERVED",
+          "STALE"
+        ]
+      },
+      "signal": {
+        "_optional": {
+          "_object": {
+            "errorCount": {
+              "_number": [
+                "int",
+                "min"
+              ]
+            },
+            "lastObservedAgeMs": {
+              "_optional": {
+                "_number": [
+                  "min"
+                ]
+              }
+            },
+            "spanCount": {
+              "_number": [
+                "int",
+                "min"
+              ]
+            }
+          }
+        }
+      },
+      "source": "_string",
+      "target": "_string",
+      "type": {
+        "_enum": [
+          "CALLS",
+          "CONFIGURED_BY",
+          "CONNECTS_TO",
+          "CONSUMES_FROM",
+          "DEPENDS_ON",
+          "PUBLISHES_TO",
+          "RUNS_ON"
+        ]
+      }
+    }
+  },
+  "GraphNodeSchema": {
+    "_discriminated": {
+      "discriminator": "type",
+      "options": {
+        "ServiceNode": {
+          "_object": {
+            "aliases": {
+              "_optional": {
+                "_array": "_string"
+              }
+            },
+            "dbConnectionTarget": {
+              "_optional": "_string"
+            },
+            "dependencies": {
+              "_optional": {
+                "_record": "_string"
+              }
+            },
+            "id": "_string",
+            "incompatibilities": {
+              "_optional": {
+                "_array": {
+                  "_union": [
+                    {
+                      "_object": {
+                        "driver": "_string",
+                        "driverVersion": "_string",
+                        "engine": "_string",
+                        "engineVersion": "_string",
+                        "kind": {
+                          "_optional": {
+                            "_literal": "driver-engine"
+                          }
+                        },
+                        "reason": "_string"
+                      }
+                    },
+                    {
+                      "_object": {
+                        "declaredNodeEngine": {
+                          "_optional": "_string"
+                        },
+                        "kind": {
+                          "_literal": "node-engine"
+                        },
+                        "package": "_string",
+                        "packageVersion": {
+                          "_optional": "_string"
+                        },
+                        "reason": "_string",
+                        "requiredNodeVersion": "_string"
+                      }
+                    },
+                    {
+                      "_object": {
+                        "foundVersion": {
+                          "_optional": "_string"
+                        },
+                        "kind": {
+                          "_literal": "package-conflict"
+                        },
+                        "package": "_string",
+                        "packageVersion": {
+                          "_optional": "_string"
+                        },
+                        "reason": "_string",
+                        "requires": {
+                          "_object": {
+                            "minVersion": "_string",
+                            "name": "_string"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "_object": {
+                        "kind": {
+                          "_literal": "deprecated-api"
+                        },
+                        "package": "_string",
+                        "packageVersion": {
+                          "_optional": "_string"
+                        },
+                        "reason": "_string"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "language": "_string",
+            "name": "_string",
+            "nodeEngine": {
+              "_optional": "_string"
+            },
+            "repoPath": {
+              "_optional": "_string"
+            },
+            "type": {
+              "_literal": "ServiceNode"
+            },
+            "version": {
+              "_optional": "_string"
+            }
+          }
+        },
+        "DatabaseNode": {
+          "_object": {
+            "compatibleDrivers": {
+              "_array": {
+                "_object": {
+                  "minVersion": "_string",
+                  "name": "_string"
+                }
+              }
+            },
+            "engine": "_string",
+            "engineVersion": "_string",
+            "host": {
+              "_optional": "_string"
+            },
+            "id": "_string",
+            "name": "_string",
+            "port": {
+              "_optional": "_number"
+            },
+            "type": {
+              "_literal": "DatabaseNode"
+            }
+          }
+        },
+        "ConfigNode": {
+          "_object": {
+            "fileType": "_string",
+            "id": "_string",
+            "name": "_string",
+            "path": "_string",
+            "type": {
+              "_literal": "ConfigNode"
+            }
+          }
+        },
+        "InfraNode": {
+          "_object": {
+            "id": "_string",
+            "kind": {
+              "_optional": "_string"
+            },
+            "name": "_string",
+            "provider": "_string",
+            "region": {
+              "_optional": "_string"
+            },
+            "type": {
+              "_literal": "InfraNode"
+            }
+          }
+        },
+        "FrontierNode": {
+          "_object": {
+            "firstObserved": {
+              "_optional": {
+                "_string": [
+                  "datetime"
+                ]
+              }
+            },
+            "host": "_string",
+            "id": "_string",
+            "lastObserved": {
+              "_optional": {
+                "_string": [
+                  "datetime"
+                ]
+              }
+            },
+            "name": "_string",
+            "type": {
+              "_literal": "FrontierNode"
+            }
+          }
+        }
+      }
+    }
+  },
+  "ProvenanceSchema": {
+    "_enum": [
+      "EXTRACTED",
+      "FRONTIER",
+      "INFERRED",
+      "OBSERVED",
+      "STALE"
+    ]
+  },
+  "RootCauseResultSchema": {
+    "_object": {
+      "confidence": {
+        "_number": [
+          "max",
+          "min"
+        ]
+      },
+      "edgeProvenances": {
+        "_array": {
+          "_enum": [
+            "EXTRACTED",
+            "FRONTIER",
+            "INFERRED",
+            "OBSERVED",
+            "STALE"
+          ]
+        }
+      },
+      "fixRecommendation": {
+        "_optional": "_string"
+      },
+      "rootCauseNode": "_string",
+      "rootCauseReason": "_string",
+      "traversalPath": {
+        "_array": "_string"
+      }
+    }
+  }
+}

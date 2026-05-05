@@ -432,3 +432,275 @@ The numbering communicates priority: engineering ships first as the v0.2.x clust
 **What this ADR is not deciding.** Which open-source repo we point NEAT at first; that's a product call once the platform is in shape. Whether the codemod or eBPF route is the v0.2.2 default; that's the ADR that lands when v0.2.2 starts. Whether v0.3.0 frontend ships before or after v0.2.x; the tracks are independent.
 
 **When to revisit.** When the first real PR closes — flip the framing from "can NEAT do this" to "what's the next bar." Until then this ADR stays the active project gravity.
+
+---
+
+## ADR-028 — Node identity is constructed via helpers, not string literals
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+Node identity is the deepest concern in the graph. Every edge connects two nodes by id; if two producers disagree on what id a service gets, OBSERVED edges from one never match EXTRACTED edges from the other and the coexistence contract (contracts.md Rule 2) silently fails.
+
+Today identity is scattered across 12 hand-rolled sites in 9 files (services.ts, ingest.ts, configs.ts, databases/index.ts, infra/shared.ts, calls/{aws,kafka,redis,grpc}.ts). Each producer constructs its own id via template literal. Consistency holds by good behavior, not by the type system.
+
+**Decision.**
+
+1. **Id patterns are functions, not literals.** A new module `packages/types/src/identity.ts` exports `serviceId`, `databaseId`, `configId`, `infraId`, `frontierId` plus their inverses (`parseServiceId`, etc.). Producers call these. No producer constructs a node id by template literal.
+
+2. **The id patterns themselves stay what they are today.** This ADR doesn't change the wire format — `service:<name>`, `database:<host>`, `config:<relPath>`, `infra:<kind>:<name>`, `frontier:<host>`. It just gives them a single source of truth.
+
+3. **Auto-created and static-extracted nodes merge by id.** When OTel ingest auto-creates a `ServiceNode` for an unseen `span.service` (issue #134) and static extraction later produces a `ServiceNode` with the same id, they merge — they do not coexist as duplicates. The id is the merge key. Static-extracted fields (language, version, dependencies) override OTel-derived fields (which are absent or sparse) where both exist; OTel-derived fields (lastObserved on associated edges, span counts) survive untouched.
+
+4. **FrontierNode promotion preserves identity continuity.** When a FrontierNode at `frontier:<host>` is promoted to a typed node — typically a ServiceNode at `service:<name>` after an alias resolves — the FrontierNode is removed and the typed node takes its place. Edges that pointed at the frontier id are rewritten to point at the new typed id. This is what `promoteFrontierNodes` already does in ingest.ts; ratified here.
+
+5. **Workspace scoping is deferred.** A monorepo with two services both named `shared-utils` in different workspaces collides under `service:shared-utils`. Today this is left to `addServiceAliases` to disambiguate via host:port mapping, which doesn't actually rename the service. Real fix is workspace-scoped ids like `service:<workspace>/<name>`. Defer until a real codebase trips it. Document the limitation; do not silently re-engineer the id format without a successor ADR.
+
+6. **Database id is host-only, not host:port.** Two databases on the same host with different ports collide. Defer the fix; document the limitation.
+
+**Why the identity helpers are in `@neat/types`, not `@neat/core`.**
+
+Both producers and consumers need them. Producers (extract/, ingest.ts) construct ids; consumers (traverse.ts, MCP tools, REST handlers) sometimes parse them (api.ts:202 strips a `service:` prefix today). Putting helpers in `@neat/types` keeps the module that owns the schemas as the single source of truth for the wire format, and avoids a circular dependency between core and any producer-only id module.
+
+**Enforcement.**
+
+`packages/core/test/audits/contracts.test.ts` gains a regression test: scan `packages/core/src/` and `packages/mcp/src/` for hand-rolled id patterns (`service:`, `database:`, `config:`, `infra:`, `frontier:` inside template literals). The only allowed sites are inside `@neat/types/identity.ts` itself, and inside test fixtures. CI fails any future session that drifts.
+
+`docs/contracts.md` Rule 16 records the binding form: "Node ids are constructed via the helpers in `@neat/types/identity.ts`. Hand-rolled template literals constructing node ids are a contract violation."
+
+**What this ADR is not deciding.**
+
+Edge identity (different ADR — comes next as #2 in the contract list). Provenance ranking (already locked in contracts.md Rule 1-2). Lifecycle transitions (different ADR — #3 in the list). Workspace-scoped ids and host:port database ids (deferred per items 5 and 6).
+
+**When to revisit.**
+
+When a real codebase trips the workspace-collision case (item 5) or the host:port-collision case (item 6) — at that point write a successor ADR introducing scoped ids, and migrate snapshots via the v2→v3 path persist.ts already supports.
+
+---
+
+## ADR-029 — Edge identity and provenance ranking
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+Edges are the second layer of identity, downstream of nodes (ADR-028). Today four edge id patterns exist — one per provenance variant — and they live in three different places:
+
+- `makeEdgeId(source, target, type)` in `packages/core/src/extract/shared.ts:67` produces EXTRACTED ids (`${type}:${source}->${target}`).
+- `makeObservedEdgeId(type, source, target)` in `packages/core/src/ingest.ts:115` (local) produces OBSERVED ids (`${type}:OBSERVED:${source}->${target}`).
+- `makeInferredEdgeId(type, source, target)` in `packages/core/src/ingest.ts:119` (local) produces INFERRED ids (`${type}:INFERRED:${source}->${target}`).
+- A bare template literal at `packages/core/src/ingest.ts:182` produces FRONTIER ids (`${type}:FRONTIER:${source}->${target}`).
+
+Three patterns have helpers, one is inline. The helpers themselves are scattered. The traversal layer also encodes a separate concern — the `PROV_RANK` constant in `packages/core/src/traverse.ts:16-22` that orders edges by trust during walks. That ranking is part of the provenance contract; it doesn't belong only to traversal.
+
+**Decision.**
+
+1. **Edge id helpers move into `@neat/types/identity.ts`.** Five exports: `extractedEdgeId`, `observedEdgeId`, `inferredEdgeId`, `frontierEdgeId`, plus `parseEdgeId(id)` returning `{ type, provenance, source, target }` or `null`. Producers call the helpers; nobody constructs an edge id by template literal.
+
+2. **The wire format stays what it is today.** ADR-029 doesn't change the edge id strings — it gives them a single source of truth. EXTRACTED has no provenance segment; OBSERVED, INFERRED, and FRONTIER carry the provenance segment between type and source. STALE never appears in an edge id because STALE is a transition of an existing OBSERVED edge, not a creation pattern (ADR-024).
+
+3. **`PROV_RANK` moves into `@neat/types`.** The ordering `OBSERVED > INFERRED > EXTRACTED > STALE | FRONTIER` is part of the provenance contract, not traversal-private. Traversal imports it. Future consumers (policies, MCP tools, the daemon's reconciliation layer) import the same constant.
+
+4. **Coexistence rule reaffirmed.** Multiple edges between the same node pair under distinct provenance ids coexist — they do not collapse. The id pattern is what makes coexistence mechanically possible: the EXTRACTED id and OBSERVED id are different strings, so `graph.hasEdge(...)` doesn't conflate them. This was already true in the code (ingest.ts:15-17 documents intent); ADR-029 ratifies it as the contract.
+
+5. **Per-edge confidence semantics per provenance:**
+   - **OBSERVED** — `confidence: 1.0` always. Direct measurement; the value is a max-trust marker, not a derived score.
+   - **INFERRED** — `confidence ≤ 0.7`, default `0.6` (`INFERRED_CONFIDENCE` constant). Set at edge creation by the trace stitcher; never exceeds 0.7 because INFERRED is by definition less trustworthy than OBSERVED.
+   - **EXTRACTED** — confidence is **not stored** on EXTRACTED edges. EXTRACTED edges either exist (the static analyzer found them) or they don't. They don't decay on a clock; their confidence is implicit in their existence.
+   - **STALE** — confidence drops to `≤ 0.3` on transition, set at transition time. The original `lastObserved` is preserved.
+   - **FRONTIER** — confidence is implicit in the FRONTIER provenance itself; not stored as a numeric field. FRONTIER is excluded from traversal (contracts.md Rule 3) so its confidence is never compared.
+
+6. **Round-trip guarantee.** `parseEdgeId(extractedEdgeId('A', 'B', 'CALLS'))` returns `{ type: 'CALLS', provenance: 'EXTRACTED', source: 'A', target: 'B' }`. Same for the other three variants. This lets consumers (traversal, MCP tools, debugging code) walk back from an id to its parts without re-deriving the format inline.
+
+**Why these helpers are in `@neat/types`, not `@neat/core`.**
+
+Same reason as ADR-028: producers and consumers both need them. The traversal layer reads edge ids when walking; the persist layer reads them on snapshot load; the MCP layer reads them when surfacing edges. `@neat/types` already owns the schema for the edge structure; it should own the wire format too.
+
+**Enforcement.**
+
+`packages/core/test/audits/contracts.test.ts` adds a regression test that scans `packages/core/src/` and `packages/mcp/src/` for hand-rolled edge id template literals — patterns like `` `${type}:${source}->...` ``, `` `:OBSERVED:` ``, `` `:INFERRED:` ``, `` `:FRONTIER:` `` outside `@neat/types/identity.ts`. CI fails any future session that drifts.
+
+`docs/contracts/provenance.md` records the binding rules in short form, governs `packages/core/src/{ingest,traverse,persist}.ts` and `packages/core/src/extract/**` (anywhere edges are constructed or compared).
+
+**What this ADR is not deciding.**
+
+Lifecycle transitions (OBSERVED→STALE, FrontierNode promotion, ghost-edge cleanup) — that's contract #3, the next ADR. Edge schema field-set (`source`, `target`, `evidence`, `signal`, `lastObserved`, etc.) — already locked in `packages/types/src/edges.ts`. Provenance enum values — already locked in `packages/types/src/constants.ts`.
+
+**When to revisit.**
+
+If a new provenance variant is introduced (e.g. `OBSERVED-NET` if eBPF capture lands post-v1.0 — see the v0.x discussion thread), this ADR gets a successor that adds the new id pattern and PROV_RANK entry without changing the existing four.
+
+---
+
+## ADR-030 — Node and edge lifecycle
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+The third data-layer contract. ADR-028 locked node identity, ADR-029 locked edge identity and provenance ranking. This ADR locks the rules for **when** nodes and edges enter the graph, **how** they transition, and **who** has authority over each transition.
+
+Today the lifecycle is implemented across `packages/core/src/ingest.ts`, `packages/core/src/extract/index.ts`, and `packages/core/src/watch.ts` — the rules are correct but scattered, with no single document specifying them. This ADR records them so future producers, consumers, and tests don't have to reverse-engineer the policy from code.
+
+**Decision.**
+
+### 1. Node creation
+
+- **Static creation** lives in `packages/core/src/extract/`. `services.ts`, `databases/index.ts`, `configs.ts`, and `infra/*` are the only sites that produce typed nodes (Service, Database, Config, Infra). Each producer constructs the id via `@neat/types/identity` helpers (ADR-028). Each producer is idempotent — `graph.hasNode(id)` guards every `addNode` call, so a re-extract does not duplicate.
+
+- **Auto-creation from OTel** is queued under issue #134. When an OTel span arrives for a `service.name` not present in the graph, `ingest.ts` will create a minimal `ServiceNode` at `serviceId(span.service)`. Static extraction that later finds the same service merges into the auto-created node by id; static fields (language, version, dependencies) override; OTel-derived fields (`lastObserved` on associated edges) survive untouched. **The id is the merge key.** This is the reconciliation rule from ADR-028 §3 applied at the lifecycle layer.
+
+- **FrontierNode creation** lives in `ingest.ts`. When `handleSpan` resolves a peer host that doesn't match any known service or database, it creates a `FrontierNode` at `frontierId(host)` and an OBSERVED edge from the source service to the FrontierNode (the FRONTIER edge variant of the same call). The FrontierNode is a placeholder; the call itself is real and stays observed.
+
+### 2. Node transitions
+
+- **FrontierNode → typed node (promotion).** `promoteFrontierNodes(graph)` in `ingest.ts:408` runs after each extract pass (`extract/index.ts:42`) and after each `watch` tick (`watch.ts:153`). For every FrontierNode whose `host` matches a known service alias, the FrontierNode is dropped and edges that pointed at it are rewritten to point at the typed node. The FrontierNode never persists as a partial state — promotion is atomic per node.
+
+- **Edge rewrite during promotion.** Each edge incident to the promoted FrontierNode is dropped and rebuilt under the typed-node id (`rewireFrontierEdges` + `rebuildEdge` in `ingest.ts:436-470`). On rewrite, `FRONTIER` provenance is **upgraded to `OBSERVED`** because the call certainty was always there — only the target identity was unknown, and now it isn't. Other provenance values pass through unchanged.
+
+### 3. Node retirement
+
+- **Today: only via FrontierNode promotion.** A FrontierNode is dropped when promoted; nothing else gets retired automatically.
+
+- **Ghost-node cleanup (queued under #140).** When a service disappears from source between extract passes, the `ServiceNode` (and its associated edges) should be retired. The contract is: retirement is **driven by source absence**, not by clock decay. Static-extracted nodes don't have a `lastObserved`; they exist while their source declaration exists. This is the lifecycle counterpart to ghost-edge cleanup; both block on the source-mtime tracking work in #140.
+
+### 4. Edge creation
+
+- **Static (EXTRACTED).** `extract/*` producers via `extractedEdgeId(...)`. Idempotent via `graph.hasEdge(id)` guard.
+- **Observed (OBSERVED).** `upsertObservedEdge` in `ingest.ts:218`. Idempotent: if the edge id exists, attributes are replaced; otherwise the edge is created. **Returns `null` if either endpoint node is missing** (`ingest.ts:226`) — this is the gap issue #134 closes by auto-creating missing nodes.
+- **Inferred (INFERRED).** `upsertInferredEdge` in `ingest.ts:298`. Created by the trace stitcher on error spans, depth ≤ 2 from the originating service. Confidence ≤ 0.7, default 0.6.
+- **Frontier (FRONTIER).** `upsertFrontierEdge` in `ingest.ts:181`. Created when OTel resolves a peer to no known node.
+
+### 5. Edge transitions (binding rules)
+
+- **OBSERVED → STALE.** `markStaleEdges` in `ingest.ts:521`, called by the background staleness loop (`startStalenessLoop`, default 60s tick). Per-edge-type thresholds (ADR-024). The transition is in place — the edge id stays at `${type}:OBSERVED:${source}->${target}`; only `provenance` flips to `STALE` and `confidence` drops to `0.3`. `lastObserved` is preserved. Each transition appended to `stale-events.ndjson`.
+
+- **STALE → OBSERVED (resurrection).** When a new span arrives for an existing STALE edge, `upsertObservedEdge` overwrites `provenance` back to `OBSERVED` and `confidence` back to `1.0` (`ingest.ts:233-244`). **The transition is implicit — there is no explicit "resurrect" function.** The id stayed the same through the STALE phase, so the upsert finds the existing edge and replaces attributes.
+
+- **FRONTIER → OBSERVED.** Only via FrontierNode promotion (see §2). Never standalone — a FRONTIER edge cannot become OBSERVED without its FrontierNode endpoint resolving to a typed node.
+
+- **No other transitions exist.** EXTRACTED never decays. INFERRED never transitions. STALE never goes anywhere except back to OBSERVED via resurrection.
+
+### 6. Edge retirement
+
+- **Today: only via FrontierNode promotion.** Edges incident to a promoted FrontierNode get dropped and rebuilt; the old edge is gone.
+
+- **Ghost-edge cleanup (issue #140).** When a source file is edited or removed, EXTRACTED edges that were derived from that file should be retired. Today this doesn't happen — re-extraction adds new edges but never removes old ones. The fix is part of the v0.2.1 tree-sitter rebuild and depends on `evidence.file` being present on every EXTRACTED edge (queued under the same issue).
+
+### 7. Authority — who owns what transition
+
+| Transition                        | Owner module                  |
+|-----------------------------------|-------------------------------|
+| Static node creation              | `extract/*`                   |
+| Static edge creation              | `extract/*`                   |
+| OBSERVED edge upsert              | `ingest.ts` `upsertObservedEdge` |
+| INFERRED edge creation            | `ingest.ts` `upsertInferredEdge` (via `stitchTrace`) |
+| FRONTIER node creation            | `ingest.ts` `handleSpan`      |
+| FRONTIER edge creation            | `ingest.ts` `upsertFrontierEdge` |
+| OBSERVED → STALE                  | `ingest.ts` `markStaleEdges` (background loop) |
+| STALE → OBSERVED                  | `ingest.ts` `upsertObservedEdge` (implicit on re-arrival) |
+| FrontierNode → typed (+ edge rewrite + FRONTIER → OBSERVED) | `ingest.ts` `promoteFrontierNodes`, triggered by `extract/index.ts` and `watch.ts` |
+| Ghost-edge / ghost-node cleanup   | `watch.ts` (queued under #140)|
+| Auto-create ServiceNode/DatabaseNode from OTel | `ingest.ts` `handleSpan` (queued under #134) |
+
+`traverse.ts`, `compat.ts`, `persist.ts`, `api.ts`, and `packages/mcp/src/` **never** mutate node or edge state. They are read-only consumers of the lifecycle.
+
+### 8. Idempotency
+
+Every creation path is idempotent: re-running the same producer with the same input produces the same graph state. `graph.hasNode(id)` and `graph.hasEdge(id)` guards make this hold even when watch-driven re-extraction fires the same producer many times. Tests in `packages/core/test/` exercise idempotency directly (e.g. `discover-services.test.ts`).
+
+### 9. Atomicity
+
+Each lifecycle operation is synchronous within a single call to its owner function. `handleSpan` runs to completion against the graph before yielding (the only `await` is the trailing `appendErrorEvent` after mutations are settled). `promoteFrontierNodes` rewires all incident edges and drops the FrontierNode in one synchronous pass. `markStaleEdges` walks the edge set in a single pass. There is no point at which a partial transition is observable to a concurrent reader.
+
+This relies on Node's single-threaded event loop and is sufficient for MVP scale. If NEAT later needs concurrent multi-process ingest, atomicity becomes an explicit concern and gets its own ADR.
+
+**Enforcement.**
+
+`packages/core/test/audits/contracts.test.ts` adds:
+- An assertion that no module outside `packages/core/src/ingest.ts` and `packages/core/src/extract/` mutates the graph (no `dropNode`, `dropEdge`, `addNode`, `addEdge*`, `replaceEdgeAttributes`, `replaceNodeAttributes` calls).
+- Behavioral assertions: STALE → OBSERVED resurrection (edit a STALE edge's lastObserved → call upsertObservedEdge → confirm provenance flips back, confidence is 1.0); FRONTIER → OBSERVED on promotion.
+
+`docs/contracts/lifecycle.md` records the binding rules in short form, governs the same files as the provenance contract plus `watch.ts` and `extract/index.ts`.
+
+**What this ADR is not deciding.**
+
+Schema growth versus shape changes (contract #4, the next ADR). The exact shape of `evidence` on EXTRACTED edges (queued under #140 + the v0.2.1 tree-sitter rebuild). Auto-creation of ServiceNode/DatabaseNode from OTel (queued under #134, lands in v0.2.2). Ghost cleanup (queued under #140, lands in v0.2.1). Each of those is an implementation; this ADR specifies the rules they must implement.
+
+**When to revisit.**
+
+When ghost cleanup ships (#140) or auto-creation ships (#134) — both will refine the lifecycle table and move items out of "queued" status. When concurrent multi-process ingest becomes a real requirement (post-v1.0 or post-eBPF), atomicity needs its own ADR.
+
+---
+
+## ADR-031 — Schema growth versus schema shape
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+The fourth and final data-layer contract. ADR-028, ADR-029, and ADR-030 locked node identity, edge identity + provenance, and lifecycle. Each one expects the underlying schemas in `@neat/types` to remain stable in shape while still being allowed to grow. This ADR pins down the difference.
+
+**The distinction.**
+
+- **Growth** is **additive**. A new optional field on an existing schema. A new helper export. An extra non-breaking method. Code written against the previous schema continues to work; data persisted under the previous schema continues to load. No migration needed.
+
+- **Shape change** is **breaking**. Renaming a field. Changing a field's type (`string` → `number`). Removing a field. Removing or renaming an enum value. Tightening a refinement so previously-valid data no longer parses. Changing a discriminated-union discriminator. Code written against the previous schema breaks; data persisted under the previous schema fails to load without migration.
+
+The two have different costs and different processes. Growth is cheap and frequent. Shape change is expensive, rare, and gated.
+
+**Decision.**
+
+1. **Growth is allowed in any commit, no ADR required.**
+
+   Adding `framework?: string` to `ServiceNodeSchema` (issue #142) is growth. Adding `extractedAt?: string` to GraphEdge `evidence` (issue #140) is growth. Adding a new value to `EdgeType` (e.g. `EMITS` if a new edge type lands) is growth, since older code that switches over `EdgeType` simply doesn't match the new value — it doesn't crash. The schema snapshot is updated in the same commit; the snapshot diff is the audit trail.
+
+2. **Shape change requires an ADR opened in the same PR.**
+
+   The ADR records:
+   - What changed (field removed, type changed, enum value removed, etc.).
+   - Why the breaking change is justified.
+   - How the persistence layer migrates old data (`packages/core/src/persist.ts` v→v+1 migration code).
+   - How long the migration is supported (typically: at least one minor version after introduction).
+
+   Examples of shape changes the project has already made: ADR-019 (`pgDriverVersion` removed from ServiceNode, snapshot v1→v2 migration in `persist.ts`).
+
+3. **Migration path is `persist.ts`.**
+
+   The snapshot loader at `packages/core/src/persist.ts` runs version-keyed migrations. Each shape-change ADR adds a new migration function and bumps the persisted version. The migration is *one-way* (forward only); we don't support downgrade. Old snapshots load cleanly into the new schema; new snapshots can't be loaded by old code, which is fine because we ship newer code in newer releases.
+
+4. **Enforcement is mechanical via a schema snapshot.**
+
+   `packages/core/test/audits/schema-snapshot.test.ts` introspects every binding schema in `@neat/types` (`GraphNodeSchema`, `GraphEdgeSchema`, `ProvenanceSchema`, `EdgeTypeSchema`, `ErrorEventSchema`, `RootCauseResultSchema`, `BlastRadiusResultSchema`, plus the FrontierNode / individual node schemas) and produces a normalized JSON tree describing fields, types, enum values, discriminator keys.
+
+   The tree is compared against `packages/core/test/audits/schemas.snapshot.json`. If they differ, the test fails with a message instructing the developer to either:
+   - Run the snapshot updater (a small script), commit the diff in the same PR if the change is growth.
+   - Or open an ADR documenting the shape change, then update the snapshot.
+
+   The developer can't quietly break shape — the snapshot fails before merge. The git diff on the snapshot is a structural record of every schema change the project has ever made.
+
+5. **What counts as "binding" for the snapshot.**
+
+   Anything in `@neat/types` that consumers depend on:
+   - `GraphNodeSchema` and the five node variants.
+   - `GraphEdgeSchema`.
+   - `ProvenanceSchema` (enum values).
+   - `EdgeTypeSchema` (enum values).
+   - `ErrorEventSchema`.
+   - Result schemas (`RootCauseResultSchema`, `BlastRadiusResultSchema`).
+   - Identity helpers' output types are *not* snapshotted — those are functions, not data structures, and ADR-028 / ADR-029 govern them directly.
+
+   Internal Zod refinements (`.min()`, `.max()`, `.regex()`) are recorded in the snapshot when they're load-bearing for downstream consumers (e.g. `confidence: z.number().min(0).max(1)`). Cosmetic refinements (`.describe()` strings used for LLM hints) are excluded.
+
+6. **Growth is encouraged when consumers ask for it.**
+
+   The contract is permissive for growth specifically because future producer / consumer rebuilds (v0.2.1 tree-sitter, v0.2.2 OTel, v0.2.3 traversal, v0.2.4 policies) will each ask for new optional fields. The default answer is "yes — add the optional field, snapshot the change, ship." The friction is reserved for shape changes, which deserve discussion.
+
+**Why this contract is small.**
+
+ADR-031 doesn't add helpers or refactor code. It's a meta-contract — the rule for how the previous three contracts evolve. The snapshot test is the entire enforcement mechanism. No new module, no new helper, no new abstraction.
+
+**What this ADR is not deciding.**
+
+Specific schema additions queued for v0.2.x cleanup (`framework`, `evidence.file` on every EXTRACTED edge, `path` and `confidence` on `BlastRadiusAffectedNode`). Those land under their respective issues (#142, #140, #137) and trip the snapshot fail in CI; the developer commits the new snapshot alongside the implementation.
+
+**When to revisit.**
+
+When the snapshot file becomes hard to review — say it grows past 500 lines and a real shape change is hard to spot in the diff. At that point we either split the snapshot per schema or write a smarter diff tool. Today the schema set is small enough that a single JSON file is sufficient.

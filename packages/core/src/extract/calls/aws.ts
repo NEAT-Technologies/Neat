@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { infraId } from '@neat/types'
 import { lineOf, snippet, type ExternalEndpoint, type SourceFile } from './shared.js'
 
 // AWS SDK v3 calls. We catch S3 (`Bucket: "x"` near a `S3Client`-using
@@ -36,7 +37,7 @@ export function awsEndpointsFromFile(
     seen.add(key)
     const line = lineOf(file.content, name)
     out.push({
-      infraId: `infra:${kind}:${name}`,
+      infraId: infraId(kind, name),
       name,
       kind,
       edgeType: 'CALLS',
