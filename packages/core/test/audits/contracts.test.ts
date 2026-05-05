@@ -553,11 +553,67 @@ describe('Trace stitcher contract (ADR-034)', () => {
 // ──────────────────────────────────────────────────────────────────────────
 describe('FrontierNode promotion contract (ADR-035)', () => {
   // Catches the variable-interpolated provenance pattern that the contract #2
-  // scan (line ~499) misses. `${edge.type}:${promotedProvenance}:${...}->${...}`
-  // is exactly the violation present at ingest.ts:463 today.
-  it.todo(
-    'no variable-interpolated provenance segment in edge id template literals — `${X}:${Y}:${Z}->${W}` (FrontierNode rebuild fix)',
-  )
+  // scan (line ~570) misses. `${edge.type}:${promotedProvenance}:${...}->${...}`
+  // is exactly the violation that lived at ingest.ts:463 before the rebuildEdge
+  // fix routed through the canonical helpers in @neat/types/identity.
+  it('no variable-interpolated provenance segment in edge id template literals — `${X}:${Y}:${Z}->${W}` (FrontierNode rebuild fix)', () => {
+    const offenders: string[] = []
+    // Four interpolations chained with `:` between the first three and `->`
+    // before the fourth — the literal-segment-free form the original scan
+    // doesn't catch. The provenance variable sits in the second slot.
+    const re = /`\$\{[^}]+\}:\$\{[^}]+\}:\$\{[^}]+\}->\$\{[^}]+\}`/
+    for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC)]) {
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim()
+        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+          offenders.push(`${file}:${i + 1}: ${trimmed}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('rebuildEdge constructs ids via canonical helpers — promoted FRONTIER→OBSERVED edge id matches observedEdgeId()', async () => {
+    const { observedEdgeId, frontierId, frontierEdgeId } = await import('@neat/types')
+    const { promoteFrontierNodes } = await import('../../src/ingest.js')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', {
+      id: 'service:caller',
+      type: NodeType.ServiceNode,
+      name: 'caller',
+      language: 'javascript',
+    })
+    g.addNode('service:callee', {
+      id: 'service:callee',
+      type: NodeType.ServiceNode,
+      name: 'callee',
+      language: 'javascript',
+      aliases: ['callee.internal'],
+    })
+    const fid = frontierId('callee.internal')
+    g.addNode(fid, {
+      id: fid,
+      type: NodeType.FrontierNode,
+      name: 'callee.internal',
+      host: 'callee.internal',
+    })
+    const oldEdgeId = frontierEdgeId('service:caller', fid, EdgeType.CALLS)
+    g.addEdgeWithKey(oldEdgeId, 'service:caller', fid, {
+      id: oldEdgeId,
+      source: 'service:caller',
+      target: fid,
+      type: EdgeType.CALLS,
+      provenance: Provenance.FRONTIER,
+      lastObserved: '2026-05-05T12:00:00.000Z',
+      callCount: 3,
+    })
+
+    expect(promoteFrontierNodes(g)).toBe(1)
+    const expectedId = observedEdgeId('service:caller', 'service:callee', EdgeType.CALLS)
+    expect(g.hasEdge(expectedId)).toBe(true)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
