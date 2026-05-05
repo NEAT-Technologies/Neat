@@ -15,6 +15,12 @@ export interface ParsedSpan {
   kind?: number
   startTimeUnixNano: string
   endTimeUnixNano: string
+  // ISO8601 derived from startTimeUnixNano. Production paths (lastObserved on
+  // OBSERVED edges) read this so the recorded time reflects when the span fired,
+  // not when the receiver received it. Undefined only when startTimeUnixNano is
+  // missing or unparseable — handler falls back to wall-clock in that case.
+  // See docs/contracts/otel-ingest.md §lastObserved-from-span-time.
+  startTimeIso?: string
   // bigint so the 9-digit-nanos arithmetic doesn't lose precision on long traces.
   durationNanos: bigint
   attributes: Record<string, AttributeValue>
@@ -120,6 +126,21 @@ function durationNanos(start?: string, end?: string): bigint {
   }
 }
 
+// Convert OTLP's startTimeUnixNano (a base-10 string of nanoseconds since the
+// Unix epoch) to ISO8601. Returns undefined when the input is missing, zero,
+// or unparseable, so the caller can fall back to wall-clock without surfacing
+// a fake timestamp on the edge.
+export function isoFromUnixNano(nanos: string | undefined): string | undefined {
+  if (!nanos || nanos === '0') return undefined
+  try {
+    const ms = Number(BigInt(nanos) / 1_000_000n)
+    if (!Number.isFinite(ms)) return undefined
+    return new Date(ms).toISOString()
+  } catch {
+    return undefined
+  }
+}
+
 export function parseOtlpRequest(body: OtlpTracesRequest): ParsedSpan[] {
   const out: ParsedSpan[] = []
   for (const rs of body.resourceSpans ?? []) {
@@ -140,6 +161,7 @@ export function parseOtlpRequest(body: OtlpTracesRequest): ParsedSpan[] {
           kind: span.kind,
           startTimeUnixNano: span.startTimeUnixNano ?? '0',
           endTimeUnixNano: span.endTimeUnixNano ?? '0',
+          startTimeIso: isoFromUnixNano(span.startTimeUnixNano),
           durationNanos: durationNanos(span.startTimeUnixNano, span.endTimeUnixNano),
           attributes: attrs,
           dbSystem: typeof attrs['db.system'] === 'string' ? (attrs['db.system'] as string) : undefined,

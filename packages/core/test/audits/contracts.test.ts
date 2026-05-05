@@ -512,7 +512,57 @@ describe('Static-extraction contract (ADR-032)', () => {
 // ──────────────────────────────────────────────────────────────────────────
 describe('OTel ingest contract (ADR-033)', () => {
   it.todo('OTel receiver replies before mutation completes (issue #131)')
-  it.todo('lastObserved derives from span.startTimeUnixNano, not Date.now() (issue #132)')
+  it('lastObserved derives from span.startTimeUnixNano, not Date.now() (issue #132)', async () => {
+    const { handleSpan } = await import('../../src/ingest.js')
+    const { isoFromUnixNano } = await import('../../src/otel.js')
+    const { observedEdgeId } = await import('@neat/types')
+    const { mkdtempSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', {
+      id: 'service:caller',
+      type: NodeType.ServiceNode,
+      name: 'caller',
+      language: 'javascript',
+    })
+    g.addNode('service:callee', {
+      id: 'service:callee',
+      type: NodeType.ServiceNode,
+      name: 'callee',
+      language: 'javascript',
+    })
+
+    const errorsPath = join(mkdtempSync(join(tmpdir(), 'contract-test-')), 'errors.ndjson')
+    // Backdated span: April 1st, ~5 weeks before "now". The receiver clock is
+    // pinned to 2026-05-05 so the only way the edge could end up with the
+    // April 1st timestamp is if the handler reads the span's own startTime.
+    const spanStartNano = (BigInt(Date.parse('2026-04-01T09:00:00.000Z')) * 1_000_000n).toString()
+    await handleSpan(
+      {
+        graph: g,
+        errorsPath,
+        now: () => Date.parse('2026-05-05T12:00:00.000Z'),
+      },
+      {
+        traceId: 't-backdated',
+        spanId: 's-backdated',
+        service: 'caller',
+        name: 'GET /things',
+        statusCode: 0,
+        startTimeUnixNano: spanStartNano,
+        endTimeUnixNano: spanStartNano,
+        startTimeIso: isoFromUnixNano(spanStartNano),
+        durationNanos: 0n,
+        attributes: { 'server.address': 'callee', 'http.method': 'GET' },
+      },
+    )
+
+    const edge = g.getEdgeAttributes(
+      observedEdgeId('service:caller', 'service:callee', EdgeType.CALLS),
+    ) as GraphEdge
+    expect(edge.lastObserved).toBe('2026-04-01T09:00:00.000Z')
+  })
   it.todo('parent-span cache resolves cross-service CALLS when address-based resolution fails (issue #133)')
   it.todo('handleSpan auto-creates ServiceNode at serviceId(span.service) for unseen services (issue #134)')
   it.todo('handleSpan auto-creates DatabaseNode at databaseId(host) for unseen db.system+host (issue #134)')
