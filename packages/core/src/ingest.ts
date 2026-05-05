@@ -329,7 +329,11 @@ async function appendErrorEvent(ctx: IngestContext, ev: ErrorEvent): Promise<voi
 }
 
 export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<void> {
-  const ts = nowIso(ctx)
+  // lastObserved derives from the span's own startTime per ADR-033 — replayed
+  // traces and out-of-order spans get a timestamp that reflects when the call
+  // actually fired, not when the receiver received it. Wall-clock is only the
+  // fallback for spans whose startTimeUnixNano is missing or unparseable.
+  const ts = span.startTimeIso ?? nowIso(ctx)
   const sourceId = serviceId(span.service)
   const isError = span.statusCode === 2
 
