@@ -175,6 +175,15 @@
                 "_record": "_string"
               }
             },
+            "discoveredVia": {
+              "_optional": {
+                "_enum": [
+                  "merged",
+                  "otel",
+                  "static"
+                ]
+              }
+            },
             "id": "_string",
             "incompatibilities": {
               "_optional": {
@@ -271,6 +280,15 @@
                   "minVersion": "_string",
                   "name": "_string"
                 }
+              }
+            },
+            "discoveredVia": {
+              "_optional": {
+                "_enum": [
+                  "merged",
+                  "otel",
+                  "static"
+                ]
               }
             },
             "engine": "_string",
