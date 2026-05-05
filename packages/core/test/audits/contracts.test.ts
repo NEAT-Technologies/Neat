@@ -511,7 +511,45 @@ describe('Static-extraction contract (ADR-032)', () => {
 // OTel ingest contract — non-blocking, span-time, parent-cache (ADR-033)
 // ──────────────────────────────────────────────────────────────────────────
 describe('OTel ingest contract (ADR-033)', () => {
-  it.todo('OTel receiver replies before mutation completes (issue #131)')
+  it('OTel receiver replies before mutation completes (issue #131)', async () => {
+    const { buildOtelReceiver } = await import('../../src/otel.js')
+
+    const HANDLER_DELAY_MS = 40
+    const handlerEnd: number[] = []
+    const app = await buildOtelReceiver({
+      onSpan: async () => {
+        await new Promise((r) => setTimeout(r, HANDLER_DELAY_MS))
+        handlerEnd.push(Date.now())
+      },
+    })
+    try {
+      const replyStart = Date.now()
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/traces',
+        headers: { 'content-type': 'application/json' },
+        payload: {
+          resourceSpans: [
+            {
+              resource: { attributes: [{ key: 'service.name', value: { stringValue: 's' } }] },
+              scopeSpans: [
+                { spans: [{ name: 'op', startTimeUnixNano: '0', endTimeUnixNano: '0' }] },
+              ],
+            },
+          ],
+        },
+      })
+      const replyMs = Date.now() - replyStart
+      expect(res.statusCode).toBe(200)
+      // Receiver replies before the slow handler finishes — proof the queue
+      // decoupled mutation from the response. Bound chosen to avoid CI flake.
+      expect(replyMs).toBeLessThan(HANDLER_DELAY_MS)
+      await (app as unknown as { flushPending: () => Promise<void> }).flushPending()
+      expect(handlerEnd.length).toBe(1)
+    } finally {
+      await app.close()
+    }
+  })
   it('lastObserved derives from span.startTimeUnixNano, not Date.now() (issue #132)', async () => {
     const { handleSpan } = await import('../../src/ingest.js')
     const { isoFromUnixNano } = await import('../../src/otel.js')

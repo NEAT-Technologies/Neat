@@ -43,6 +43,11 @@ export interface IngestContext {
   graph: NeatGraph
   errorsPath: string
   now?: () => number
+  // Set to false when the receiver already wrote the ErrorEvent synchronously
+  // (production daemons via watch.ts wire this). When true or omitted, handleSpan
+  // appends the ErrorEvent itself — the path used by ad-hoc scripts and tests
+  // that don't go through buildOtelReceiver. ADR-033 §Error events.
+  writeErrorEventInline?: boolean
 }
 
 const HOUR_MS = 60 * 60 * 1000
@@ -439,6 +444,43 @@ async function appendErrorEvent(ctx: IngestContext, ev: ErrorEvent): Promise<voi
   await fs.appendFile(ctx.errorsPath, JSON.stringify(ev) + '\n', 'utf8')
 }
 
+// Build the minimal ErrorEvent the receiver writes synchronously before
+// replying (ADR-033 §Error events, amended). affectedNode resolves to the
+// originating service because graph state isn't available at this point —
+// the queued handleSpan path may reach a more precise target later, but the
+// durable record is what the receiver writes here.
+export function buildErrorEventForReceiver(span: ParsedSpan): ErrorEvent | null {
+  if (span.statusCode !== 2) return null
+  const ts = span.startTimeIso ?? new Date().toISOString()
+  return {
+    id: `${span.traceId}:${span.spanId}`,
+    timestamp: ts,
+    service: span.service,
+    traceId: span.traceId,
+    spanId: span.spanId,
+    errorMessage:
+      span.exception?.message ?? span.errorMessage ?? span.name ?? 'unknown error',
+    ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
+    ...(span.exception?.stacktrace
+      ? { exceptionStacktrace: span.exception.stacktrace }
+      : {}),
+    affectedNode: serviceId(span.service),
+  }
+}
+
+// Synchronous file-write helper bound to a receiver. The receiver awaits this
+// before replying, so a write failure surfaces as 500 → OTel SDK retries.
+export function makeErrorSpanWriter(
+  errorsPath: string,
+): (span: ParsedSpan) => Promise<void> {
+  return async (span) => {
+    const ev = buildErrorEventForReceiver(span)
+    if (!ev) return
+    await fs.mkdir(path.dirname(errorsPath), { recursive: true })
+    await fs.appendFile(errorsPath, JSON.stringify(ev) + '\n', 'utf8')
+  }
+}
+
 export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<void> {
   // lastObserved derives from the span's own startTime per ADR-033 — replayed
   // traces and out-of-order spans get a timestamp that reflects when the call
@@ -529,24 +571,32 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
 
   if (span.statusCode === 2) {
     stitchTrace(ctx.graph, sourceId, ts)
-    // Exception event data (richer than status.message) wins when present,
-    // per ADR-033's exception-data-from-span-events rule.
-    const ev: ErrorEvent = {
-      id: `${span.traceId}:${span.spanId}`,
-      timestamp: ts,
-      service: span.service,
-      traceId: span.traceId,
-      spanId: span.spanId,
-      errorMessage:
-        span.exception?.message ?? span.errorMessage ?? span.name ?? 'unknown error',
-      ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
-      ...(span.exception?.stacktrace
-        ? { exceptionStacktrace: span.exception.stacktrace }
-        : {}),
-      affectedNode,
+    // The durable ErrorEvent write moved to the receiver so the file write
+    // happens synchronously before the 200 reply (ADR-033 §Error events,
+    // amended). watch.ts wires makeErrorSpanWriter into onErrorSpanSync.
+    // handleSpan still runs the in-graph error effects (stitchTrace above);
+    // it just doesn't append to errors.ndjson anymore. ctx.errorsPath stays
+    // for the optional opt-in path below — daemon-less callers (CLI tests,
+    // ad-hoc scripts) that skip the receiver hook still get a write here.
+    if (ctx.writeErrorEventInline !== false) {
+      const ev: ErrorEvent = {
+        id: `${span.traceId}:${span.spanId}`,
+        timestamp: ts,
+        service: span.service,
+        traceId: span.traceId,
+        spanId: span.spanId,
+        errorMessage:
+          span.exception?.message ?? span.errorMessage ?? span.name ?? 'unknown error',
+        ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
+        ...(span.exception?.stacktrace
+          ? { exceptionStacktrace: span.exception.stacktrace }
+          : {}),
+        affectedNode,
+      }
+      await appendErrorEvent(ctx, ev)
     }
-    await appendErrorEvent(ctx, ev)
   }
+  void affectedNode
 }
 
 export { stitchTrace }

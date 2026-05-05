@@ -14,9 +14,11 @@ The first of three v0.2.2 producer-layer contracts. Governs the OTel ingest path
 
 ## Non-blocking ingest (binding)
 
-The receiver replies 200 OK immediately on receipt. Mutation runs through a non-blocking handler — either an in-process queue drained on the next tick, or fire-and-forget with bounded concurrency. **The OTel sender is never blocked on graph mutation.** SDK exporters retry on timeout, so blocking ingest produces observable backpressure on the system being observed; ambient observation requires no observable effect.
+The HTTP receiver replies 200 OK as soon as the body is parsed. Mutation runs through an in-process queue drained on the next tick. **The OTel sender is never blocked on graph mutation.** SDK exporters retry on timeout, so blocking ingest would produce observable backpressure on the system being observed; ambient observation requires no observable effect.
 
-Today (issue #131) the receiver awaits `opts.onSpan` per-span before sending the 200. The cleanup is to introduce a queue.
+Issue #131 closed this with a chained-Promise drain loop. Errors in `onSpan` log and continue rather than killing the loop. `flushPending()` is exposed on the receiver as a test seam; production code never awaits it.
+
+The receiver awaits exactly one synchronous step before reply: `onErrorSpanSync` for spans with `statusCode === 2`, so error-event durability is preserved (see §Error events). gRPC ingest still awaits `onSpan` inline — non-blocking gRPC is deferred.
 
 ## `lastObserved` from span time
 
@@ -60,7 +62,13 @@ exceptionMessage = events.find(e => e.name === 'exception')?.attributes['excepti
 
 ## HTTP receiver supports JSON and protobuf
 
-Today the HTTP receiver only accepts `application/json` bodies. The contract: dispatch on `Content-Type`. Protobuf parsing uses the bundled `.proto` definitions (ADR-020). gRPC continues to handle protobuf natively.
+The HTTP receiver dispatches on `Content-Type`:
+
+- `application/json` — parsed by Fastify's default JSON parser, fed straight into `parseOtlpRequest`.
+- `application/x-protobuf` — buffered as raw bytes, decoded against the bundled `.proto` definitions (ADR-020) via `protobufjs`, reshaped through `reshapeGrpcRequest` (the same path the gRPC receiver uses), then fed into `parseOtlpRequest`. A decode failure returns 400.
+- Anything else returns 415.
+
+gRPC continues to handle protobuf natively in `otel-grpc.ts`.
 
 ## `db.system` is data, not a switch
 
@@ -68,9 +76,16 @@ Engine identification is read from the span attribute as a string and never comp
 
 ## Error events
 
-`appendErrorEvent` writes to `errors.ndjson` synchronously after the graph mutation but before the receiver replies. If the file write fails, the receiver returns 500 so the OTel SDK retries.
+Error-event durability is reconciled with non-blocking ingest in two steps:
 
-ErrorEvent shape stays as defined in `@neat/types`. New fields (`exceptionType`, `exceptionStacktrace`) land via the schema-growth contract.
+1. **Synchronous write at the receiver, before reply.** When the HTTP receiver sees a span with `statusCode === 2` and the daemon wires `onErrorSpanSync`, it builds the `ErrorEvent` and appends it to `errors.ndjson` before sending the 200. On write failure → 500, so the OTel SDK retries. `affectedNode` resolves to `serviceId(span.service)` because graph state isn't yet available at this point.
+2. **Asynchronous graph effects via the queue.** `handleSpan` runs from the queue and performs the in-graph error effects (`stitchTrace`, etc.). It does **not** append to `errors.ndjson` again — the receiver-written record is the durable one. `IngestContext.writeErrorEventInline = false` toggles the in-handleSpan write off; the daemon (`watch.ts`) sets this. Ad-hoc CLI/test callers leave it at the default and get a single inline write, so they don't need a receiver to record errors.
+
+Trade-off accepted: `affectedNode` on the durable record is the originating service, not the more precise per-call target the old single-write path could compute. Downstream consumers can join `errors.ndjson` against the live graph at query time when finer attribution matters.
+
+The gRPC receiver still awaits `onSpan` synchronously per request (non-blocking gRPC ingest is out of scope for the v0.2.2 batch), so `watch.ts` wires gRPC with `writeErrorEventInline` left at its default — the inline write covers the durability guarantee on that path.
+
+ErrorEvent shape stays as defined in `@neat/types`. The fields added by issue #135 (`exceptionType`, `exceptionStacktrace`) landed via the schema-growth contract.
 
 ## Authority
 

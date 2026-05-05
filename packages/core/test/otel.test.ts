@@ -179,22 +179,94 @@ describe('buildOtelReceiver', () => {
     expect(collected).toEqual([])
   })
 
-  it('awaits async handlers before returning', async () => {
+  it('returns 200 before slow handlers complete and drains them after (ADR-033 non-blocking ingest)', async () => {
     await app.close()
     const observed: string[] = []
+    const HANDLER_DELAY_MS = 30
     app = await buildOtelReceiver({
       onSpan: async (s) => {
-        await new Promise((r) => setTimeout(r, 5))
+        await new Promise((r) => setTimeout(r, HANDLER_DELAY_MS))
         observed.push(s.spanId)
       },
     })
+    const start = Date.now()
     const res = await app.inject({
       method: 'POST',
       url: '/v1/traces',
       headers: { 'content-type': 'application/json' },
       payload: SAMPLE_BODY,
     })
+    const replyMs = Date.now() - start
     expect(res.statusCode).toBe(200)
+    // 2 spans × 30ms each = 60ms if blocking. Reply must come back well under
+    // that — pick a generous bound to avoid CI flakiness.
+    expect(replyMs).toBeLessThan(HANDLER_DELAY_MS)
+    expect(observed).toEqual([])
+    // After the queue drains, both spans land.
+    await (app as unknown as { flushPending: () => Promise<void> }).flushPending()
     expect(observed).toEqual(['1111111111111111', '2222222222222222'])
+  })
+
+  it('rejects unsupported content types with 415', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/traces',
+      headers: { 'content-type': 'application/xml' },
+      payload: '<not-otlp/>',
+    })
+    expect(res.statusCode).toBe(415)
+  })
+
+  it('returns 400 for malformed protobuf bodies', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/traces',
+      headers: { 'content-type': 'application/x-protobuf' },
+      payload: Buffer.from([0xff, 0xff, 0xff]),
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('decodes a valid application/x-protobuf body via the bundled .proto', async () => {
+    const protobuf = (await import('protobufjs')).default
+    const path = await import('node:path')
+    const { fileURLToPath } = await import('node:url')
+    const here = path.dirname(fileURLToPath(import.meta.url))
+    const protoRoot = path.resolve(here, '..', 'proto')
+    const root = new protobuf.Root()
+    root.resolvePath = (_o, t) => path.resolve(protoRoot, t)
+    root.loadSync(
+      'opentelemetry/proto/collector/trace/v1/trace_service.proto',
+      { keepCase: true },
+    )
+    const Type = root.lookupType(
+      'opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest',
+    )
+    const buf = Buffer.from(
+      Type.encode({
+        resource_spans: [
+          {
+            resource: {
+              attributes: [
+                { key: 'service.name', value: { string_value: 'service-pb' } },
+              ],
+            },
+            scope_spans: [
+              { spans: [{ name: 'op-pb', start_time_unix_nano: '0', end_time_unix_nano: '0' }] },
+            ],
+          },
+        ],
+      }).finish(),
+    )
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/traces',
+      headers: { 'content-type': 'application/x-protobuf' },
+      payload: buf,
+    })
+    expect(res.statusCode).toBe(200)
+    await (app as unknown as { flushPending: () => Promise<void> }).flushPending()
+    expect(collected.find((s) => s.service === 'service-pb' && s.name === 'op-pb')).toBeDefined()
   })
 })
