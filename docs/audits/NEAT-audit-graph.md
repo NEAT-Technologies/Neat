@@ -44,6 +44,7 @@ The MVP graph must support these node types:
 - `DatabaseNode` — a database. Has: name, engine, engineVersion, compatibleDrivers
 - `ConfigNode` — a config file. Has: name, path, fileType
 - `InfraNode` — infrastructure node derived from docker-compose, k8s, Terraform
+- `FrontierNode` — unresolved span peer (host:port not yet matched to a known node). Promoted to a typed node once an alias matches. See ADR-023.
 
 `[v1.0]` UserNode, PolicyNode, AgentNode are not MVP scope.
 
@@ -58,6 +59,8 @@ The MVP graph must support these node types:
 - `DEPENDS_ON` — static import or package dependency
 - `CONNECTS_TO` — service connects to a database
 - `CONFIGURED_BY` — service reads from a config node
+- `RUNS_ON` — service runs on infra (compose, k8s, Terraform)
+- `PUBLISHES_TO` / `CONSUMES_FROM` — service ↔ message broker (Kafka/Redis/etc.)
 
 **Verify:**
 - Is edge type validated on insertion?
@@ -92,15 +95,16 @@ EXTRACTED | INFERRED | OBSERVED | STALE | FRONTIER
 
 ### 5. Staleness — MVP
 
-OBSERVED edges decay to STALE when not seen within 24 hours. This must be a background process, not a read-time computation.
+OBSERVED edges decay to STALE when not seen within a configured threshold. This must be a background process, not a read-time computation.
 
-`[v1.0]` Per-edge-type staleness thresholds are v1.0 even if mentioned in release notes.
+**Per-edge-type thresholds (ratified in ADR-024):** different edge types decay at different rates. Defaults: CALLS = 1h, CONNECTS_TO = 4h, DEPENDS_ON / CONFIGURED_BY / RUNS_ON = 24h. Overridable via `NEAT_STALE_THRESHOLDS` env. Transitions are appended to `stale-events.ndjson`.
 
 **Verify:**
 - Is there a `setInterval` or equivalent background job that transitions OBSERVED → STALE?
 - Or is staleness computed at read time in the REST API or MCP tools? If yes, this is a gap.
 - When an edge transitions to STALE, is `lastObserved` preserved?
-- Is the 24-hour threshold hardcoded or configurable?
+- Are per-edge-type thresholds enforced (CALLS=1h, CONNECTS_TO=4h, others=24h) and overridable via env?
+- Is each transition appended to `stale-events.ndjson`?
 
 ### 6. Persistence — MVP
 
@@ -113,12 +117,14 @@ OBSERVED edges decay to STALE when not seen within 24 hours. This must be a back
 
 ### 7. Edge upsert semantics — MVP
 
-One edge between any pair of nodes with one edge type. When OTel confirms a relationship already in the graph as EXTRACTED, upgrade the edge — do not duplicate it.
+OBSERVED and EXTRACTED edges **coexist** between the same node pair under distinct edge ids. This is intentional (see `packages/core/src/ingest.ts:15-17`): the OBSERVED layer must remain visible alongside the EXTRACTED layer so divergence between declared intent and observed reality stays load-bearing — it is the gap ADR-027 names as NEAT's value. Upsert is per-(source, target, type, provenance) tuple, not per-(source, target, type).
+
+Edge id pattern: EXTRACTED edges use `${type}:${source}->${target}`; OBSERVED edges use `${type}:OBSERVED:${source}->${target}`; INFERRED and FRONTIER follow the same pattern with their own provenance prefix. Traversal selects the highest-priority edge per pair via `PROV_RANK` (OBSERVED > INFERRED > EXTRACTED > STALE/FRONTIER).
 
 **Verify:**
-- Is there an upsert function in `ingest.ts` that checks for an existing edge before creating?
-- If EXTRACTED exists and OTel confirms the same relationship, does the code upgrade to OBSERVED or create a duplicate?
-- What is the traversal priority rule when multiple edges exist? OBSERVED must beat EXTRACTED must beat INFERRED.
+- Is there an upsert function in `ingest.ts` that checks for an existing edge of the same provenance before creating?
+- Do OBSERVED and EXTRACTED edges coexist with distinct ids when both apply to the same node pair?
+- What is the traversal priority rule when multiple edges exist? OBSERVED must beat INFERRED must beat EXTRACTED must beat STALE.
 
 ### 8. Multi-project scoping — MVP
 
@@ -146,6 +152,7 @@ One edge between any pair of nodes with one edge type. When OTel confirms a rela
 - Staleness computed in the REST API handler rather than as a background transition
 - Two edges between the same pair of nodes with the same edge type
 - `pgDriverVersion` still special-cased in traversal or root cause logic
+- A second OBSERVED-layer edge written under the EXTRACTED id (clobbering the static layer) — OBSERVED must use its own id pattern
 
 ---
 
@@ -154,7 +161,7 @@ One edge between any pair of nodes with one edge type. When OTel confirms a rela
 1. Is `new DirectedGraph()` called only once per project scope?
 2. Does `GET /graph` read from the live graphology instance or from graph.json?
 3. Is staleness a background transition or a read-time computation?
-4. When an EXTRACTED edge is later confirmed by OTel, does the code upgrade or duplicate?
+4. When an EXTRACTED edge is later confirmed by OTel, does the OBSERVED edge land under its own distinct id pattern (`${type}:OBSERVED:src->tgt`) so both layers remain visible?
 5. Does every INFERRED edge have a `confidence` field between 0.0 and 1.0?
 
 ---

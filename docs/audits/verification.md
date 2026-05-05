@@ -687,4 +687,18 @@ A short list of items most likely to deserve v0.2.0 cleanup issues, not deferral
 
 ---
 
-*End of verification pass. Findings only — no code changes in this pass. User triage opens v0.2.0 issues, amendments to existing #115-#119, and audit-text amendments based on the AUDIT-DRIFT roll-up above.*
+*End of verification pass. Findings only — no code changes in this pass.*
+
+---
+
+## Addendum — audit-drift amendments (applied)
+
+The five AUDIT-DRIFT items in the cross-cutting roll-up have been resolved by amending the audit text to match shipped ADRs. Source code unchanged.
+
+- **Graph audit §2** — added `FrontierNode` to the MVP node-types list (ADR-023).
+- **Graph audit §3** — added `RUNS_ON`, `PUBLISHES_TO`, `CONSUMES_FROM` to the MVP edge-types list (matches `packages/types/src/constants.ts`).
+- **Graph audit §5 + OTel audit §9** — replaced flat 24h staleness with per-edge-type thresholds (ADR-024). Added `stale-events.ndjson` to the verify list.
+- **Graph audit §7 + OTel audit §8** — replaced "upgrade in place" contract with the coexistence contract (`ingest.ts:15-17`, ADR-027). Both audits now describe the distinct OBSERVED edge id pattern and the `PROV_RANK` selection rule. OTel §8 also corrects `confidence` expectation: OBSERVED edges carry `confidence: 1.0` as a max-trust marker, not removed.
+- **MCP audit §9** — replaced "keyword only in MVP" with the ADR-025 embedder chain (Ollama → MiniLM → substring). Updated tool-status table and red-flag entry.
+
+The two policies-naming clashes and the `drivers` vs `dependencies` field-name disagreement remain open — they need product calls before any audit edit.

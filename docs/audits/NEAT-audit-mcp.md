@@ -210,7 +210,7 @@ Calls: `GET ${NEAT_CORE_URL}/incidents/{node}?limit={limit}`
 
 ### 9. semantic_search — MVP
 
-MVP implementation: keyword search over node names, node properties, and error messages. Not vector search — that is v1.0.
+MVP implementation per ADR-025: a tiered embedder chain — Ollama (`nomic-embed-text`, 768d) → Transformers.js (`all-MiniLM-L6-v2`, 384d) → substring fallback. Flat in-memory cosine search; sidecar `embeddings.json` cache so a cold start does not re-embed every node. Vector search **is** part of the MVP — pivoted from the original keyword-only stub once the local embedder chain proved cheap enough.
 
 Input schema:
 ```typescript
@@ -222,10 +222,11 @@ Input schema:
 Calls: `GET ${NEAT_CORE_URL}/search?q={query}`
 
 **Verify:**
-- Is the tool documented in CLAUDE.md as keyword search, not semantic vector search?
+- Does the tool description note the embedder chain and graceful degradation to substring fallback?
 - Does it search across node names, node properties (including driver versions), and error messages?
-- Does it return results with enough context for Claude Code to understand why each result matched?
-- Is the v1.0 vector search upgrade noted in a comment so it is not accidentally implemented now?
+- Does it return results with enough context for Claude Code to understand why each result matched (id, type, name, score)?
+- Does the substring fallback engage cleanly when no embedder is available?
+- Is the sidecar `embeddings.json` cache used so cold start is fast?
 
 ### 10. get_policy_violations — MVP
 
@@ -318,7 +319,7 @@ The complete tool surface for the MVP is:
 | get_dependencies | Shipped |
 | get_observed_dependencies | Shipped |
 | get_incident_history | Shipped |
-| semantic_search | Shipped (keyword stub) |
+| semantic_search | Shipped (Ollama → MiniLM → substring chain per ADR-025) |
 | get_policy_violations | Not yet — needs policy layer |
 | evaluate_policy | Not yet — needs policy layer |
 
@@ -351,7 +352,7 @@ Every tool must work on any codebase NEAT has modelled. Not just the demo.
 - CLAUDE.md missing or not instructing Claude Code to use NEAT tools proactively
 - Tool responses that return empty strings or null when no data is found — must return a clear message
 - Tools that throw unhandled errors when neat-core is unreachable — must return a graceful error message
-- semantic_search implemented as vector search in the MVP — it must be keyword search only
+- semantic_search regressed to substring-only when Ollama and MiniLM are both reachable — the embedder chain must engage when available (per ADR-025)
 
 ---
 
