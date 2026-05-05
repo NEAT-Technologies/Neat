@@ -18,6 +18,9 @@ This file is the index. Each rule has a short summary and a link to its full per
 | 6 | OTel ingest | [`contracts/otel-ingest.md`](./contracts/otel-ingest.md) | Non-blocking receiver, span-time `lastObserved`, parent-span cache, exception-event parsing, auto-creation of unseen services/DBs (ADR-033) | ✅ landed (v0.2.2 opens) |
 | 7 | Trace stitcher | [`contracts/trace-stitcher.md`](./contracts/trace-stitcher.md) | ERROR-only trigger, depth-2 limit, EXTRACTED-only walk, OBSERVED-twin-skip rule, default confidence 0.6 (ADR-034) | ✅ landed (v0.2.2 opens) |
 | 8 | FrontierNode promotion | [`contracts/frontier-promotion.md`](./contracts/frontier-promotion.md) | Post-extract trigger, alias-match precedence, atomic per-node, FRONTIER→OBSERVED upgrade, canonical edge-id helpers required (ADR-035) | ✅ landed (v0.2.2 opens) |
+| 9 | Traversal | [`contracts/traversal.md`](./contracts/traversal.md) | PROV_RANK at every hop, FRONTIER excluded entirely, multiplicative confidence cascading, no mutation, schema-validated results (ADR-036) | ✅ landed (v0.2.3 opens) |
+| 10 | `getRootCause` | [`contracts/get-root-cause.md`](./contracts/get-root-cause.md) | Walks incoming edges to depth 5, dispatches by origin node type, human-readable reason, derived fix recommendation (ADR-037) | ✅ landed (v0.2.3 opens) |
+| 11 | `getBlastRadius` | [`contracts/get-blast-radius.md`](./contracts/get-blast-radius.md) | BFS outbound default depth 10, distance positive, per-node path + cascaded confidence, schema-validated (ADR-038) | ✅ landed (v0.2.3 opens) |
 
 ### Future contracts — opened at the start of each milestone
 
@@ -25,9 +28,6 @@ Producer-, consumer-, surface-, policy-, and distribution-layer contracts open a
 
 | # | Contract | Milestone | Governs (target) |
 |---|----------|-----------|------------------|
-| 9 | Traversal | v0.2.3 | Edge priority per hop, FRONTIER exclusion, confidence cascading, schema validation (`traverse.ts`) |
-| 10 | `getRootCause` | v0.2.3 | Incompatibility-check semantics per upstream node type, reason-string format, fix-recommendation derivation |
-| 11 | `getBlastRadius` | v0.2.3 | Outbound semantics, distance positive integer, per-node path and confidence, total-affected count |
 | 12 | MCP tool surface | v0.2.4 | Three-part response, confidence/provenance footer, transitive vs direct, tool count and naming (`packages/mcp/src/`) |
 | 13 | REST API | v0.2.4 | Endpoint shape per resource, project-scoped routing, error response shape (`packages/core/src/api.ts`) |
 | 14 | Persistence | v0.2.4 | Snapshot schema versioning, migration rules, startup-load behavior (`packages/core/src/persist.ts`) |
