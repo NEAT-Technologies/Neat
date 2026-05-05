@@ -34,7 +34,7 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
   )
   if (urlMatch) {
     const config = parseConnectionString(urlMatch[1]!)
-    if (config) return [config]
+    if (config) return [{ ...config, sourceFile: filePath }]
   }
 
   const host = content.match(/host\s*:\s*['"`]([^'"`]+)['"`]/)?.[1]
@@ -48,11 +48,12 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
         database,
         engine,
         engineVersion: 'unknown',
+        sourceFile: filePath,
       },
     ]
   }
 
-  return [{ host: `${engine}-knex`, database: '', engine, engineVersion: 'unknown' }]
+  return [{ host: `${engine}-knex`, database: '', engine, engineVersion: 'unknown', sourceFile: filePath }]
 }
 
 export const knexParser = { name: 'knex', parse }

@@ -34,6 +34,7 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
       database: entry.database ?? '',
       engine,
       engineVersion: 'unknown',
+      sourceFile: configPath,
     })
   }
   return out

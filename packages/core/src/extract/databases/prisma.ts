@@ -28,7 +28,7 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
   const urlMatch = body.match(/url\s*=\s*"([^"]+)"/)
   if (urlMatch) {
     const config = parseConnectionString(urlMatch[1]!)
-    if (config) return [config]
+    if (config) return [{ ...config, sourceFile: schemaPath }]
   }
 
   return [
@@ -37,6 +37,7 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
       database: '',
       engine,
       engineVersion: 'unknown',
+      sourceFile: schemaPath,
     },
   ]
 }

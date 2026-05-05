@@ -10,6 +10,7 @@ import { addDatabasesAndCompat } from './extract/databases/index.js'
 import { addConfigNodes } from './extract/configs.js'
 import { addCallEdges } from './extract/calls/index.js'
 import { addInfra } from './extract/infra/index.js'
+import { retireEdgesByFile } from './extract/retire.js'
 import { makeSpanHandler, promoteFrontierNodes, startStalenessLoop } from './ingest.js'
 import { buildOtelReceiver } from './otel.js'
 import { startOtelGrpcReceiver } from './otel-grpc.js'
@@ -131,7 +132,7 @@ export async function runExtractPhases(
     await addServiceAliases(graph, scanPath, services)
   }
   if (phases.has('databases')) {
-    const r = await addDatabasesAndCompat(graph, services)
+    const r = await addDatabasesAndCompat(graph, services, scanPath)
     nodesAdded += r.nodesAdded
     edgesAdded += r.edgesAdded
   }
@@ -270,17 +271,26 @@ export async function startWatch(
   // event per affected path; an editor save can produce 3+ events on the same
   // file in <50ms.
   const pending = new Set<ExtractPhase>()
+  const pendingPaths = new Set<string>()
   let timer: NodeJS.Timeout | null = null
   let inflight: Promise<void> | null = null
 
   const flush = async (): Promise<void> => {
     if (pending.size === 0) return
     const phases = new Set(pending)
+    const paths = new Set(pendingPaths)
     pending.clear()
+    pendingPaths.clear()
     try {
+      // Drop EXTRACTED edges keyed to changed paths first, so the producer's
+      // idempotent re-extract recreates only the edges that still apply.
+      // Without this, edges from deleted code would survive forever
+      // (docs/contracts/static-extraction.md §Ghost-edge cleanup).
+      let retired = 0
+      for (const p of paths) retired += retireEdgesByFile(graph, p)
       const result = await runExtractPhases(graph, opts.scanPath, phases)
       console.log(
-        `[watch] re-extract phases=${result.phases.join(',')} +${result.nodesAdded}n/+${result.edgesAdded}e in ${result.durationMs}ms`,
+        `[watch] re-extract phases=${result.phases.join(',')} retired=${retired} +${result.nodesAdded}n/+${result.edgesAdded}e in ${result.durationMs}ms`,
       )
       if (searchIndex) {
         try {
@@ -307,6 +317,7 @@ export async function startWatch(
     if (shouldIgnore(absPath)) return
     const rel = path.relative(opts.scanPath, absPath)
     if (!rel || rel.startsWith('..')) return
+    pendingPaths.add(rel.split(path.sep).join('/'))
     const phases = classifyChange(rel)
     if (phases.size === 0) {
       // Unknown file kind — fall back to full re-extract rather than silently

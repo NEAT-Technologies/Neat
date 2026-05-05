@@ -16,10 +16,23 @@ const FIXTURES = path.resolve(__dirname, 'fixtures', 'db')
 describe('database source parsers', () => {
   it('reads DATABASE_URL out of .env', async () => {
     const configs = await parseDotenv(path.join(FIXTURES, 'dotenv'))
-    expect(configs).toEqual([
-      { engine: 'postgresql', host: 'db.internal', port: 5432, database: 'orders', engineVersion: 'unknown' },
-      { engine: 'redis', host: 'cache.internal', port: 6379, database: '', engineVersion: 'unknown' },
-    ])
+    expect(configs).toHaveLength(2)
+    expect(configs[0]).toMatchObject({
+      engine: 'postgresql',
+      host: 'db.internal',
+      port: 5432,
+      database: 'orders',
+      engineVersion: 'unknown',
+    })
+    expect(configs[1]).toMatchObject({
+      engine: 'redis',
+      host: 'cache.internal',
+      port: 6379,
+      database: '',
+      engineVersion: 'unknown',
+    })
+    // Every parsed config carries the source file it came from (#140).
+    expect(configs[0]!.sourceFile).toMatch(/\.env$/)
   })
 
   it('reads provider + url out of prisma/schema.prisma', async () => {

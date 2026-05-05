@@ -56,6 +56,7 @@ export async function addConfigNodes(
         target: node.id,
         type: EdgeType.CONFIGURED_BY,
         provenance: Provenance.EXTRACTED,
+        evidence: { file: relPath.split(path.sep).join('/') },
       }
       if (!graph.hasEdge(edge.id)) {
         graph.addEdgeWithKey(edge.id, edge.source, edge.target, edge)

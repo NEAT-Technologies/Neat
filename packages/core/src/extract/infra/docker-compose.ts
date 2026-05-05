@@ -57,6 +57,7 @@ export async function addComposeInfra(
 
   const compose = await readYaml<ComposeFile>(composePath)
   if (!compose?.services) return { nodesAdded, edgesAdded }
+  const evidenceFile = path.relative(scanPath, composePath).split(path.sep).join('/')
 
   const composeNameToNodeId = new Map<string, string>()
   for (const [composeName, svc] of Object.entries(compose.services)) {
@@ -88,6 +89,7 @@ export async function addComposeInfra(
         target: targetId,
         type: EdgeType.DEPENDS_ON,
         provenance: Provenance.EXTRACTED,
+        evidence: { file: evidenceFile },
       }
       graph.addEdgeWithKey(edgeId, edge.source, edge.target, edge)
       edgesAdded++
