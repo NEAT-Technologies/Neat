@@ -30,6 +30,15 @@ export interface ParsedSpan {
   // 0 = UNSET, 1 = OK, 2 = ERROR per OTLP. We only care that 2 means error.
   statusCode?: number
   errorMessage?: string
+  // Pre-extracted from a span event with name="exception". OTLP SDKs record
+  // exceptions this way (richer than status.message). handleSpan reads these
+  // first, falling back to status.message and span.name. See
+  // docs/contracts/otel-ingest.md §exception-data-from-span-events.
+  exception?: {
+    type?: string
+    message?: string
+    stacktrace?: string
+  }
 }
 
 export type AttributeValue =
@@ -69,6 +78,12 @@ interface OtlpStatus {
   message?: string
 }
 
+interface OtlpEvent {
+  name?: string
+  timeUnixNano?: string
+  attributes?: OtlpKeyValue[]
+}
+
 interface OtlpSpan {
   traceId?: string
   spanId?: string
@@ -78,7 +93,25 @@ interface OtlpSpan {
   startTimeUnixNano?: string
   endTimeUnixNano?: string
   attributes?: OtlpKeyValue[]
+  events?: OtlpEvent[]
   status?: OtlpStatus
+}
+
+function extractExceptionFromEvents(events: OtlpEvent[] | undefined): ParsedSpan['exception'] {
+  if (!events) return undefined
+  for (const ev of events) {
+    if (ev.name !== 'exception') continue
+    const attrs = attrsToRecord(ev.attributes)
+    const out: ParsedSpan['exception'] = {}
+    const t = attrs['exception.type']
+    const m = attrs['exception.message']
+    const s = attrs['exception.stacktrace']
+    if (typeof t === 'string') out.type = t
+    if (typeof m === 'string') out.message = m
+    if (typeof s === 'string') out.stacktrace = s
+    if (out.type || out.message || out.stacktrace) return out
+  }
+  return undefined
 }
 
 interface OtlpScopeSpans {
@@ -168,6 +201,7 @@ export function parseOtlpRequest(body: OtlpTracesRequest): ParsedSpan[] {
           dbName: typeof attrs['db.name'] === 'string' ? (attrs['db.name'] as string) : undefined,
           statusCode: span.status?.code,
           errorMessage: span.status?.message,
+          exception: extractExceptionFromEvents(span.events),
         }
         out.push(parsed)
       }
