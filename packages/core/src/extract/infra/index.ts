@@ -19,7 +19,7 @@ export async function addInfra(
   services: DiscoveredService[],
 ): Promise<InfraExtractResult> {
   const compose = await addComposeInfra(graph, scanPath, services)
-  const dockerfile = await addDockerfileRuntimes(graph, services)
+  const dockerfile = await addDockerfileRuntimes(graph, services, scanPath)
   const terraform = await addTerraformResources(graph, scanPath)
   const k8s = await addK8sResources(graph, scanPath)
 

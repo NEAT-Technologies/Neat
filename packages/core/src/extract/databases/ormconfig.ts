@@ -31,6 +31,7 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
         database: entry.database ?? '',
         engine,
         engineVersion: 'unknown',
+        sourceFile: abs,
       })
     }
     if (out.length > 0) return out

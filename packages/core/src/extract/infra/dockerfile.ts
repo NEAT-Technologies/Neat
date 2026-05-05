@@ -31,6 +31,7 @@ function runtimeImage(content: string): string | null {
 export async function addDockerfileRuntimes(
   graph: NeatGraph,
   services: DiscoveredService[],
+  scanPath: string,
 ): Promise<{ nodesAdded: number; edgesAdded: number }> {
   let nodesAdded = 0
   let edgesAdded = 0
@@ -56,6 +57,9 @@ export async function addDockerfileRuntimes(
         target: node.id,
         type: EdgeType.RUNS_ON,
         provenance: Provenance.EXTRACTED,
+        evidence: {
+          file: path.relative(scanPath, dockerfilePath).split(path.sep).join('/'),
+        },
       }
       graph.addEdgeWithKey(edgeId, edge.source, edge.target, edge)
       edgesAdded++

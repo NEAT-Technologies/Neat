@@ -43,7 +43,8 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
     const match = isConfigFile(entry.name)
     if (!match.match || match.fileType !== 'env') continue
 
-    const content = await fs.readFile(path.join(serviceDir, entry.name), 'utf8')
+    const filePath = path.join(serviceDir, entry.name)
+    const content = await fs.readFile(filePath, 'utf8')
     for (const line of content.split('\n')) {
       const parsed = parseDotenvLine(line)
       if (!parsed) continue
@@ -53,7 +54,7 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
       const key = `${config.engine}://${config.host}:${config.port ?? ''}/${config.database}`
       if (seen.has(key)) continue
       seen.add(key)
-      configs.push(config)
+      configs.push({ ...config, sourceFile: filePath })
     }
   }
   return configs

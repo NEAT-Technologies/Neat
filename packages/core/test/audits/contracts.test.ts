@@ -477,12 +477,27 @@ describe('Static-extraction contract (ADR-032)', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 
-  // The CALLS-family producers carry evidence today; CONNECTS_TO / CONFIGURED_BY /
-  // DEPENDS_ON / RUNS_ON producers do not. Issue #140 closes that gap. Until it
-  // lands, the assertion below is `it.todo` — flip it once #140 is shipped.
-  it.todo(
-    'every EXTRACTED edge construction site under extract/ includes evidence.file (issue #140)',
-  )
+  // Every object literal that sets `provenance: Provenance.EXTRACTED` must
+  // also include an `evidence:` key. The check is structural rather than
+  // runtime — we look at the surrounding source-window of each match. Issue
+  // #140 closed the gap by populating evidence on CONNECTS_TO, CONFIGURED_BY,
+  // DEPENDS_ON, and RUNS_ON producers (CALLS-family already had it).
+  it('every EXTRACTED edge construction site under extract/ includes evidence.file', () => {
+    const offenders: string[] = []
+    const EXTRACT_DIR = join(CORE_SRC, 'extract')
+    for (const file of walkSrc(EXTRACT_DIR)) {
+      const lines = readFileSync(file, 'utf8').split('\n')
+      lines.forEach((line, i) => {
+        if (!/provenance:\s*Provenance\.EXTRACTED\b/.test(line)) return
+        const window = lines
+          .slice(Math.max(0, i - 12), Math.min(lines.length, i + 12))
+          .join('\n')
+        if (/evidence\s*[:?]/.test(window)) return
+        offenders.push(`${file}:${i + 1}`)
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
 
   // Issue #142 adds `framework` to ServiceNodeSchema and populates it from
   // package.json deps. The schema-snapshot guard catches the schema growth;
@@ -692,7 +707,59 @@ describe('Queued contracts (issues #131-#145)', () => {
   it.todo('BlastRadiusAffectedNode carries path and confidence (issue #137)')
   it.todo('BlastRadius distance schema rejects 0 (issue #138)')
   it.todo('Traversal results validated against Zod schemas (issue #139)')
-  it.todo('Ghost EXTRACTED edges removed on re-extract (issue #140)')
+  it('Ghost EXTRACTED edges removed on re-extract (issue #140)', async () => {
+    const { extractedEdgeId } = await import('@neat/types')
+    const { retireEdgesByFile } = await import('../../src/extract/retire.js')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', {
+      id: 'service:a',
+      type: NodeType.ServiceNode,
+      name: 'a',
+      language: 'javascript',
+    })
+    g.addNode('database:db', {
+      id: 'database:db',
+      type: NodeType.DatabaseNode,
+      name: 'db',
+      engine: 'postgresql',
+      engineVersion: '15',
+      host: 'db',
+    })
+
+    const ghostId = extractedEdgeId('service:a', 'database:db', EdgeType.CONNECTS_TO)
+    g.addEdgeWithKey(ghostId, 'service:a', 'database:db', {
+      id: ghostId,
+      source: 'service:a',
+      target: 'database:db',
+      type: EdgeType.CONNECTS_TO,
+      provenance: Provenance.EXTRACTED,
+      evidence: { file: 'a/.env' },
+    })
+
+    // Edge from a different file survives — retire is path-keyed, not blanket.
+    const survivorId = `${EdgeType.CONFIGURED_BY}:service:a->config:a/db.yaml`
+    g.addNode('config:a/db.yaml', {
+      id: 'config:a/db.yaml',
+      type: NodeType.ConfigNode,
+      name: 'db.yaml',
+      path: 'a/db.yaml',
+      fileType: 'yaml',
+    })
+    g.addEdgeWithKey(survivorId, 'service:a', 'config:a/db.yaml', {
+      id: survivorId,
+      source: 'service:a',
+      target: 'config:a/db.yaml',
+      type: EdgeType.CONFIGURED_BY,
+      provenance: Provenance.EXTRACTED,
+      evidence: { file: 'a/db.yaml' },
+    })
+
+    const dropped = retireEdgesByFile(g, 'a/.env')
+    expect(dropped).toBe(1)
+    expect(g.hasEdge(ghostId)).toBe(false)
+    expect(g.hasEdge(survivorId)).toBe(true)
+  })
   it.todo('Source-level DB connection + import detection (issue #141)')
   it.todo('ServiceNode.framework populated from package.json (issue #142)')
   it.todo('MCP tools emit standardized three-part response (issue #143)')

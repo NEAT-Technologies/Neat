@@ -7,6 +7,11 @@ export interface DbConfig {
   database: string
   engine: string
   engineVersion: string // "unknown" when not statically determinable
+  // Absolute path to the file the parser read this config from. Used to
+  // populate evidence.file on the resulting CONNECTS_TO edge. Optional so
+  // synthesized configs (e.g. prisma's env() fallback) can omit it; the
+  // CONNECTS_TO writer emits evidence only when present.
+  sourceFile?: string
 }
 
 // Map a connection-string scheme to the engine name our compat matrix uses.

@@ -34,7 +34,7 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
   )
   if (urlMatch) {
     const config = parseConnectionString(urlMatch[1]!)
-    if (config) return [config]
+    if (config) return [{ ...config, sourceFile: filePath }]
   }
   const hostMatch = content.match(/host\s*:\s*['"`]([^'"`]+)['"`]/)
   if (hostMatch) {
@@ -47,11 +47,12 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
         database: dbMatch?.[1] ?? '',
         engine,
         engineVersion: 'unknown',
+        sourceFile: filePath,
       },
     ]
   }
   return [
-    { host: `${engine}-drizzle`, database: '', engine, engineVersion: 'unknown' },
+    { host: `${engine}-drizzle`, database: '', engine, engineVersion: 'unknown', sourceFile: filePath },
   ]
 }
 

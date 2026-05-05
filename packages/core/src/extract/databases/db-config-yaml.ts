@@ -24,6 +24,7 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
       database: raw.database,
       engine: raw.engine,
       engineVersion: raw.engineVersion !== undefined ? String(raw.engineVersion) : 'unknown',
+      sourceFile: yamlPath,
     },
   ]
 }

@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type {
   CompatibleDriver,
   DatabaseNode,
@@ -178,6 +179,7 @@ export function attachIncompatibilities(
 export async function addDatabasesAndCompat(
   graph: NeatGraph,
   services: DiscoveredService[],
+  scanPath: string,
 ): Promise<{ nodesAdded: number; edgesAdded: number }> {
   let nodesAdded = 0
   let edgesAdded = 0
@@ -213,6 +215,13 @@ export async function addDatabasesAndCompat(
         target: dbNode.id,
         type: EdgeType.CONNECTS_TO,
         provenance: Provenance.EXTRACTED,
+        ...(config.sourceFile
+          ? {
+              evidence: {
+                file: path.relative(scanPath, config.sourceFile).split(path.sep).join('/'),
+              },
+            }
+          : {}),
       }
       if (!graph.hasEdge(edge.id)) {
         graph.addEdgeWithKey(edge.id, edge.source, edge.target, edge)

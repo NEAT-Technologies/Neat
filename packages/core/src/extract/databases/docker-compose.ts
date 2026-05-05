@@ -60,6 +60,7 @@ export async function parse(serviceDir: string): Promise<DbConfig[]> {
         database: databaseFromEnv(svc),
         engine: meta.engine,
         engineVersion: meta.engineVersion,
+        sourceFile: abs,
       })
     }
     return out
