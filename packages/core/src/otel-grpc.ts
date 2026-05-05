@@ -48,6 +48,12 @@ interface GrpcStatus {
   message?: string
 }
 
+interface GrpcEvent {
+  name?: string
+  time_unix_nano?: string | number
+  attributes?: GrpcKeyValue[]
+}
+
 interface GrpcSpan {
   trace_id?: Buffer
   span_id?: Buffer
@@ -57,6 +63,7 @@ interface GrpcSpan {
   start_time_unix_nano?: string | number
   end_time_unix_nano?: string | number
   attributes?: GrpcKeyValue[]
+  events?: GrpcEvent[]
   status?: GrpcStatus
 }
 
@@ -129,6 +136,11 @@ export function reshapeGrpcRequest(req: GrpcExportRequest): OtlpTracesRequest {
           startTimeUnixNano: nanosToString(s.start_time_unix_nano),
           endTimeUnixNano: nanosToString(s.end_time_unix_nano),
           attributes: reshapeAttributes(s.attributes),
+          events: (s.events ?? []).map((e) => ({
+            name: e.name,
+            timeUnixNano: nanosToString(e.time_unix_nano),
+            attributes: reshapeAttributes(e.attributes),
+          })),
           status: s.status ? { code: s.status.code, message: s.status.message } : undefined,
         })),
       })),

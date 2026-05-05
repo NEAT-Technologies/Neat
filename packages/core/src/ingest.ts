@@ -392,13 +392,20 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
 
   if (span.statusCode === 2) {
     stitchTrace(ctx.graph, sourceId, ts)
+    // Exception event data (richer than status.message) wins when present,
+    // per ADR-033's exception-data-from-span-events rule.
     const ev: ErrorEvent = {
       id: `${span.traceId}:${span.spanId}`,
       timestamp: ts,
       service: span.service,
       traceId: span.traceId,
       spanId: span.spanId,
-      errorMessage: span.errorMessage ?? span.name ?? 'unknown error',
+      errorMessage:
+        span.exception?.message ?? span.errorMessage ?? span.name ?? 'unknown error',
+      ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
+      ...(span.exception?.stacktrace
+        ? { exceptionStacktrace: span.exception.stacktrace }
+        : {}),
       affectedNode,
     }
     await appendErrorEvent(ctx, ev)

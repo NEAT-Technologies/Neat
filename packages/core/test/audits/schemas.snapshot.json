@@ -50,6 +50,12 @@
       "errorType": {
         "_optional": "_string"
       },
+      "exceptionStacktrace": {
+        "_optional": "_string"
+      },
+      "exceptionType": {
+        "_optional": "_string"
+      },
       "id": "_string",
       "service": "_string",
       "spanId": "_string",

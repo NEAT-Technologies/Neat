@@ -566,8 +566,93 @@ describe('OTel ingest contract (ADR-033)', () => {
   it.todo('parent-span cache resolves cross-service CALLS when address-based resolution fails (issue #133)')
   it.todo('handleSpan auto-creates ServiceNode at serviceId(span.service) for unseen services (issue #134)')
   it.todo('handleSpan auto-creates DatabaseNode at databaseId(host) for unseen db.system+host (issue #134)')
-  it.todo('parser extracts exception.type/message/stacktrace from span events with name=exception (issue #135)')
-  it.todo('handleSpan prefers exception event message over span.status.message (issue #135)')
+  it('parser extracts exception.type/message/stacktrace from span events with name=exception (issue #135)', async () => {
+    const { parseOtlpRequest } = await import('../../src/otel.js')
+    const spans = parseOtlpRequest({
+      resourceSpans: [
+        {
+          resource: {
+            attributes: [{ key: 'service.name', value: { stringValue: 'caller' } }],
+          },
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: 't1',
+                  spanId: 's1',
+                  name: 'GET /things',
+                  startTimeUnixNano: '1714557600000000000',
+                  endTimeUnixNano: '1714557600100000000',
+                  attributes: [],
+                  status: { code: 2, message: 'fallback' },
+                  events: [
+                    {
+                      name: 'exception',
+                      timeUnixNano: '1714557600050000000',
+                      attributes: [
+                        { key: 'exception.type', value: { stringValue: 'TimeoutError' } },
+                        { key: 'exception.message', value: { stringValue: 'upstream timed out' } },
+                        { key: 'exception.stacktrace', value: { stringValue: 'at fetch (a.js:1)' } },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    expect(spans).toHaveLength(1)
+    expect(spans[0]!.exception).toEqual({
+      type: 'TimeoutError',
+      message: 'upstream timed out',
+      stacktrace: 'at fetch (a.js:1)',
+    })
+  })
+
+  it('handleSpan prefers exception event message over span.status.message (issue #135)', async () => {
+    const { handleSpan } = await import('../../src/ingest.js')
+    const { mkdtempSync, readFileSync: rfs } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', {
+      id: 'service:caller',
+      type: NodeType.ServiceNode,
+      name: 'caller',
+      language: 'javascript',
+    })
+
+    const dir = mkdtempSync(join(tmpdir(), 'contract-test-'))
+    const errorsPath = join(dir, 'errors.ndjson')
+    await handleSpan(
+      { graph: g, errorsPath, now: () => Date.parse('2026-05-05T12:00:00.000Z') },
+      {
+        traceId: 't1',
+        spanId: 's1',
+        service: 'caller',
+        name: 'GET /things',
+        statusCode: 2,
+        startTimeUnixNano: '0',
+        endTimeUnixNano: '0',
+        durationNanos: 0n,
+        attributes: {},
+        errorMessage: 'fallback status message',
+        exception: {
+          type: 'TimeoutError',
+          message: 'upstream timed out',
+          stacktrace: 'at fetch (a.js:1)',
+        },
+      },
+    )
+
+    const written = rfs(errorsPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    expect(written).toHaveLength(1)
+    expect(written[0].errorMessage).toBe('upstream timed out')
+    expect(written[0].exceptionType).toBe('TimeoutError')
+    expect(written[0].exceptionStacktrace).toBe('at fetch (a.js:1)')
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
