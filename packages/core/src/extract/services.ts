@@ -3,7 +3,7 @@ import path from 'node:path'
 import ignore, { type Ignore } from 'ignore'
 import { minimatch } from 'minimatch'
 import type { ServiceNode } from '@neat/types'
-import { NodeType } from '@neat/types'
+import { NodeType, serviceId } from '@neat/types'
 import type { NeatGraph } from '../graph.js'
 import {
   IGNORED_DIRS,
@@ -124,7 +124,7 @@ async function discoverNodeService(
   const pkg = await readJson<PackageJson>(pkgPath)
   if (!pkg.name) return null
   const node: ServiceNode = {
-    id: `service:${pkg.name}`,
+    id: serviceId(pkg.name),
     type: NodeType.ServiceNode,
     name: pkg.name,
     language: 'javascript',
@@ -144,7 +144,7 @@ async function discoverPyService(
   if (!py) return null
   const pkg = pythonToPackage(py)
   const node: ServiceNode = {
-    id: `service:${py.name}`,
+    id: serviceId(py.name),
     type: NodeType.ServiceNode,
     name: py.name,
     language: 'python',

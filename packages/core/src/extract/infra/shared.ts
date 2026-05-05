@@ -1,5 +1,5 @@
 import type { InfraNode } from '@neat/types'
-import { NodeType } from '@neat/types'
+import { NodeType, infraId } from '@neat/types'
 
 // ADR-010 reserves the `infra:` prefix; the kind segment lets traversal and
 // MCP tools sub-type without inventing a new top-level NodeType per source.
@@ -10,7 +10,7 @@ export function makeInfraNode(
   extras?: { region?: string },
 ): InfraNode {
   return {
-    id: `infra:${kind}:${name}`,
+    id: infraId(kind, name),
     type: NodeType.InfraNode,
     name,
     provider,

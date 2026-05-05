@@ -64,6 +64,7 @@ export async function exists(p: string): Promise<boolean> {
   }
 }
 
-export function makeEdgeId(source: string, target: string, type: string): string {
-  return `${type}:${source}->${target}`
-}
+// Thin re-export so existing callers (calls/, configs.ts, databases/, infra/)
+// keep their import path. Wire format lives in @neat/types/identity.ts per
+// ADR-029.
+export { extractedEdgeId as makeEdgeId } from '@neat/types'

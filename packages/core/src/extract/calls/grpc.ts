@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { infraId } from '@neat/types'
 import { lineOf, snippet, type ExternalEndpoint, type SourceFile } from './shared.js'
 
 // gRPC client construction in JS/TS:
@@ -33,7 +34,7 @@ export function grpcEndpointsFromFile(
     seen.add(name)
     const line = lineOf(file.content, m[0])
     out.push({
-      infraId: `infra:grpc-service:${name}`,
+      infraId: infraId('grpc-service', name),
       name,
       kind: 'grpc-service',
       edgeType: 'CALLS',

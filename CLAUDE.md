@@ -2,6 +2,8 @@
 
 This is the agent guide for the NEAT repo. If you're a fresh Claude session (or a human picking this up cold), read this first.
 
+**Binding rules:** @docs/contracts.md — short list, auto-loaded with this file. Per-topic contracts live under `docs/contracts/` and are surfaced automatically when you edit a file the contract governs (PreToolUse hook at `docs/contracts/_hook.sh`, wired in `.claude/settings.json`). If you're about to write code that conflicts with anything in there, stop. The conflict is the bug.
+
 ## What NEAT is
 
 NEAT keeps a live semantic graph of a software system — code, infrastructure, runtime — and exposes it to AI agents over MCP. The core demo: a service running `pg` 7.4.0 against PostgreSQL 15 fails at runtime, and NEAT traces that failure back to the version mismatch two hops away through the graph. The extraction pipeline reads static code (tree-sitter) and live OTel traces to build and maintain that graph.

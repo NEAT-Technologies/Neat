@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { infraId } from '@neat/types'
 import { lineOf, snippet, type ExternalEndpoint, type SourceFile } from './shared.js'
 
 // Match `producer.send({ topic: "orders" ... })` and `producer.send({
@@ -32,7 +33,7 @@ export function kafkaEndpointsFromFile(
     seen.add(key)
     const line = lineOf(file.content, topic)
     out.push({
-      infraId: `infra:kafka-topic:${topic}`,
+      infraId: infraId('kafka-topic', topic),
       name: topic,
       kind: 'kafka-topic',
       edgeType,
