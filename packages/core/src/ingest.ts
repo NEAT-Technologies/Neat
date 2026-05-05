@@ -6,6 +6,7 @@ import {
   NodeType,
   Provenance,
   databaseId,
+  extractedEdgeId,
   frontierEdgeId,
   frontierId,
   inferredEdgeId,
@@ -460,7 +461,14 @@ function rebuildEdge(
   // it isn't.
   const promotedProvenance =
     edge.provenance === Provenance.FRONTIER ? Provenance.OBSERVED : edge.provenance
-  const newId = `${edge.type}:${promotedProvenance}:${newSource}->${newTarget}`
+  const newId =
+    promotedProvenance === Provenance.OBSERVED
+      ? observedEdgeId(newSource, newTarget, edge.type)
+      : promotedProvenance === Provenance.INFERRED
+        ? inferredEdgeId(newSource, newTarget, edge.type)
+        : promotedProvenance === Provenance.EXTRACTED
+          ? extractedEdgeId(newSource, newTarget, edge.type)
+          : frontierEdgeId(newSource, newTarget, edge.type)
 
   if (graph.hasEdge(newId)) {
     const existing = graph.getEdgeAttributes(newId) as GraphEdge
