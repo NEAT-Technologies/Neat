@@ -14,14 +14,14 @@ This file is the index. Each rule has a short summary and a link to its full per
 | 2 | Edge identity + provenance | [`contracts/provenance.md`](./contracts/provenance.md) | Edge id wire format per provenance, `PROV_RANK` ordering, coexistence, confidence semantics (ADR-029) | ✅ landed |
 | 3 | Node + edge lifecycle | [`contracts/lifecycle.md`](./contracts/lifecycle.md) | Creation, transition, retirement. Mutation authority locked to `ingest.ts` and `extract/*` (ADR-030) | ✅ landed |
 | 4 | Schema growth vs shape | [`contracts/schema.md`](./contracts/schema.md) | Growth = commit-and-go (snapshot diff). Shape change = ADR + `persist.ts` migration (ADR-031) | ✅ landed |
+| 5 | Static extraction | [`contracts/static-extraction.md`](./contracts/static-extraction.md) | Producer interface, evidence on every EXTRACTED edge, ghost-edge cleanup keyed on `evidence.file`, language dispatch, idempotency (ADR-032) | ✅ landed (v0.2.1 opens) |
 
 ### Future contracts — opened at the start of each milestone
 
-The data-layer foundation (1-4) is shared across all producers and consumers. Producer-, consumer-, surface-, policy-, and distribution-layer contracts open at the start of the milestone where their layer gets rebuilt.
+Producer-, consumer-, surface-, policy-, and distribution-layer contracts open at the start of the milestone where their layer gets rebuilt.
 
 | # | Contract | Milestone | Governs (target) |
 |---|----------|-----------|------------------|
-| 5 | Static extraction (tree-sitter) | v0.2.1 | What edges static extraction produces, evidence shape, language dispatch, depth limits, ghost-edge cleanup (`packages/core/src/extract/**`) |
 | 6 | OTel ingest | v0.2.2 | Span-time `lastObserved`, parent-span correlation, exception-event parsing, auto-creation, non-blocking ingest (`ingest.ts` ingest path) |
 | 7 | Trace stitcher | v0.2.2 | When INFERRED fires, depth limit, OBSERVED-twin-skip rule (`stitchTrace`) |
 | 8 | FrontierNode promotion | v0.2.2 | When promotion fires, alias-match precedence, attribute merge (`promoteFrontierNodes`) |

@@ -704,3 +704,55 @@ Specific schema additions queued for v0.2.x cleanup (`framework`, `evidence.file
 **When to revisit.**
 
 When the snapshot file becomes hard to review — say it grows past 500 lines and a real shape change is hard to spot in the diff. At that point we either split the snapshot per schema or write a smarter diff tool. Today the schema set is small enough that a single JSON file is sufficient.
+
+---
+
+## ADR-032 — Static extraction contract
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+The first producer-layer contract. Static extraction (`packages/core/src/extract/**`) is the producer that reads source code and config files to build the EXTRACTED layer of the graph. Today's producers work but disagree on what evidence they carry, when re-extraction retires old edges, and what counts as a producer at all. v0.2.1's tree-sitter rebuild needs these locked before the cleanup issues (#140, #141, #142, #145) can ship without re-introducing drift.
+
+**Decision.**
+
+1. **Every EXTRACTED edge carries `evidence: { file, line?, snippet? }`.** Today only CALLS-family edges do (`calls/http.ts`, `calls/aws.ts`, `calls/kafka.ts`, `calls/grpc.ts`, `calls/redis.ts`). CONNECTS_TO (databases), CONFIGURED_BY (configs), DEPENDS_ON / RUNS_ON (infra) edges currently have no evidence. The contract growth: every producer that writes an EXTRACTED edge attaches at least `evidence.file` — the source path the edge was derived from, relative to the scan root, forward slashes regardless of platform. `line` and `snippet` are optional but strongly preferred when the producer can compute them cheaply.
+
+2. **Ghost-edge cleanup is keyed on `evidence.file`.** When a file changes or disappears between extract passes, every EXTRACTED edge whose `evidence.file` matches that path is dropped before the producer reruns. Re-extraction recreates the edges that still apply; the deleted code's edges stay deleted. The cleanup is owned by `watch.ts` per ADR-030's lifecycle authority — it fires the producer's path-keyed retire step, then reruns the producer. This closes the v0.1.x bug where re-extraction accumulates stale edges indefinitely (issue #140).
+
+3. **Producer interface.** Every producer module under `extract/` exports a single async function with the signature `(graph: NeatGraph, services: DiscoveredService[], scanPath: string) => Promise<...>`. Producers are pure with respect to graph state outside their own writes — they never read the OBSERVED layer, never call `compat.json` outside `compat.ts`, never trigger MCP or REST. They can read from the filesystem within `scanPath` and from each service's `dir`. They emit nodes and edges via `graph.addNode` / `graph.addEdgeWithKey`, guarded by `hasNode` / `hasEdge` for idempotency.
+
+4. **Language dispatch.** Source-file parsing routes by extension: `.js` / `.jsx` / `.mjs` / `.cjs` / `.ts` / `.tsx` use the `tree-sitter-javascript` grammar (TypeScript falls through; using `tree-sitter-typescript` is a future improvement, not in scope for this contract). `.py` uses `tree-sitter-python`. Other extensions are skipped silently by `walkSourceFiles` per `IGNORED_DIRS` and the `SERVICE_FILE_EXTENSIONS` set in `extract/shared.ts`. New language support requires adding the grammar import and the extension dispatch in one place.
+
+5. **Depth and ignore policy.** Recursive directory walk from `scanPath` is bounded by `NEAT_SCAN_DEPTH` (default 5, configurable). `.gitignore` is honored. `IGNORED_DIRS` (`node_modules`, `.git`, `.turbo`, `dist`, `build`, `.next`, plus `__pycache__` and `vendor` once added — see issue #142's neighborhood) is the canonical skip set. `package.json#workspaces` triggers monorepo expansion; `pnpm-workspace.yaml` and `turbo.json` are not yet read (deferred).
+
+6. **Idempotency under re-extraction.** Every producer is idempotent: re-running the same producer on the same input produces the same graph state. `graph.hasNode(id)` and `graph.hasEdge(id)` guards already enforce this; the contract reaffirms it. Idempotency is what makes ghost-edge cleanup safe — the path-keyed retire step plus re-extraction always converges on the source's current state.
+
+7. **`framework` on ServiceNode is schema growth, not a new contract.** Issue #142's `framework?: string` field is governed by the schema-growth contract (ADR-031) — `ServiceNodeSchema` gains an optional field, the snapshot regenerates, the producer in `extract/services.ts` populates it from a package-name → framework-label table. This contract names the population rule (read from `dependencies` and `devDependencies`) but the schema-snapshot guard handles enforcement.
+
+**Producers in scope (the locked set).**
+
+- `services.ts` — ServiceNode from `package.json` and `pyproject.toml`.
+- `aliases.ts` — host:port aliases for FrontierNode promotion (governed by the lifecycle contract; this contract just confirms it as a producer).
+- `databases/*` — DatabaseNode + CONNECTS_TO from ORM configs, `.env`, docker-compose. Today no evidence; #140 fixes that.
+- `configs.ts` — ConfigNode + CONFIGURED_BY for yaml / yml / `.env` files.
+- `calls/*` — source-level CALLS / PUBLISHES_TO / CONSUMES_FROM edges via HTTP URLs, AWS SDK, gRPC, Kafka, Redis. Today carries evidence — keep.
+- `infra/*` — InfraNode + DEPENDS_ON / RUNS_ON from docker-compose, Dockerfile, k8s, Terraform.
+- New producers under `calls/` for source-level DB connections (`new pg.Pool(...)`) and inter-service imports — issue #141. Same evidence shape, same idempotency, same interface.
+
+**Enforcement.**
+
+`packages/core/test/audits/contracts.test.ts` adds:
+- A scan asserting every EXTRACTED-edge construction site under `packages/core/src/extract/` includes an `evidence` field with at least a `file` key. Currently CALLS-family producers pass; CONNECTS_TO / CONFIGURED_BY / DEPENDS_ON / RUNS_ON producers fail until #140 lands. The assertion lands as `it.todo` keyed to #140 and flips when the issue closes.
+- A producer-interface assertion: every module under `extract/` exporting a function whose name matches `add(Service|Database|Config|Edge|Infra)Nodes?|add\w+Edges?` accepts `(graph, services, scanPath)` (or a strict subset). Catches drift toward producer signatures that diverge.
+- An idempotency test: run a producer twice on the same fixture, assert node/edge count unchanged.
+
+`docs/contracts/static-extraction.md` records the binding rules in short form and is auto-surfaced by the PreToolUse hook whenever any file under `extract/` is edited.
+
+**What this ADR is not deciding.**
+
+The shape of source-level DB-connection detection (issue #141 — that's an implementation choice within the producer interface). Whether `tree-sitter-typescript` should replace the JS-falls-through approach (deferred — TS fallback works, the grammar swap is its own cleanup). The framework-detection package-name table (lives in `compat.json` or a sibling data file, not in the contract). Workspace-scoped service ids (deferred per ADR-028). Dev-container handling (deferred per the init audit's open questions).
+
+**When to revisit.**
+
+When source-level DB-connection detection (#141) lands — that introduces a new producer pattern (`new pg.Pool(...)` etc.) and the contract may need to specify its evidence shape more precisely (e.g. constructor-name in the snippet). When ghost-edge cleanup (#140) ships — the contract's path-keyed retire step becomes load-bearing and might surface edge cases.

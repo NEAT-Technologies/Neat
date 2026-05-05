@@ -409,6 +409,90 @@ describe('Lifecycle contract — FRONTIER → OBSERVED on promotion (ADR-030)', 
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// Static-extraction contract — producer interface, evidence, idempotency (ADR-032)
+// ──────────────────────────────────────────────────────────────────────────
+describe('Static-extraction contract (ADR-032)', () => {
+  // Producer interface: every exported `addX` function under `extract/` accepts
+  // (graph, services, scanPath) — or a strict subset. The scan reads function
+  // signatures syntactically; it's a static check, not a runtime invocation.
+  it('producer entry points accept (graph, services, scanPath) — strict subset allowed', () => {
+    const offenders: string[] = []
+    const EXTRACT_DIR = join(CORE_SRC, 'extract')
+    // Match `export (async)? function add<Word>...(args)` and capture the args.
+    const re = /export\s+(?:async\s+)?function\s+(add[A-Z]\w*)\s*\(([^)]*)\)/g
+    const allowed = ['graph', 'services', 'scanPath', 'service']
+
+    for (const file of walkSrc(EXTRACT_DIR)) {
+      const content = readFileSync(file, 'utf8')
+      let m: RegExpExecArray | null
+      while ((m = re.exec(content)) !== null) {
+        const fnName = m[1]!
+        const argList = m[2]!
+        // Pull parameter names off the type-annotated param list.
+        const paramNames = argList
+          .split(',')
+          .map((p) => p.trim())
+          .filter((p) => p.length > 0)
+          .map((p) => p.split(':')[0]!.trim().replace(/\?$/, ''))
+        for (const name of paramNames) {
+          if (!allowed.includes(name)) {
+            offenders.push(`${file}: ${fnName} has unexpected parameter \`${name}\``)
+          }
+        }
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('producers guard every node write with hasNode (idempotency)', () => {
+    // Heuristic: any line that calls graph.addNode(...) should be inside an
+    // `if (!graph.hasNode(...))` guard within the previous 5 lines, or the
+    // addNode call itself is preceded by hasNode in the same expression.
+    const offenders: string[] = []
+    const EXTRACT_DIR = join(CORE_SRC, 'extract')
+    for (const file of walkSrc(EXTRACT_DIR)) {
+      const lines = readFileSync(file, 'utf8').split('\n')
+      lines.forEach((line, i) => {
+        if (!/\bgraph\.addNode\s*\(/.test(line)) return
+        const window = lines.slice(Math.max(0, i - 15), i + 1).join('\n')
+        if (/\bgraph\.hasNode\s*\(/.test(window)) return
+        offenders.push(`${file}:${i + 1}: addNode without hasNode guard`)
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('producers guard every edge write with hasEdge (idempotency)', () => {
+    const offenders: string[] = []
+    const EXTRACT_DIR = join(CORE_SRC, 'extract')
+    for (const file of walkSrc(EXTRACT_DIR)) {
+      const lines = readFileSync(file, 'utf8').split('\n')
+      lines.forEach((line, i) => {
+        if (!/\bgraph\.addEdge(WithKey)?\s*\(/.test(line)) return
+        const window = lines.slice(Math.max(0, i - 15), i + 1).join('\n')
+        if (/\bgraph\.hasEdge\s*\(/.test(window)) return
+        offenders.push(`${file}:${i + 1}: addEdge without hasEdge guard`)
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  // The CALLS-family producers carry evidence today; CONNECTS_TO / CONFIGURED_BY /
+  // DEPENDS_ON / RUNS_ON producers do not. Issue #140 closes that gap. Until it
+  // lands, the assertion below is `it.todo` — flip it once #140 is shipped.
+  it.todo(
+    'every EXTRACTED edge construction site under extract/ includes evidence.file (issue #140)',
+  )
+
+  // Issue #142 adds `framework` to ServiceNodeSchema and populates it from
+  // package.json deps. The schema-snapshot guard catches the schema growth;
+  // this test asserts the producer wires it up.
+  it.todo(
+    'extract/services.ts populates ServiceNode.framework from known framework packages (issue #142)',
+  )
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // Provenance contract — Edge identity helpers + PROV_RANK (ADR-029)
 // ──────────────────────────────────────────────────────────────────────────
 describe('Provenance contract — edge identity (ADR-029)', () => {
