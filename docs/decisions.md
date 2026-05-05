@@ -1063,3 +1063,176 @@ Whether blast radius should expand to inbound edges (no — by definition, blast
 **When to revisit.**
 
 When real codebase blast-radius queries return >100 affected nodes and pagination becomes a UX concern. When the MCP-side three-part response (contract #12 in v0.2.4) needs to format blast radius and the contract's `path` shape doesn't match the formatter's needs.
+
+---
+
+## ADR-039 — MCP tool surface contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+The first of seven v0.2.4 contracts. Governs `packages/mcp/src/`. Sibling contracts: ADR-040 (REST API), ADR-041 (persistence), ADR-042-045 (policies).
+
+**Decision.**
+
+1. **Tool count is locked at nine.** Eight today (`get_root_cause`, `get_blast_radius`, `get_dependencies`, `get_observed_dependencies`, `get_incident_history`, `semantic_search`, `get_graph_diff`, `get_recent_stale_edges`) plus `check_policies` (lands with v0.2.4 #117). The audit's `evaluate_policy` + `get_policy_violations` two-tool split is rejected per CLAUDE.md framing — one tool with `scope?` and `hypotheticalAction?` arguments handles both cases.
+
+2. **Three-part response format (issue #143).** Every tool emits a natural-language paragraph, a structured block, and a footer line `confidence: X.XX · provenance: OBSERVED|EXTRACTED|...`. Confidence and provenance are derived per-result. Empty result → footer reads `confidence: n/a · provenance: n/a`. Helper `formatToolResponse` lives in `packages/mcp/src/format.ts`; every tool routes through it.
+
+3. **`get_dependencies` is transitive (issue #144).** Default depth 3, max 10. Calls a new core endpoint `GET /graph/node/:id/dependencies?depth=N`.
+
+4. **No `graph.json` reads.** Every tool calls REST against `NEAT_CORE_URL`.
+
+5. **No demo-name hardcoding in tool logic.** Allowed only inside Zod `.describe()` strings.
+
+6. **Project scoping.** Optional `project?: string`, defaulting to `'default'` per ADR-026.
+
+7. **`semantic_search` documentation reflects the ADR-025 embedder chain**, not "keyword search."
+
+8. **Stdio transport only for MVP.** HTTP / SSE / WebSocket post-MVP.
+
+**Authority.** Read-only. Owned by `packages/mcp/src/`.
+
+---
+
+## ADR-040 — REST API contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+Governs `packages/core/src/api.ts`. Sibling contracts: ADR-039, ADR-041.
+
+**Decision.**
+
+1. **Dual-mount per ADR-026.** Every route mounts at both `/X` and `/projects/:project/X` via `registerRoutes(scope, ctx)`.
+
+2. **Read-side endpoints (locked).** `GET /health`, `/graph`, `/graph/node/:id`, `/graph/edges/:id`, `/graph/dependencies/:nodeId?depth=N` (new for #144), `/graph/blast-radius/:nodeId?depth=N`, `/graph/root-cause/:nodeId`, `/graph/diff?against=path`, `/search?q=...`, `/incidents`, `/stale-events`, `/policies`, `/policies/violations`.
+
+3. **Write-side endpoints.** `POST /graph/scan`, `POST /policies/check`. The OTLP receiver lives on its own port.
+
+4. **JSON errors.** `{ error, status, details? }`. 400 / 404 / 500. No HTML pages.
+
+5. **Schema validation on inbound bodies** via Zod from `@neat/types`.
+
+6. **Project param defaults to `'default'`.**
+
+7. **Live graphology, never `graph.json`.**
+
+---
+
+## ADR-041 — Persistence contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+Governs `packages/core/src/persist.ts`. Sibling contracts: ADR-039, ADR-040.
+
+**Decision.**
+
+1. **Snapshot location.** Default project: `<scanPath>/neat-out/graph.json` per ADR-017. Named projects: `~/.neat/projects/<name>/graph.json` per ADR-026.
+
+2. **`SCHEMA_VERSION = 2` today.** Schema growth (ADR-031) does not bump the version; only shape changes do.
+
+3. **Forward-only migrations.** Old snapshots load cleanly; new snapshots cannot be loaded by old code.
+
+4. **Lifecycle.** Loaded once at startup; persisted on interval (default 60s) + `SIGTERM`/`SIGINT`.
+
+5. **Append-only ndjson sidecars.** `errors.ndjson`, `stale-events.ndjson`, `policy-violations.ndjson` (v0.2.4). No rewrites, no rotation.
+
+6. **Multi-project isolation.** `Map<string, NeatGraph>` keyed by project name.
+
+7. **Nothing else reads `graph.json`** per Rule 6.
+
+---
+
+## ADR-042 — Policy schema contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+The first of four policy contracts. Governs `packages/types/src/policy.ts` (new). Sibling contracts: ADR-043, ADR-044, ADR-045.
+
+**Decision.**
+
+1. **`policy.json` at the project root** (not `neat-out/`). Version-controlled in the user's repo.
+
+2. **Top-level shape.** `{ version: 1, policies: Policy[] }`. `version: z.literal(1)`.
+
+3. **`Policy` shape.** `{ id, name, description?, severity, onViolation, rule }`. `id` uniqueness checked at load.
+
+4. **Five rule types (MVP).** `structural`, `compatibility`, `provenance`, `ownership`, `blast-radius`. Discriminated by `rule.type`. New types require an ADR amendment.
+
+5. **Loading.** Loaded at startup, reloaded on file change. Watch loop treats `policy.json` as a phase trigger.
+
+6. **Validation.** `PolicyFileSchema.parse(json)` on load. Failure throws.
+
+---
+
+## ADR-043 — Policy evaluation contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+Governs `packages/core/src/policy.ts` (new). Sibling contracts: ADR-042, ADR-044, ADR-045.
+
+**Decision.**
+
+1. **`evaluateAllPolicies(graph, policies, context) → PolicyViolation[]`.** Pure function. Per-type evaluator dispatch.
+
+2. **Three triggers.** Post-ingest, post-extract, post-stale-transition.
+
+3. **`PolicyViolation` shape.** `{ id, policyId, policyName, severity, onViolation, ruleType, subject, message, observedAt }`. `id = ${policy.id}:${violation-context}` — dedup key.
+
+4. **Deterministic ids.** Same graph + same policies → same ids. ndjson append-only deduplicates.
+
+5. **Per-type dispatch table.**
+
+6. **Idempotency.** Stateless.
+
+7. **Authority.** Reads live graph; calls `compat.ts`; never mutates.
+
+---
+
+## ADR-044 — Policy onViolation actions contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+Sibling contracts: ADR-042, ADR-043, ADR-045.
+
+**Decision.**
+
+1. **Three actions: `log`, `alert`, `block`.** No others in MVP.
+
+2. **`log`.** Append to `policy-violations.ndjson`. No surface effect.
+
+3. **`alert`.** `log` + emit MCP `notifications/resources/updated` for `neat://policies/violations`.
+
+4. **`block`.** `log` + `alert` + prevent the action. **MVP scope: FrontierNode promotion gating only.** Other gating points need their own ADRs.
+
+5. **Severity defaults** when `onViolation` is omitted: `info → log`, `warning → alert`, `error → alert`, `critical → block`.
+
+6. **Authority.** `packages/core/src/policy.ts`. Block returns `false` from gating checks; never mutates.
+
+7. **Block scope tightly bounded.**
+
+---
+
+## ADR-045 — Policy tool surface contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+Sibling contracts: ADR-039, ADR-040, ADR-042-044.
+
+**Decision.**
+
+1. **Single MCP tool: `check_policies`** with optional `scope` and `hypotheticalAction`. Audit's two-tool split rejected.
+
+2. **REST under `/policies`.** `GET /policies` (parsed file), `GET /policies/violations` (filterable), `POST /policies/check` (dry-run, `{ hypotheticalAction }` → `{ allowed, violations }`). Audit's `/policy/violations` (singular) rejected.
+
+3. **MCP resource at `neat://policies/violations`.** Subscribers get update notifications.
+
+4. **Three-part response format** from ADR-039. Confidence `1.00` for confirmed violations; lower for hypothetical-action results.
+
+5. **Routes dual-mount per ADR-026.**
