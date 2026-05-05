@@ -563,7 +563,52 @@ describe('OTel ingest contract (ADR-033)', () => {
     ) as GraphEdge
     expect(edge.lastObserved).toBe('2026-04-01T09:00:00.000Z')
   })
-  it.todo('parent-span cache resolves cross-service CALLS when address-based resolution fails (issue #133)')
+  it('parent-span cache resolves cross-service CALLS when address-based resolution fails (issue #133)', async () => {
+    const { handleSpan, resetParentSpanCache } = await import('../../src/ingest.js')
+    const { observedEdgeId, serviceId } = await import('@neat/types')
+    const { mkdtempSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+
+    resetParentSpanCache()
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    const errorsPath = join(mkdtempSync(join(tmpdir(), 'contract-test-')), 'errors.ndjson')
+    const ctx = { graph: g, errorsPath, now: () => Date.parse('2026-05-06T12:00:00.000Z') }
+
+    // Parent (CLIENT) span on service:caller. No outbound edge yet because no
+    // peer attribute is set on this span — only spanId is recorded for the
+    // child to look up later.
+    await handleSpan(ctx, {
+      traceId: 't1',
+      spanId: 'parent-1',
+      service: 'caller',
+      name: 'rpc.client',
+      startTimeUnixNano: '0',
+      endTimeUnixNano: '0',
+      durationNanos: 0n,
+      attributes: {},
+    })
+
+    // Child (SERVER) span on service:callee whose parent points back at the
+    // CLIENT span. No address attribute, so address-based resolution fails;
+    // the parent-span cache is the only path that produces an edge here.
+    await handleSpan(ctx, {
+      traceId: 't1',
+      spanId: 'child-1',
+      parentSpanId: 'parent-1',
+      service: 'callee',
+      name: 'rpc.server',
+      startTimeUnixNano: '0',
+      endTimeUnixNano: '0',
+      durationNanos: 0n,
+      attributes: {},
+    })
+
+    const expected = observedEdgeId(serviceId('caller'), serviceId('callee'), EdgeType.CALLS)
+    expect(g.hasEdge(expected)).toBe(true)
+    const edge = g.getEdgeAttributes(expected) as GraphEdge
+    expect(edge.provenance).toBe(Provenance.OBSERVED)
+  })
   it('handleSpan auto-creates ServiceNode at serviceId(span.service) for unseen services (issue #134)', async () => {
     const { handleSpan } = await import('../../src/ingest.js')
     const { serviceId } = await import('@neat/types')

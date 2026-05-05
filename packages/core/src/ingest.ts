@@ -136,6 +136,64 @@ function makeInferredEdgeId(type: EdgeTypeValue, source: string, target: string)
 const INFERRED_CONFIDENCE = 0.6
 const STITCH_MAX_DEPTH = 2
 
+// Parent-span TTL cache (ADR-033). Address-based peer resolution (server.address /
+// net.peer.name / url.full) misses non-HTTP RPCs and any span with an opaque
+// peer. The cache stores each span's service keyed by `${traceId}:${spanId}` so
+// a child span whose address resolution fails can fall back to its parent's
+// service, identifying a cross-service CALLS edge from parent → current.
+//
+// Bounded size + TTL — out-of-order arrival (child before parent) drops the
+// child rather than buffering. We accept that loss because the cache is best-
+// effort: for every cross-service call, the CLIENT span on the caller side
+// covers the same edge via address-based resolution, so missing one direction
+// is recoverable.
+const PARENT_SPAN_CACHE_SIZE = 10_000
+const PARENT_SPAN_CACHE_TTL_MS = 5 * 60 * 1000
+
+interface ParentSpanCacheEntry {
+  service: string
+  expiresAt: number
+}
+
+const parentSpanCache = new Map<string, ParentSpanCacheEntry>()
+
+function parentSpanKey(traceId: string, spanId: string): string {
+  return `${traceId}:${spanId}`
+}
+
+function cacheSpanService(span: ParsedSpan, now: number): void {
+  if (!span.traceId || !span.spanId) return
+  const key = parentSpanKey(span.traceId, span.spanId)
+  // Map preserves insertion order, so deleting + re-inserting bumps an entry to
+  // the back. Eviction is "drop oldest" once size exceeds the cap.
+  parentSpanCache.delete(key)
+  parentSpanCache.set(key, { service: span.service, expiresAt: now + PARENT_SPAN_CACHE_TTL_MS })
+  while (parentSpanCache.size > PARENT_SPAN_CACHE_SIZE) {
+    const oldest = parentSpanCache.keys().next().value
+    if (!oldest) break
+    parentSpanCache.delete(oldest)
+  }
+}
+
+function lookupParentSpanService(
+  traceId: string,
+  parentSpanId: string,
+  now: number,
+): string | null {
+  const entry = parentSpanCache.get(parentSpanKey(traceId, parentSpanId))
+  if (!entry) return null
+  if (entry.expiresAt <= now) {
+    parentSpanCache.delete(parentSpanKey(traceId, parentSpanId))
+    return null
+  }
+  return entry.service
+}
+
+// Test seam: lets unit tests start from a clean slate.
+export function resetParentSpanCache(): void {
+  parentSpanCache.clear()
+}
+
 function resolveServiceId(graph: NeatGraph, host: string): string | null {
   const direct = serviceId(host)
   if (graph.hasNode(direct)) return direct
@@ -387,11 +445,15 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
   // actually fired, not when the receiver received it. Wall-clock is only the
   // fallback for spans whose startTimeUnixNano is missing or unparseable.
   const ts = span.startTimeIso ?? nowIso(ctx)
+  const nowMs = ctx.now ? ctx.now() : Date.now()
   // Auto-create a minimal ServiceNode for unseen span.service so OBSERVED
   // edges land instead of silently dropping. Static extraction merges richer
   // fields when it later finds the same id (ADR-033).
   const sourceId = ensureServiceNode(ctx.graph, span.service)
   const isError = span.statusCode === 2
+  // Stash this span in the parent-span cache so any later child whose address
+  // resolution misses can still resolve the cross-service edge via parentSpanId.
+  cacheSpanService(span, nowMs)
 
   let affectedNode = sourceId
 
@@ -421,6 +483,7 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     // extract orchestrator) replaces it once a later round records the host
     // as an alias on a real service.
     const host = pickAddress(span)
+    let resolvedViaAddress = false
     if (host && host !== span.service) {
       const targetId = resolveServiceId(ctx.graph, host)
       if (targetId && targetId !== sourceId) {
@@ -433,12 +496,33 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
           isError,
         )
         affectedNode = targetId
+        resolvedViaAddress = true
       } else if (!targetId) {
         const frontierId = ensureFrontierNode(ctx.graph, host, ts)
         if (ctx.graph.hasNode(sourceId)) {
           upsertFrontierEdge(ctx.graph, EdgeType.CALLS, sourceId, frontierId, ts)
         }
         affectedNode = frontierId
+        resolvedViaAddress = true
+      }
+    }
+
+    // Parent-span fallback (ADR-033): when address-based resolution didn't
+    // produce an edge and the span has a parentSpanId we've cached, the
+    // parent's service identifies the caller. The current span is the server
+    // side of the call, so the edge direction is parent.service → current.
+    if (!resolvedViaAddress && span.parentSpanId) {
+      const parentService = lookupParentSpanService(span.traceId, span.parentSpanId, nowMs)
+      if (parentService && parentService !== span.service) {
+        const parentId = ensureServiceNode(ctx.graph, parentService)
+        upsertObservedEdge(
+          ctx.graph,
+          EdgeType.CALLS,
+          parentId,
+          sourceId,
+          ts,
+          isError,
+        )
       }
     }
   }
