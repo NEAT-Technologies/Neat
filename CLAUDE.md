@@ -2,7 +2,7 @@
 
 This is the agent guide for the NEAT repo. If you're a fresh Claude session (or a human picking this up cold), read this first.
 
-**Binding rules:** @docs/contracts.md — short list, auto-loaded with this file. If you're about to write code that conflicts with anything in there, stop. The conflict is the bug.
+**Binding rules:** @docs/contracts.md — short list, auto-loaded with this file. Per-topic contracts live under `docs/contracts/` and are surfaced automatically when you edit a file the contract governs (PreToolUse hook at `docs/contracts/_hook.sh`, wired in `.claude/settings.json`). If you're about to write code that conflicts with anything in there, stop. The conflict is the bug.
 
 ## What NEAT is
 

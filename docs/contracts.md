@@ -1,14 +1,24 @@
 # NEAT contracts
 
-The binding rules. Auto-loaded into every Claude Code session via `@docs/contracts.md` in CLAUDE.md.
+Binding rules. Auto-loaded into every Claude Code session via `@docs/contracts.md` in `CLAUDE.md`.
 
-If you (Claude or human) are about to write code that conflicts with anything below — stop. The conflict is the bug. Either the rule is wrong (open an ADR superseding it) or the code is wrong. Don't quietly drift.
+If you (Claude or human) are about to write code that conflicts with anything below, stop. The conflict is the bug. Either the rule is wrong (open an ADR superseding it) or the code is wrong. Don't quietly drift.
 
-The longer rationale for each rule lives in `docs/decisions.md` (ADRs) and `docs/audits/` (audit contracts). This file is the short binding subset.
+This file is the index. Each rule has a short summary and a link to its full per-topic contract under `docs/contracts/`. The PreToolUse hook at `docs/contracts/_hook.sh` automatically surfaces the relevant contract when you edit a file the contract governs — so the binding rules load at the moment of writing, not just on session start.
 
----
+## Per-topic contracts
 
-## 1. Provenance is the load-bearing semantic contract
+| # | Contract | File | Governs |
+|---|----------|------|---------|
+| 16 | Node identity | [`contracts/identity.md`](./contracts/identity.md) | Node ids constructed via `@neat/types/identity` helpers, never literals (ADR-028) |
+
+*(More land as the v0.2.x sequence progresses: edge identity + provenance, lifecycle, traversal, MCP surface, persistence, policies, init/install. See `docs/milestones.md` for sequencing.)*
+
+## Cross-cutting rules (applied everywhere; not yet split out)
+
+These still live inline pending split into per-topic files. Treat them as binding immediately.
+
+### 1. Provenance is the load-bearing semantic contract
 
 Every edge carries a `provenance` field from `@neat/types`. Valid values:
 
@@ -24,7 +34,7 @@ OBSERVED | INFERRED | EXTRACTED | STALE | FRONTIER
 
 Raw provenance strings (`'OBSERVED'`, `'EXTRACTED'`, etc.) outside `@neat/types` are a contract violation. Use `Provenance.X` constants.
 
-## 2. OBSERVED and EXTRACTED edges coexist by design
+### 2. OBSERVED and EXTRACTED edges coexist by design
 
 Same node pair, same edge type, different provenance — they live as **separate edges with distinct ids**, not as a single edge upgraded in place.
 
@@ -36,23 +46,21 @@ This is intentional. The gap between declared intent (EXTRACTED) and observed re
 
 Traversal selects the highest-priority edge per node-pair via `PROV_RANK` (OBSERVED > INFERRED > EXTRACTED > STALE).
 
-## 3. FRONTIER edges are not traversed
+### 3. FRONTIER edges are not traversed
 
 `getRootCause` and `getBlastRadius` must skip FRONTIER edges entirely — not deprioritize, not flag, **skip**. FRONTIER means unknown territory; traversal stays inside the known graph.
 
 If a node's only edges in/out are FRONTIER, traversal stops at that node. Return `null` (root cause) or empty (blast radius) cleanly.
 
-## 4. Per-edge-type staleness thresholds (ADR-024)
-
-Different edge types decay at different rates:
+### 4. Per-edge-type staleness thresholds (ADR-024)
 
 - `CALLS` → 1 hour
 - `CONNECTS_TO` → 4 hours
 - `DEPENDS_ON`, `CONFIGURED_BY`, `RUNS_ON` → 24 hours
 
-Override via `NEAT_STALE_THRESHOLDS` env. Transitions are appended to `stale-events.ndjson`. Background `setInterval` loop (default 60s tick), never read-time.
+Override via `NEAT_STALE_THRESHOLDS` env. Transitions appended to `stale-events.ndjson`. Background `setInterval` loop (default 60s tick), never read-time.
 
-## 5. The graph is loaded from `@neat/types` schemas
+### 5. The graph is loaded from `@neat/types` schemas
 
 All node and edge schemas live in `packages/types/src/`. Code in `packages/core/src/` and `packages/mcp/src/` must:
 
@@ -60,15 +68,15 @@ All node and edge schemas live in `packages/types/src/`. Code in `packages/core/
 - Import `Provenance.X` and `EdgeType.X` constants. No raw string literals.
 - For traversal results: validate against `RootCauseResultSchema` / `BlastRadiusResultSchema` before returning.
 
-## 6. Live graphology, not graph.json
+### 6. Live graphology, not graph.json
 
 `GET /graph` and all MCP tools must read the **live** in-memory graphology instance. Never read `graph.json` at request time. The snapshot on disk is loaded once at startup (`server.ts`, `watch.ts`) and persisted on shutdown / interval. Nothing else reads it.
 
-## 7. Multi-project isolation (ADR-026)
+### 7. Multi-project isolation (ADR-026)
 
-`Map<string, NeatGraph>` keyed by project name. Default project keeps legacy filenames; named projects scope to `~/.neat/projects/<name>/`. REST routes dual-mount at `/X` and `/projects/:project/X`. OTel ingest stays single-project for now. See ADR-026.
+`Map<string, NeatGraph>` keyed by project name. Default project keeps legacy filenames; named projects scope to `~/.neat/projects/<name>/`. REST routes dual-mount at `/X` and `/projects/:project/X`. OTel ingest stays single-project for now.
 
-## 8. No demo-name hardcoding
+### 8. No demo-name hardcoding
 
 `service-a`, `service-b`, `payments-db`, `pg`, `postgresql` must not appear as literal strings in branching logic anywhere in `packages/core/src/` or `packages/mcp/src/`. Allowed only in:
 
@@ -78,31 +86,31 @@ All node and edge schemas live in `packages/types/src/`. Code in `packages/core/
 
 Driver and engine names are read from node properties. Compat checks iterate `compatPairs()`.
 
-## 9. No `Co-Authored-By: Claude` trailer (ADR-006)
+### 9. No `Co-Authored-By: Claude` trailer (ADR-006)
 
-Commits and PRs in this repo are authored by humans. Do not add `Co-Authored-By: Claude Opus ... <noreply@anthropic.com>` trailers. The default Claude Code commit template includes this — strip it.
+Commits and PRs in this repo are authored by humans. Do not add the `Co-Authored-By: Claude Opus ... <noreply@anthropic.com>` trailer. The default Claude Code commit template includes this — strip it.
 
-## 10. PR body says `Refs #N`, not `Closes #N`
+### 10. PR body says `Refs #N`, not `Closes #N`
 
 Issues are closed by the user manually after verifying. Branches are `<num>-<slug>`. One issue → one branch → one PR. See ADR-005.
 
-## 11. Commits and PRs read like a colleague wrote them
+### 11. Commits and PRs read like a colleague wrote them
 
 No "this commit introduces" or release-notes-y bullets. Plain English. See ADR-008.
 
-## 12. Don't add features beyond the task
+### 12. Don't add features beyond the task
 
-Bug fixes don't need surrounding cleanup. One-shot operations don't need helpers. Three similar lines is better than a premature abstraction. No half-finished implementations. Scope-creep guard.
+Bug fixes don't need surrounding cleanup. One-shot operations don't need helpers. Three similar lines is better than a premature abstraction. No half-finished implementations.
 
-## 13. Don't introduce mocks in production paths
+### 13. Don't introduce mocks in production paths
 
 Tests can mock. Runtime cannot. `compat.ts` reads `compat.json`; never inline a mock matrix.
 
-## 14. ConfigNodes record file existence, not contents (ADR-016)
+### 14. ConfigNodes record file existence, not contents (ADR-016)
 
 `.env` files in particular: never write file contents into the snapshot. ConfigNode records `{ name, path, fileType }` only.
 
-## 15. Node 20.x, TypeScript only, in NEAT's own toolchain
+### 15. Node 20.x, TypeScript only, in NEAT's own toolchain
 
 Python *extraction* (reading Python service code) is supported via `tree-sitter-python`. NEAT's runtime stays Node-only. Don't add Python (or Rust, or Go) to the toolchain. Rust v1.0 is the next-language move and is its own milestone.
 
@@ -113,3 +121,15 @@ Python *extraction* (reading Python service code) is supported via `tree-sitter-
 If you read a rule here that contradicts a ratified ADR or the reality of `main`, the file is stale. Open an ADR, update the rule, link the ADR. Don't ignore it silently — the next session will read the stale version.
 
 If you write code that violates a rule and you believe the rule should change, **say so explicitly in the PR description** and propose the ADR change. Don't merge a quiet violation.
+
+---
+
+## How the contract loading works
+
+Three layers, increasing in precision:
+
+1. **Session start** — CLAUDE.md auto-loads this index file. You see the rule list before any tool call.
+2. **Pre-edit** — when you call `Edit`, `Write`, or `MultiEdit`, the PreToolUse hook at `docs/contracts/_hook.sh` reads the target file path, finds every contract in `docs/contracts/*.md` whose `governs:` frontmatter matches, and surfaces those contract bodies as additional context for that specific edit.
+3. **CI** — `packages/core/test/audits/contracts.test.ts` encodes contract rules as test assertions. Any code that violates a rule fails the test on every PR.
+
+Three points of contact, three different precision levels. The index is broad and always loaded. The hook is narrow and edit-scoped. The tests are mechanical and PR-gated.
