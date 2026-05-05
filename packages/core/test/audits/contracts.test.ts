@@ -493,6 +493,59 @@ describe('Static-extraction contract (ADR-032)', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// OTel ingest contract — non-blocking, span-time, parent-cache (ADR-033)
+// ──────────────────────────────────────────────────────────────────────────
+describe('OTel ingest contract (ADR-033)', () => {
+  it.todo('OTel receiver replies before mutation completes (issue #131)')
+  it.todo('lastObserved derives from span.startTimeUnixNano, not Date.now() (issue #132)')
+  it.todo('parent-span cache resolves cross-service CALLS when address-based resolution fails (issue #133)')
+  it.todo('handleSpan auto-creates ServiceNode at serviceId(span.service) for unseen services (issue #134)')
+  it.todo('handleSpan auto-creates DatabaseNode at databaseId(host) for unseen db.system+host (issue #134)')
+  it.todo('parser extracts exception.type/message/stacktrace from span events with name=exception (issue #135)')
+  it.todo('handleSpan prefers exception event message over span.status.message (issue #135)')
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// Trace stitcher contract — ERROR-only, depth-2, OBSERVED-twin-skip (ADR-034)
+// ──────────────────────────────────────────────────────────────────────────
+describe('Trace stitcher contract (ADR-034)', () => {
+  it('stitchTrace produces no edges from a node with no outbound EXTRACTED edges', async () => {
+    const { stitchTrace } = await import('../../src/ingest.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:lonely', {
+      id: 'service:lonely',
+      type: NodeType.ServiceNode,
+      name: 'lonely',
+      language: 'javascript',
+    })
+    const before = g.size
+    stitchTrace(g, 'service:lonely', '2026-05-05T12:00:00.000Z')
+    expect(g.size).toBe(before)
+  })
+
+  it('stitchTrace returns cleanly when sourceServiceId is missing from the graph', async () => {
+    const { stitchTrace } = await import('../../src/ingest.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    expect(() => stitchTrace(g, 'service:does-not-exist', '2026-05-05T12:00:00.000Z')).not.toThrow()
+    expect(g.order).toBe(0)
+  })
+
+  it.todo('stitchTrace skips a hop when an OBSERVED twin already exists for the (source, target, type) triplet (refinement)')
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// FrontierNode promotion contract — atomic, FRONTIER→OBSERVED, canonical ids (ADR-035)
+// ──────────────────────────────────────────────────────────────────────────
+describe('FrontierNode promotion contract (ADR-035)', () => {
+  // Catches the variable-interpolated provenance pattern that the contract #2
+  // scan (line ~499) misses. `${edge.type}:${promotedProvenance}:${...}->${...}`
+  // is exactly the violation present at ingest.ts:463 today.
+  it.todo(
+    'no variable-interpolated provenance segment in edge id template literals — `${X}:${Y}:${Z}->${W}` (FrontierNode rebuild fix)',
+  )
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // Provenance contract — Edge identity helpers + PROV_RANK (ADR-029)
 // ──────────────────────────────────────────────────────────────────────────
 describe('Provenance contract — edge identity (ADR-029)', () => {

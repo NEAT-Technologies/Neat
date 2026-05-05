@@ -15,6 +15,9 @@ This file is the index. Each rule has a short summary and a link to its full per
 | 3 | Node + edge lifecycle | [`contracts/lifecycle.md`](./contracts/lifecycle.md) | Creation, transition, retirement. Mutation authority locked to `ingest.ts` and `extract/*` (ADR-030) | ✅ landed |
 | 4 | Schema growth vs shape | [`contracts/schema.md`](./contracts/schema.md) | Growth = commit-and-go (snapshot diff). Shape change = ADR + `persist.ts` migration (ADR-031) | ✅ landed |
 | 5 | Static extraction | [`contracts/static-extraction.md`](./contracts/static-extraction.md) | Producer interface, evidence on every EXTRACTED edge, ghost-edge cleanup keyed on `evidence.file`, language dispatch, idempotency (ADR-032) | ✅ landed (v0.2.1 opens) |
+| 6 | OTel ingest | [`contracts/otel-ingest.md`](./contracts/otel-ingest.md) | Non-blocking receiver, span-time `lastObserved`, parent-span cache, exception-event parsing, auto-creation of unseen services/DBs (ADR-033) | ✅ landed (v0.2.2 opens) |
+| 7 | Trace stitcher | [`contracts/trace-stitcher.md`](./contracts/trace-stitcher.md) | ERROR-only trigger, depth-2 limit, EXTRACTED-only walk, OBSERVED-twin-skip rule, default confidence 0.6 (ADR-034) | ✅ landed (v0.2.2 opens) |
+| 8 | FrontierNode promotion | [`contracts/frontier-promotion.md`](./contracts/frontier-promotion.md) | Post-extract trigger, alias-match precedence, atomic per-node, FRONTIER→OBSERVED upgrade, canonical edge-id helpers required (ADR-035) | ✅ landed (v0.2.2 opens) |
 
 ### Future contracts — opened at the start of each milestone
 
@@ -22,9 +25,6 @@ Producer-, consumer-, surface-, policy-, and distribution-layer contracts open a
 
 | # | Contract | Milestone | Governs (target) |
 |---|----------|-----------|------------------|
-| 6 | OTel ingest | v0.2.2 | Span-time `lastObserved`, parent-span correlation, exception-event parsing, auto-creation, non-blocking ingest (`ingest.ts` ingest path) |
-| 7 | Trace stitcher | v0.2.2 | When INFERRED fires, depth limit, OBSERVED-twin-skip rule (`stitchTrace`) |
-| 8 | FrontierNode promotion | v0.2.2 | When promotion fires, alias-match precedence, attribute merge (`promoteFrontierNodes`) |
 | 9 | Traversal | v0.2.3 | Edge priority per hop, FRONTIER exclusion, confidence cascading, schema validation (`traverse.ts`) |
 | 10 | `getRootCause` | v0.2.3 | Incompatibility-check semantics per upstream node type, reason-string format, fix-recommendation derivation |
 | 11 | `getBlastRadius` | v0.2.3 | Outbound semantics, distance positive integer, per-node path and confidence, total-affected count |
