@@ -5,7 +5,7 @@ import type {
   GraphNode,
   ServiceNode,
 } from '@neat/types'
-import { EdgeType, NodeType, Provenance } from '@neat/types'
+import { EdgeType, NodeType, Provenance, databaseId } from '@neat/types'
 import type { NeatGraph } from '../../graph.js'
 import {
   checkCompatibility,
@@ -59,7 +59,7 @@ function compatibleDriversFor(engine: string): CompatibleDriver[] {
 
 function toDatabaseNode(config: DbConfig): DatabaseNode {
   return {
-    id: `database:${config.host}`,
+    id: databaseId(config.host),
     type: NodeType.DatabaseNode,
     name: config.database || config.host,
     engine: config.engine,

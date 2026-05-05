@@ -184,6 +184,62 @@ describe('Rule 6 — Live graph reads', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// Rule 16 — Node ids come from @neat/types/identity helpers, not literals
+// ──────────────────────────────────────────────────────────────────────────
+describe('Rule 16 — Node identity helpers (ADR-028)', () => {
+  it('no hand-rolled `service:`/`database:`/`config:`/`infra:`/`frontier:` template literals in core/mcp src', () => {
+    const offenders: string[] = []
+    // Match a template literal that opens with one of the prefixes immediately
+    // followed by `${...}`. That's the shape of `service:${name}` etc. Pure
+    // string literals like 'service:foo' (no interpolation) are caught
+    // separately because they're rare and almost always test fixtures.
+    const re = /`(service|database|config|infra|frontier):\$\{/
+    for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC)]) {
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim()
+        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+          offenders.push(`${file}:${i + 1}: ${trimmed}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('identity helpers produce stable wire format', async () => {
+    const { serviceId, databaseId, configId, infraId, frontierId } = await import('@neat/types')
+    expect(serviceId('checkout')).toBe('service:checkout')
+    expect(databaseId('db.example.com')).toBe('database:db.example.com')
+    expect(configId('apps/web/.env')).toBe('config:apps/web/.env')
+    expect(infraId('redis', 'cache.internal')).toBe('infra:redis:cache.internal')
+    expect(frontierId('payments-api:8080')).toBe('frontier:payments-api:8080')
+  })
+
+  it('inverse helpers parse the wire format back', async () => {
+    const {
+      serviceId,
+      parseServiceId,
+      databaseId,
+      parseDatabaseId,
+      configId,
+      parseConfigId,
+      infraId,
+      parseInfraId,
+      frontierId,
+      parseFrontierId,
+    } = await import('@neat/types')
+    expect(parseServiceId(serviceId('checkout'))).toBe('checkout')
+    expect(parseDatabaseId(databaseId('host'))).toBe('host')
+    expect(parseConfigId(configId('a/b/.env'))).toBe('a/b/.env')
+    expect(parseInfraId(infraId('redis', 'cache'))).toEqual({ kind: 'redis', name: 'cache' })
+    expect(parseFrontierId(frontierId('host:8080'))).toBe('host:8080')
+
+    expect(parseServiceId('not-a-service-id')).toBe(null)
+    expect(parseInfraId('infra:noname')).toBe(null)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // Rule 8 — No demo-name hardcoding in branching logic
 // ──────────────────────────────────────────────────────────────────────────
 describe('Rule 8 — No demo-name hardcoding', () => {

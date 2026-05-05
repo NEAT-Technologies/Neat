@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ConfigNode, GraphEdge } from '@neat/types'
-import { EdgeType, NodeType, Provenance } from '@neat/types'
+import { EdgeType, NodeType, Provenance, configId } from '@neat/types'
 import type { NeatGraph } from '../graph.js'
 import { IGNORED_DIRS, isConfigFile, makeEdgeId, type DiscoveredService } from './shared.js'
 
@@ -40,7 +40,7 @@ export async function addConfigNodes(
     for (const file of configFiles) {
       const relPath = path.relative(scanPath, file)
       const node: ConfigNode = {
-        id: `config:${relPath}`,
+        id: configId(relPath),
         type: NodeType.ConfigNode,
         name: path.basename(file),
         path: relPath,

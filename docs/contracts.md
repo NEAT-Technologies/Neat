@@ -114,6 +114,24 @@ Tests can mock. Runtime cannot. `compat.ts` reads `compat.json`; never inline a 
 
 Python *extraction* (reading Python service code) is supported via `tree-sitter-python`. NEAT's runtime stays Node-only. Don't add Python (or Rust, or Go) to the toolchain. Rust v1.0 is the next-language move and is its own milestone.
 
+## 16. Node ids come from `@neat/types/identity` helpers, never literals (ADR-028)
+
+Every node id in NEAT is constructed via the helpers in `packages/types/src/identity.ts`:
+
+```ts
+import { serviceId, databaseId, configId, infraId, frontierId } from '@neat/types'
+
+serviceId('checkout')       // 'service:checkout'
+databaseId('db.example.com') // 'database:db.example.com'
+configId('apps/web/.env')   // 'config:apps/web/.env'
+infraId('redis', 'cache.internal')  // 'infra:redis:cache.internal'
+frontierId('payments-api:8080')     // 'frontier:payments-api:8080'
+```
+
+Hand-rolled template literals like `\`service:${name}\`` are a contract violation. The id wire format lives in exactly one file. Anywhere else that constructs a node id by string concatenation is a bug.
+
+Rationale (ADR-028): if two producers disagree on what id a node gets, OBSERVED edges from one never match EXTRACTED edges from the other and the coexistence contract (Rule 2) silently fails. Twelve hand-rolled id sites across nine files have been kept consistent by good behavior; the contract makes that consistency mechanical.
+
 ---
 
 ## When this file is wrong

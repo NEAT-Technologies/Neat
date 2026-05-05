@@ -432,3 +432,46 @@ The numbering communicates priority: engineering ships first as the v0.2.x clust
 **What this ADR is not deciding.** Which open-source repo we point NEAT at first; that's a product call once the platform is in shape. Whether the codemod or eBPF route is the v0.2.2 default; that's the ADR that lands when v0.2.2 starts. Whether v0.3.0 frontend ships before or after v0.2.x; the tracks are independent.
 
 **When to revisit.** When the first real PR closes — flip the framing from "can NEAT do this" to "what's the next bar." Until then this ADR stays the active project gravity.
+
+---
+
+## ADR-028 — Node identity is constructed via helpers, not string literals
+
+**Date:** 2026-05-05
+**Status:** Active.
+
+Node identity is the deepest concern in the graph. Every edge connects two nodes by id; if two producers disagree on what id a service gets, OBSERVED edges from one never match EXTRACTED edges from the other and the coexistence contract (contracts.md Rule 2) silently fails.
+
+Today identity is scattered across 12 hand-rolled sites in 9 files (services.ts, ingest.ts, configs.ts, databases/index.ts, infra/shared.ts, calls/{aws,kafka,redis,grpc}.ts). Each producer constructs its own id via template literal. Consistency holds by good behavior, not by the type system.
+
+**Decision.**
+
+1. **Id patterns are functions, not literals.** A new module `packages/types/src/identity.ts` exports `serviceId`, `databaseId`, `configId`, `infraId`, `frontierId` plus their inverses (`parseServiceId`, etc.). Producers call these. No producer constructs a node id by template literal.
+
+2. **The id patterns themselves stay what they are today.** This ADR doesn't change the wire format — `service:<name>`, `database:<host>`, `config:<relPath>`, `infra:<kind>:<name>`, `frontier:<host>`. It just gives them a single source of truth.
+
+3. **Auto-created and static-extracted nodes merge by id.** When OTel ingest auto-creates a `ServiceNode` for an unseen `span.service` (issue #134) and static extraction later produces a `ServiceNode` with the same id, they merge — they do not coexist as duplicates. The id is the merge key. Static-extracted fields (language, version, dependencies) override OTel-derived fields (which are absent or sparse) where both exist; OTel-derived fields (lastObserved on associated edges, span counts) survive untouched.
+
+4. **FrontierNode promotion preserves identity continuity.** When a FrontierNode at `frontier:<host>` is promoted to a typed node — typically a ServiceNode at `service:<name>` after an alias resolves — the FrontierNode is removed and the typed node takes its place. Edges that pointed at the frontier id are rewritten to point at the new typed id. This is what `promoteFrontierNodes` already does in ingest.ts; ratified here.
+
+5. **Workspace scoping is deferred.** A monorepo with two services both named `shared-utils` in different workspaces collides under `service:shared-utils`. Today this is left to `addServiceAliases` to disambiguate via host:port mapping, which doesn't actually rename the service. Real fix is workspace-scoped ids like `service:<workspace>/<name>`. Defer until a real codebase trips it. Document the limitation; do not silently re-engineer the id format without a successor ADR.
+
+6. **Database id is host-only, not host:port.** Two databases on the same host with different ports collide. Defer the fix; document the limitation.
+
+**Why the identity helpers are in `@neat/types`, not `@neat/core`.**
+
+Both producers and consumers need them. Producers (extract/, ingest.ts) construct ids; consumers (traverse.ts, MCP tools, REST handlers) sometimes parse them (api.ts:202 strips a `service:` prefix today). Putting helpers in `@neat/types` keeps the module that owns the schemas as the single source of truth for the wire format, and avoids a circular dependency between core and any producer-only id module.
+
+**Enforcement.**
+
+`packages/core/test/audits/contracts.test.ts` gains a regression test: scan `packages/core/src/` and `packages/mcp/src/` for hand-rolled id patterns (`service:`, `database:`, `config:`, `infra:`, `frontier:` inside template literals). The only allowed sites are inside `@neat/types/identity.ts` itself, and inside test fixtures. CI fails any future session that drifts.
+
+`docs/contracts.md` Rule 16 records the binding form: "Node ids are constructed via the helpers in `@neat/types/identity.ts`. Hand-rolled template literals constructing node ids are a contract violation."
+
+**What this ADR is not deciding.**
+
+Edge identity (different ADR — comes next as #2 in the contract list). Provenance ranking (already locked in contracts.md Rule 1-2). Lifecycle transitions (different ADR — #3 in the list). Workspace-scoped ids and host:port database ids (deferred per items 5 and 6).
+
+**When to revisit.**
+
+When a real codebase trips the workspace-collision case (item 5) or the host:port-collision case (item 6) — at that point write a successor ADR introducing scoped ids, and migrate snapshots via the v2→v3 path persist.ts already supports.
