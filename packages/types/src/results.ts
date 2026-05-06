@@ -13,7 +13,11 @@ export type RootCauseResult = z.infer<typeof RootCauseResultSchema>
 
 export const BlastRadiusAffectedNodeSchema = z.object({
   nodeId: z.string(),
-  distance: z.number().int().nonnegative(),
+  // Distance from the origin in BFS hops. The origin itself is never in
+  // affectedNodes, so distance 0 has no meaning — the BFS at traverse.ts
+  // already skips frame 0. Tightening to positive() locks that invariant
+  // mechanically (ADR-038, issue #138).
+  distance: z.number().int().positive(),
   edgeProvenance: ProvenanceSchema,
 })
 export type BlastRadiusAffectedNode = z.infer<typeof BlastRadiusAffectedNodeSchema>
