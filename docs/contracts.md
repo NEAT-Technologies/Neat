@@ -28,17 +28,17 @@ This file is the index. Each rule has a short summary and a link to its full per
 | 16 | Policy evaluation | [`contracts/policy-evaluation.md`](./contracts/policy-evaluation.md) | Pure `evaluateAllPolicies`, three triggers, per-type dispatch, deterministic violation ids (ADR-043) | ✅ landed (v0.2.4 opens) |
 | 17 | Policy onViolation actions | [`contracts/policy-actions.md`](./contracts/policy-actions.md) | `log` / `alert` / `block`; severity-driven defaults; block applies to FrontierNode promotion gating only in MVP (ADR-044) | ✅ landed (v0.2.4 opens) |
 | 18 | Policy tool surface | [`contracts/policy-tools.md`](./contracts/policy-tools.md) | Single `check_policies` tool, REST under `/policies`, resource at `neat://policies/violations` (ADR-045) | ✅ landed (v0.2.4 opens) |
+| 19 | `neat init` | [`contracts/init.md`](./contracts/init.md) | One-time registration. Discovery before mutation. Patch-by-default; `--apply` opt-in. Lockfiles never touched (ADR-046) | ✅ landed (v0.2.5 opens) |
+| 20 | SDK install | [`contracts/sdk-install.md`](./contracts/sdk-install.md) | Per-language installer modules (Node + Python in MVP). Plan/apply decoupled. Manifests touched, lockfiles never (ADR-047) | ✅ landed (v0.2.5 opens) |
+| 21 | Machine-level project registry | [`contracts/project-registry.md`](./contracts/project-registry.md) | `~/.neat/projects.json` per-user, atomic writes via tmp+rename, flock during writes, path-normalized (ADR-048) | ✅ landed (v0.2.5 opens) |
+| 22 | Daemon | [`contracts/daemon.md`](./contracts/daemon.md) | Single long-lived process, per-project graph isolation, mtime + OTel + policy.json triggers, graceful per-project failure (ADR-049) | ✅ landed (v0.2.5 opens) |
 
 ### Future contracts — opened at the start of each milestone
 
-Producer-, consumer-, surface-, policy-, and distribution-layer contracts open at the start of the milestone where their layer gets rebuilt.
-
 | # | Contract | Milestone | Governs (target) |
 |---|----------|-----------|------------------|
-| 19 | `neat init` | v0.2.5 | What init does, what it writes, what it doesn't touch, codemod patch-vs-apply semantics |
-| 20 | SDK install | v0.2.5 | Per-language installer module interface, dependency-file edits, entrypoint modifications, opt-in semantics |
-| 21 | Machine-level project registry | v0.2.5 | `~/.neat/projects.json` shape, daemon discovery rules, project lifecycle |
-| 22 | Daemon | v0.2.5 | Continuous extraction triggers (file mtime, OTel arrival), per-project graph isolation, lifecycle |
+| 23 | CLI surface | v0.2.6 | CLI verbs mirror MCP tools — nine `neat <verb>` commands calling the same REST client. Output format, exit codes, project scoping. |
+| 24 | Frontend-facing API | v0.2.6 | API surface a local frontend needs that the existing REST + MCP set doesn't already cover — SSE / WebSocket live updates, anything Jed's v0.3.0 track surfaces as a gap. The `(if needed)` qualifier is honest; parts of this contract wait for v0.3.0 to surface concrete demands. |
 
 The full reasoning and per-milestone sequencing live in `docs/plans/2026-05-04-v0.2.x-sequencing.md`. The current state of the active milestone lives in `docs/plans/<latest-date>-v0.2.x-status.md`.
 
