@@ -1116,8 +1116,55 @@ describe('getRootCause contract (ADR-037)', () => {
     expect(true).toBe(true)
   })
 
-  it.todo('ServiceNode origin produces a result when an upstream service violates node-engine compat (issue #123 generalization)')
-  it.todo('ConfigNode origin returns null cleanly (no registered shape)')
+  it('ServiceNode origin produces a result when an upstream service violates node-engine compat (issue #123 generalization)', async () => {
+    const { extractedEdgeId } = await import('@neat/types')
+    const { ensureCompatLoaded } = await import('../../src/compat.js')
+    await ensureCompatLoaded()
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    // Origin service (the error surface). The upstream caller has vitest 3.0
+    // declared with engines.node = "16" — that's a node-engine violation per
+    // compat.json (vitest >= 2 needs Node 18+).
+    g.addNode('service:downstream', {
+      id: 'service:downstream',
+      type: NodeType.ServiceNode,
+      name: 'downstream',
+      language: 'javascript',
+    })
+    g.addNode('service:upstream', {
+      id: 'service:upstream',
+      type: NodeType.ServiceNode,
+      name: 'upstream',
+      language: 'javascript',
+      nodeEngine: '16.0.0',
+      dependencies: { vitest: '3.0.0' },
+    })
+    const callsId = extractedEdgeId('service:upstream', 'service:downstream', EdgeType.CALLS)
+    g.addEdgeWithKey(callsId, 'service:upstream', 'service:downstream', {
+      id: callsId,
+      source: 'service:upstream',
+      target: 'service:downstream',
+      type: EdgeType.CALLS,
+      provenance: Provenance.EXTRACTED,
+    })
+
+    const result = getRootCause(g, 'service:downstream')
+    expect(result).not.toBeNull()
+    expect(result!.rootCauseNode).toBe('service:upstream')
+    expect(result!.rootCauseReason).toMatch(/Node\s*18/i)
+    expect(result!.fixRecommendation).toMatch(/engines\.node/i)
+  })
+
+  it('ConfigNode origin returns null cleanly (no registered shape)', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('config:.env', {
+      id: 'config:.env',
+      type: NodeType.ConfigNode,
+      name: '.env',
+      path: '.env',
+      fileType: 'env',
+    })
+    expect(getRootCause(g, 'config:.env')).toBeNull()
+  })
   it('result schema-validates before return (issue #139)', () => {
     // Already exercised end-to-end in the Rule 5 block (line ~211); this
     // assertion locks the implementation gate at the contract-block level so
@@ -1125,7 +1172,42 @@ describe('getRootCause contract (ADR-037)', () => {
     const content = readFileSync(join(CORE_SRC, 'traverse.ts'), 'utf8')
     expect(content).toMatch(/RootCauseResultSchema\.parse\s*\(/)
   })
-  it.todo('traversalPath[0] is the origin and last entry is rootCauseNode')
+  it('traversalPath[0] is the origin and last entry is rootCauseNode', async () => {
+    const { extractedEdgeId } = await import('@neat/types')
+    const { ensureCompatLoaded } = await import('../../src/compat.js')
+    await ensureCompatLoaded()
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    // Reuse the ServiceNode-origin shape — it's the easiest fixture that
+    // produces a non-null result without hitting the demo's DB-specific
+    // compat path.
+    g.addNode('service:downstream', {
+      id: 'service:downstream',
+      type: NodeType.ServiceNode,
+      name: 'downstream',
+      language: 'javascript',
+    })
+    g.addNode('service:upstream', {
+      id: 'service:upstream',
+      type: NodeType.ServiceNode,
+      name: 'upstream',
+      language: 'javascript',
+      nodeEngine: '16.0.0',
+      dependencies: { vitest: '3.0.0' },
+    })
+    const callsId = extractedEdgeId('service:upstream', 'service:downstream', EdgeType.CALLS)
+    g.addEdgeWithKey(callsId, 'service:upstream', 'service:downstream', {
+      id: callsId,
+      source: 'service:upstream',
+      target: 'service:downstream',
+      type: EdgeType.CALLS,
+      provenance: Provenance.EXTRACTED,
+    })
+    const result = getRootCause(g, 'service:downstream')
+    expect(result).not.toBeNull()
+    expect(result!.traversalPath[0]).toBe('service:downstream')
+    expect(result!.traversalPath[result!.traversalPath.length - 1]).toBe(result!.rootCauseNode)
+    expect(result!.edgeProvenances.length).toBe(result!.traversalPath.length - 1)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
