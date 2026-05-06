@@ -16,7 +16,14 @@ import {
   RootCauseResultSchema,
 } from '@neat/types'
 import type { NeatGraph } from './graph.js'
-import { checkCompatibility, compatPairs } from './compat.js'
+import {
+  checkCompatibility,
+  checkNodeEngineConstraint,
+  checkPackageConflict,
+  compatPairs,
+  nodeEngineConstraints,
+  packageConflicts,
+} from './compat.js'
 
 // Contract anchors (see /docs/contracts.md + docs/contracts/provenance.md):
 //   * Rule 2 — Coexistence: walk by provenance priority, never collapse edges.
@@ -183,34 +190,38 @@ function longestIncomingWalk(graph: NeatGraph, start: string, maxDepth: number):
   return best
 }
 
-export function getRootCause(
+// Per-shape match result. Each shape walks the same incoming `walk.path` but
+// looks for a different class of incompatibility. Adding a new shape (e.g. a
+// future ConfigNode "missing required env var" rule) is one entry in
+// `rootCauseShapes` plus its match function — no restructure to getRootCause.
+interface RootCauseMatch {
+  rootCauseNode: string
+  rootCauseReason: string
+  fixRecommendation?: string
+}
+
+type RootCauseShape = (
   graph: NeatGraph,
-  errorNodeId: string,
-  errorEvent?: ErrorEvent,
-): RootCauseResult | null {
-  if (!graph.hasNode(errorNodeId)) return null
+  origin: GraphNode,
+  walk: Walk,
+) => RootCauseMatch | null
 
-  const startAttrs = graph.getNodeAttributes(errorNodeId) as GraphNode
-  // Driver/engine mismatches are still the only shape the compat matrix
-  // describes, so root-cause traversal only fires when the error surfaces at
-  // a database node. Other root-cause shapes (config drift, version skew
-  // between services) would key off different node types and live behind a
-  // separate dispatch.
-  if (startAttrs.type !== NodeType.DatabaseNode) return null
-  const targetDb = startAttrs as DatabaseNode
-
-  const walk = longestIncomingWalk(graph, errorNodeId, ROOT_CAUSE_MAX_DEPTH)
-
-  let rootCauseNode: string | null = null
-  let rootCauseReason: string | null = null
-  let fixRecommendation: string | undefined
-
+// DatabaseNode origin → driver/engine compat (the original v0.1.x behavior,
+// preserved verbatim). The walk ignores non-ServiceNodes; the first upstream
+// service whose declared driver fails compat against the origin DB's
+// (engine, engineVersion) wins.
+function databaseRootCauseShape(
+  graph: NeatGraph,
+  origin: GraphNode,
+  walk: Walk,
+): RootCauseMatch | null {
+  const targetDb = origin as DatabaseNode
   // Pairs that could possibly hit on this engine — narrowed once outside the
   // walk so we don't re-scan the matrix for every service we visit.
   const candidatePairs = compatPairs().filter((p) => p.engine === targetDb.engine)
   if (candidatePairs.length === 0) return null
 
-  outer: for (const id of walk.path) {
+  for (const id of walk.path) {
     const attrs = graph.getNodeAttributes(id) as GraphNode
     if (attrs.type !== NodeType.ServiceNode) continue
     const svc = attrs as ServiceNode
@@ -225,32 +236,109 @@ export function getRootCause(
         targetDb.engineVersion,
       )
       if (!result.compatible) {
-        rootCauseNode = id
-        rootCauseReason = result.reason ?? 'incompatible driver'
-        if (result.minDriverVersion) {
-          fixRecommendation = `Upgrade ${svc.name} ${pair.driver} driver to >= ${result.minDriverVersion}`
+        return {
+          rootCauseNode: id,
+          rootCauseReason: result.reason ?? 'incompatible driver',
+          ...(result.minDriverVersion
+            ? {
+                fixRecommendation: `Upgrade ${svc.name} ${pair.driver} driver to >= ${result.minDriverVersion}`,
+              }
+            : {}),
         }
-        break outer
       }
     }
   }
+  return null
+}
 
-  if (!rootCauseNode || !rootCauseReason) return null
+// ServiceNode origin → node-engine + package-conflict shapes from compat.ts.
+// The check is over each ServiceNode along the incoming walk (the origin
+// itself + any upstream callers): a node-engine constraint failing against
+// the service's `engines.node`, or a package-conflict where a declared dep
+// requires a peer at a higher version than the service has.
+function serviceRootCauseShape(
+  graph: NeatGraph,
+  _origin: GraphNode,
+  walk: Walk,
+): RootCauseMatch | null {
+  for (const id of walk.path) {
+    const attrs = graph.getNodeAttributes(id) as GraphNode
+    if (attrs.type !== NodeType.ServiceNode) continue
+    const svc = attrs as ServiceNode
+    const deps = svc.dependencies ?? {}
+    const serviceNodeEngine = svc.nodeEngine
+
+    for (const constraint of nodeEngineConstraints()) {
+      const declared = deps[constraint.package]
+      if (!declared) continue
+      const result = checkNodeEngineConstraint(constraint, declared, serviceNodeEngine)
+      if (!result.compatible && result.reason) {
+        return {
+          rootCauseNode: id,
+          rootCauseReason: result.reason,
+          ...(result.requiredNodeVersion
+            ? {
+                fixRecommendation: `Bump ${svc.name}'s engines.node to >= ${result.requiredNodeVersion}`,
+              }
+            : {}),
+        }
+      }
+    }
+
+    for (const conflict of packageConflicts()) {
+      const declared = deps[conflict.package]
+      if (!declared) continue
+      const requiredDeclared = deps[conflict.requires.name]
+      const result = checkPackageConflict(conflict, declared, requiredDeclared)
+      if (!result.compatible && result.reason) {
+        return {
+          rootCauseNode: id,
+          rootCauseReason: result.reason,
+          fixRecommendation: `Upgrade ${svc.name}'s ${conflict.requires.name} to >= ${conflict.requires.minVersion}`,
+        }
+      }
+    }
+  }
+  return null
+}
+
+// Dispatch by origin node type per ADR-037. Origin types not present here
+// (InfraNode, ConfigNode, FrontierNode) cleanly return null — getRootCause
+// needs an explicit shape to know what an "incompatibility" looks like for
+// that origin, and those types don't have one yet.
+const rootCauseShapes: Partial<Record<GraphNode['type'], RootCauseShape>> = {
+  [NodeType.DatabaseNode]: databaseRootCauseShape,
+  [NodeType.ServiceNode]: serviceRootCauseShape,
+}
+
+export function getRootCause(
+  graph: NeatGraph,
+  errorNodeId: string,
+  errorEvent?: ErrorEvent,
+): RootCauseResult | null {
+  if (!graph.hasNode(errorNodeId)) return null
+  const origin = graph.getNodeAttributes(errorNodeId) as GraphNode
+  const shape = rootCauseShapes[origin.type]
+  if (!shape) return null
+
+  const walk = longestIncomingWalk(graph, errorNodeId, ROOT_CAUSE_MAX_DEPTH)
+  const match = shape(graph, origin, walk)
+  if (!match) return null
 
   const reason = errorEvent
-    ? `${rootCauseReason} (observed error: ${errorEvent.errorMessage})`
-    : rootCauseReason
+    ? `${match.rootCauseReason} (observed error: ${errorEvent.errorMessage})`
+    : match.rootCauseReason
 
   // Schema-validate before return (ADR-036, #139). A drift in the result
   // shape becomes a runtime throw at the call site rather than a silently
   // malformed payload reaching MCP / REST consumers.
   return RootCauseResultSchema.parse({
-    rootCauseNode,
+    rootCauseNode: match.rootCauseNode,
     rootCauseReason: reason,
     traversalPath: walk.path,
     edgeProvenances: walk.edges.map((e) => e.provenance),
     confidence: confidenceFromMix(walk.edges),
-    fixRecommendation,
+    fixRecommendation: match.fixRecommendation,
   })
 }
 
