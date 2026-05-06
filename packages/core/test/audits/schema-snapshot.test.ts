@@ -26,6 +26,9 @@ import {
   ErrorEventSchema,
   GraphEdgeSchema,
   GraphNodeSchema,
+  NodeTypeSchema,
+  PolicyFileSchema,
+  PolicyViolationSchema,
   ProvenanceSchema,
   RootCauseResultSchema,
 } from '@neat/types'
@@ -38,11 +41,14 @@ const SNAPSHOT_PATH = join(__dirname, 'schemas.snapshot.json')
 const BINDING_SCHEMAS: Record<string, z.ZodTypeAny> = {
   ProvenanceSchema,
   EdgeTypeSchema,
+  NodeTypeSchema,
   GraphEdgeSchema,
   GraphNodeSchema,
   ErrorEventSchema,
   RootCauseResultSchema,
   BlastRadiusResultSchema,
+  PolicyFileSchema,
+  PolicyViolationSchema,
 }
 
 // Walk a Zod schema and produce a stable JSON description. Captures field
@@ -58,6 +64,13 @@ function describeSchema(schema: z.ZodTypeAny): unknown {
   }
   if (schema instanceof z.ZodDefault) {
     return { _default: describeSchema(schema._def.innerType) }
+  }
+  // Unwrap ZodEffects (refine / superRefine / transform) so the inner schema
+  // surfaces in the snapshot. Without this, schemas like PolicyFileSchema
+  // (which uses .superRefine() for id-uniqueness) collapse to "_other:
+  // ZodEffects" and the snapshot can't catch shape drift on the inner object.
+  if (schema instanceof z.ZodEffects) {
+    return { _refined: describeSchema(schema._def.schema) }
   }
   if (schema instanceof z.ZodObject) {
     const shape = (schema as z.ZodObject<z.ZodRawShape>).shape

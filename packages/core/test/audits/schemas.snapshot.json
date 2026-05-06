@@ -369,6 +369,284 @@
       }
     }
   },
+  "NodeTypeSchema": {
+    "_enum": [
+      "ConfigNode",
+      "DatabaseNode",
+      "FrontierNode",
+      "InfraNode",
+      "ServiceNode"
+    ]
+  },
+  "PolicyFileSchema": {
+    "_refined": {
+      "_object": {
+        "policies": {
+          "_array": {
+            "_object": {
+              "description": {
+                "_optional": "_string"
+              },
+              "id": {
+                "_string": [
+                  "min"
+                ]
+              },
+              "name": {
+                "_string": [
+                  "min"
+                ]
+              },
+              "onViolation": {
+                "_optional": {
+                  "_enum": [
+                    "alert",
+                    "block",
+                    "log"
+                  ]
+                }
+              },
+              "rule": {
+                "_discriminated": {
+                  "discriminator": "type",
+                  "options": {
+                    "structural": {
+                      "_object": {
+                        "edgeType": {
+                          "_enum": [
+                            "CALLS",
+                            "CONFIGURED_BY",
+                            "CONNECTS_TO",
+                            "CONSUMES_FROM",
+                            "DEPENDS_ON",
+                            "PUBLISHES_TO",
+                            "RUNS_ON"
+                          ]
+                        },
+                        "fromNodeType": {
+                          "_enum": [
+                            "ConfigNode",
+                            "DatabaseNode",
+                            "FrontierNode",
+                            "InfraNode",
+                            "ServiceNode"
+                          ]
+                        },
+                        "toNodeType": {
+                          "_enum": [
+                            "ConfigNode",
+                            "DatabaseNode",
+                            "FrontierNode",
+                            "InfraNode",
+                            "ServiceNode"
+                          ]
+                        },
+                        "type": {
+                          "_literal": "structural"
+                        }
+                      }
+                    },
+                    "compatibility": {
+                      "_object": {
+                        "kind": {
+                          "_optional": {
+                            "_enum": [
+                              "deprecated-api",
+                              "driver-engine",
+                              "node-engine",
+                              "package-conflict"
+                            ]
+                          }
+                        },
+                        "type": {
+                          "_literal": "compatibility"
+                        }
+                      }
+                    },
+                    "provenance": {
+                      "_object": {
+                        "edgeType": {
+                          "_enum": [
+                            "CALLS",
+                            "CONFIGURED_BY",
+                            "CONNECTS_TO",
+                            "CONSUMES_FROM",
+                            "DEPENDS_ON",
+                            "PUBLISHES_TO",
+                            "RUNS_ON"
+                          ]
+                        },
+                        "required": {
+                          "_union": [
+                            {
+                              "_enum": [
+                                "EXTRACTED",
+                                "FRONTIER",
+                                "INFERRED",
+                                "OBSERVED",
+                                "STALE"
+                              ]
+                            },
+                            {
+                              "_array": {
+                                "_enum": [
+                                  "EXTRACTED",
+                                  "FRONTIER",
+                                  "INFERRED",
+                                  "OBSERVED",
+                                  "STALE"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "targetNodeId": {
+                          "_optional": "_string"
+                        },
+                        "type": {
+                          "_literal": "provenance"
+                        }
+                      }
+                    },
+                    "ownership": {
+                      "_object": {
+                        "field": {
+                          "_default": "_string"
+                        },
+                        "nodeType": {
+                          "_enum": [
+                            "ConfigNode",
+                            "DatabaseNode",
+                            "FrontierNode",
+                            "InfraNode",
+                            "ServiceNode"
+                          ]
+                        },
+                        "type": {
+                          "_literal": "ownership"
+                        }
+                      }
+                    },
+                    "blast-radius": {
+                      "_object": {
+                        "depth": {
+                          "_optional": {
+                            "_number": [
+                              "int",
+                              "min"
+                            ]
+                          }
+                        },
+                        "maxAffected": {
+                          "_number": [
+                            "int",
+                            "min"
+                          ]
+                        },
+                        "nodeType": {
+                          "_enum": [
+                            "ConfigNode",
+                            "DatabaseNode",
+                            "FrontierNode",
+                            "InfraNode",
+                            "ServiceNode"
+                          ]
+                        },
+                        "type": {
+                          "_literal": "blast-radius"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "severity": {
+                "_enum": [
+                  "critical",
+                  "error",
+                  "info",
+                  "warning"
+                ]
+              }
+            }
+          }
+        },
+        "version": {
+          "_literal": 1
+        }
+      }
+    }
+  },
+  "PolicyViolationSchema": {
+    "_object": {
+      "id": {
+        "_string": [
+          "min"
+        ]
+      },
+      "message": {
+        "_string": [
+          "min"
+        ]
+      },
+      "observedAt": {
+        "_string": [
+          "datetime"
+        ]
+      },
+      "onViolation": {
+        "_enum": [
+          "alert",
+          "block",
+          "log"
+        ]
+      },
+      "policyId": {
+        "_string": [
+          "min"
+        ]
+      },
+      "policyName": {
+        "_string": [
+          "min"
+        ]
+      },
+      "ruleType": {
+        "_enum": [
+          "blast-radius",
+          "compatibility",
+          "ownership",
+          "provenance",
+          "structural"
+        ]
+      },
+      "severity": {
+        "_enum": [
+          "critical",
+          "error",
+          "info",
+          "warning"
+        ]
+      },
+      "subject": {
+        "_refined": {
+          "_object": {
+            "edgeId": {
+              "_optional": "_string"
+            },
+            "nodeId": {
+              "_optional": "_string"
+            },
+            "path": {
+              "_optional": {
+                "_array": "_string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "ProvenanceSchema": {
     "_enum": [
       "EXTRACTED",

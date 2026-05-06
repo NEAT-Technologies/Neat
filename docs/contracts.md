@@ -114,31 +114,27 @@ All node and edge schemas live in `packages/types/src/`. Code in `packages/core/
 
 Driver and engine names are read from node properties. Compat checks iterate `compatPairs()`.
 
-### 9. No `Co-Authored-By: Claude` trailer (ADR-006)
-
-Commits and PRs in this repo are authored by humans. Do not add the `Co-Authored-By: Claude Opus ... <noreply@anthropic.com>` trailer. The default Claude Code commit template includes this — strip it.
-
-### 10. PR body says `Refs #N`, not `Closes #N`
+### 9. PR body says `Refs #N`, not `Closes #N`
 
 Issues are closed by the user manually after verifying. Branches are `<num>-<slug>`. One issue → one branch → one PR. See ADR-005.
 
-### 11. Commits and PRs read like a colleague wrote them
+### 10. Commits and PRs read like a colleague wrote them
 
 No "this commit introduces" or release-notes-y bullets. Plain English. See ADR-008.
 
-### 12. Don't add features beyond the task
+### 11. Don't add features beyond the task
 
 Bug fixes don't need surrounding cleanup. One-shot operations don't need helpers. Three similar lines is better than a premature abstraction. No half-finished implementations.
 
-### 13. Don't introduce mocks in production paths
+### 12. Don't introduce mocks in production paths
 
 Tests can mock. Runtime cannot. `compat.ts` reads `compat.json`; never inline a mock matrix.
 
-### 14. ConfigNodes record file existence, not contents (ADR-016)
+### 13. ConfigNodes record file existence, not contents (ADR-016)
 
 `.env` files in particular: never write file contents into the snapshot. ConfigNode records `{ name, path, fileType }` only.
 
-### 15. Node 20.x, TypeScript only, in NEAT's own toolchain
+### 14. Node 20.x, TypeScript only, in NEAT's own toolchain
 
 Python *extraction* (reading Python service code) is supported via `tree-sitter-python`. NEAT's runtime stays Node-only. Don't add Python (or Rust, or Go) to the toolchain. Rust v1.0 is the next-language move and is its own milestone.
 
