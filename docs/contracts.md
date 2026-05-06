@@ -21,6 +21,13 @@ This file is the index. Each rule has a short summary and a link to its full per
 | 9 | Traversal | [`contracts/traversal.md`](./contracts/traversal.md) | PROV_RANK at every hop, FRONTIER excluded entirely, multiplicative confidence cascading, no mutation, schema-validated results (ADR-036) | ✅ landed (v0.2.3 opens) |
 | 10 | `getRootCause` | [`contracts/get-root-cause.md`](./contracts/get-root-cause.md) | Walks incoming edges to depth 5, dispatches by origin node type, human-readable reason, derived fix recommendation (ADR-037) | ✅ landed (v0.2.3 opens) |
 | 11 | `getBlastRadius` | [`contracts/get-blast-radius.md`](./contracts/get-blast-radius.md) | BFS outbound default depth 10, distance positive, per-node path + cascaded confidence, schema-validated (ADR-038) | ✅ landed (v0.2.3 opens) |
+| 12 | MCP tool surface | [`contracts/mcp-tools.md`](./contracts/mcp-tools.md) | Nine tools, three-part response, transitive `get_dependencies`, REST-only data path (ADR-039) | ✅ landed (v0.2.4 opens) |
+| 13 | REST API | [`contracts/rest-api.md`](./contracts/rest-api.md) | Dual-mount per ADR-026, locked endpoint set, JSON errors, Zod-validated bodies (ADR-040) | ✅ landed (v0.2.4 opens) |
+| 14 | Persistence | [`contracts/persistence.md`](./contracts/persistence.md) | Snapshot at `<projectDir>/neat-out/graph.json`, `SCHEMA_VERSION` bumps on shape change only, append-only ndjson sidecars (ADR-041) | ✅ landed (v0.2.4 opens) |
+| 15 | Policy schema | [`contracts/policy-schema.md`](./contracts/policy-schema.md) | `policy.json` at project root, version 1, five rule types (ADR-042) | ✅ landed (v0.2.4 opens) |
+| 16 | Policy evaluation | [`contracts/policy-evaluation.md`](./contracts/policy-evaluation.md) | Pure `evaluateAllPolicies`, three triggers, per-type dispatch, deterministic violation ids (ADR-043) | ✅ landed (v0.2.4 opens) |
+| 17 | Policy onViolation actions | [`contracts/policy-actions.md`](./contracts/policy-actions.md) | `log` / `alert` / `block`; severity-driven defaults; block applies to FrontierNode promotion gating only in MVP (ADR-044) | ✅ landed (v0.2.4 opens) |
+| 18 | Policy tool surface | [`contracts/policy-tools.md`](./contracts/policy-tools.md) | Single `check_policies` tool, REST under `/policies`, resource at `neat://policies/violations` (ADR-045) | ✅ landed (v0.2.4 opens) |
 
 ### Future contracts — opened at the start of each milestone
 
@@ -28,13 +35,6 @@ Producer-, consumer-, surface-, policy-, and distribution-layer contracts open a
 
 | # | Contract | Milestone | Governs (target) |
 |---|----------|-----------|------------------|
-| 12 | MCP tool surface | v0.2.4 | Three-part response, confidence/provenance footer, transitive vs direct, tool count and naming (`packages/mcp/src/`) |
-| 13 | REST API | v0.2.4 | Endpoint shape per resource, project-scoped routing, error response shape (`packages/core/src/api.ts`) |
-| 14 | Persistence | v0.2.4 | Snapshot schema versioning, migration rules, startup-load behavior (`packages/core/src/persist.ts`) |
-| 15 | Policy schema | v0.2.4 | `policy.json` shape, version literal, type dispatch, rule structure |
-| 16 | Policy evaluation | v0.2.4 | When policies evaluate (post-ingest, post-extract, post-stale), evaluator dispatch, violation-event shape |
-| 17 | Policy onViolation actions | v0.2.4 | alert / log / block — what each does, what authority each carries |
-| 18 | Policy tool surface | v0.2.4 | MCP tool naming and shape, REST endpoints |
 | 19 | `neat init` | v0.2.5 | What init does, what it writes, what it doesn't touch, codemod patch-vs-apply semantics |
 | 20 | SDK install | v0.2.5 | Per-language installer module interface, dependency-file edits, entrypoint modifications, opt-in semantics |
 | 21 | Machine-level project registry | v0.2.5 | `~/.neat/projects.json` shape, daemon discovery rules, project lifecycle |

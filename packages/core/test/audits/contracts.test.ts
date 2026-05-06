@@ -1204,6 +1204,72 @@ describe('Schema sanity — Zod parses', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// MCP tool surface contract (ADR-039)
+// ──────────────────────────────────────────────────────────────────────────
+describe('MCP tool surface contract (ADR-039)', () => {
+  it('mcp/src never mutates the graph', () => {
+    const offenders: string[] = []
+    const re = /\b(graph|g)\.(addNode|addEdge|dropNode|dropEdge|replaceEdgeAttributes|replaceNodeAttributes|mergeEdgeAttributes|mergeNodeAttributes)\s*\(/
+    for (const file of walkSrc(MCP_SRC)) {
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim()
+        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+          offenders.push(`${file}:${i + 1}: ${trimmed}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it.todo('every server.tool registration in mcp/src/index.ts has a name from the locked allowlist of nine tools (ADR-039)')
+  it.todo('formatToolResponse helper exists at mcp/src/format.ts (issue #143)')
+  it.todo('get_dependencies is transitive — calls /graph/node/:id/dependencies?depth=N (issue #144)')
+  it.todo('check_policies tool registered with optional hypotheticalAction (v0.2.4 #117)')
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// REST API contract (ADR-040)
+// ──────────────────────────────────────────────────────────────────────────
+describe('REST API contract (ADR-040)', () => {
+  it.todo('every read endpoint mounts at both /X and /projects/:project/X')
+  it.todo('error responses are JSON-shaped { error, status, details? }')
+  it.todo('GET /graph/node/:id/dependencies?depth=N exists (issue #144)')
+  it.todo('POST endpoints validate inbound bodies with Zod schemas from @neat/types')
+  it.todo('GET /policies and /policies/violations exist (v0.2.4 #117)')
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// Persistence contract (ADR-041)
+// ──────────────────────────────────────────────────────────────────────────
+describe('Persistence contract (ADR-041)', () => {
+  it('SCHEMA_VERSION constant exists in persist.ts', () => {
+    const persist = readFileSync(join(CORE_SRC, 'persist.ts'), 'utf8')
+    expect(persist).toMatch(/const\s+SCHEMA_VERSION\s*=\s*\d+/)
+  })
+  it.todo('policy-violations.ndjson append-only writer exists (v0.2.4 #116)')
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// Policy contracts (ADRs 042-045)
+// ──────────────────────────────────────────────────────────────────────────
+describe('Policy contracts (ADRs 042-045)', () => {
+  it.todo('PolicyFileSchema exists in @neat/types/policy.ts with version: z.literal(1) (ADR-042)')
+  it.todo('Policy is a discriminated union by rule.type with five MVP types (ADR-042)')
+  it.todo('PolicyFileSchema.parse fails loudly on malformed policy.json (ADR-042)')
+  it.todo('evaluateAllPolicies is pure and dispatches by rule.type (ADR-043)')
+  it.todo('PolicyViolation ids are deterministic (ADR-043)')
+  it.todo('post-ingest, post-extract, post-stale-transition all trigger evaluateAllPolicies (ADR-043)')
+  it.todo('log action appends to ndjson with no MCP notification (ADR-044)')
+  it.todo('alert action appends + emits notifications/resources/updated (ADR-044)')
+  it.todo('block action returns false from canPromoteFrontier when block-policy violates (ADR-044)')
+  it.todo('severity-driven default actions (info→log, warning→alert, error→alert, critical→block) (ADR-044)')
+  it.todo('check_policies MCP tool registered with optional scope and hypotheticalAction (ADR-045)')
+  it.todo('GET /policies and /policies/violations REST endpoints with dual-mount (ADR-045)')
+  it.todo('neat://policies/violations MCP resource registered and emits updates (ADR-045)')
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // Queued — flipped from todo to live as cleanup issues land
 // ──────────────────────────────────────────────────────────────────────────
 describe('Queued contracts (issues #136-#145)', () => {
