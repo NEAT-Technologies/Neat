@@ -1,5 +1,6 @@
 // Tool implementations. Each one takes an HttpClient + the validated input and
-// returns an MCP CallToolResult (always shape `{ content: [{ type, text }] }`).
+// returns an MCP CallToolResult routed through formatToolResponse for the
+// three-part shape (NL + structured + footer) per ADR-039 / contract #12.
 // Keeping these as pure functions of (client, input) means tests don't need a
 // running server — just a stub client that returns canned JSON.
 
@@ -13,20 +14,14 @@ import type {
 } from '@neat/types'
 import { Provenance } from '@neat/types'
 import { HttpError, type HttpClient } from './client.js'
+import {
+  formatEmptyResponse,
+  formatErrorResponse,
+  formatToolResponse,
+  type ToolResponse,
+} from './format.js'
 
-export interface ToolResponse {
-  [x: string]: unknown
-  content: { type: 'text'; text: string }[]
-  isError?: boolean
-}
-
-function text(s: string): ToolResponse {
-  return { content: [{ type: 'text', text: s }] }
-}
-
-function errorText(s: string): ToolResponse {
-  return { content: [{ type: 'text', text: s }], isError: true }
-}
+export type { ToolResponse } from './format.js'
 
 // Project-aware path builder. When `project` is set, route through
 // /projects/<name>/...; otherwise hit the legacy root URL (which the core
@@ -46,9 +41,9 @@ async function withMissingNodeFallback(
     return await fn()
   } catch (err) {
     if (err instanceof HttpError && err.status === 404) {
-      return text(notFoundMessage)
+      return formatEmptyResponse(notFoundMessage)
     }
-    return errorText(`Error talking to neat-core: ${(err as Error).message}`)
+    return formatErrorResponse(`Error talking to neat-core: ${(err as Error).message}`)
   }
 }
 
@@ -71,18 +66,23 @@ export async function getRootCause(client: HttpClient, input: RootCauseInput): P
     const provenances = result.edgeProvenances.length
       ? result.edgeProvenances.join(', ')
       : '(direct, no edges traversed)'
-    const lines = [
-      `Root cause identified: ${result.rootCauseNode}.`,
-      result.rootCauseReason,
-      '',
+    const summary =
+      `Root cause for ${input.errorNode} is ${result.rootCauseNode}. ` +
+      result.rootCauseReason +
+      (result.fixRecommendation ? ` Recommended fix: ${result.fixRecommendation}.` : '')
+    const blockLines = [
       `Traversal path: ${arrowPath}`,
       `Edge provenances: ${provenances}`,
-      `Confidence: ${result.confidence.toFixed(2)}`,
     ]
     if (result.fixRecommendation) {
-      lines.push('', `Recommended fix: ${result.fixRecommendation}`)
+      blockLines.push(`Recommended fix: ${result.fixRecommendation}`)
     }
-    return text(lines.join('\n'))
+    return formatToolResponse({
+      summary,
+      block: blockLines.join('\n'),
+      confidence: result.confidence,
+      provenance: result.edgeProvenances.length ? result.edgeProvenances : undefined,
+    })
   }, `No root cause found for ${input.errorNode}. The node may be healthy, or it may not exist in the graph.`)
 }
 
@@ -105,18 +105,28 @@ export async function getBlastRadius(
   return withMissingNodeFallback(async () => {
     const result = await client.get<BlastRadiusResult>(path)
     if (result.totalAffected === 0) {
-      return text(
+      return formatEmptyResponse(
         `${result.origin} has no downstream dependencies. Nothing else would break if it failed.`,
       )
     }
     const sorted = [...result.affectedNodes].sort(
       (a, b) => a.distance - b.distance || a.nodeId.localeCompare(b.nodeId),
     )
-    const lines = [`Blast radius for ${result.origin} (${result.totalAffected} affected):`, '']
-    for (const n of sorted) {
-      lines.push(formatBlastEntry(n))
-    }
-    return text(lines.join('\n'))
+    const blockLines = sorted.map(formatBlastEntry)
+    // Worst-case confidence — the path with the lowest cascaded confidence
+    // is the headline number; agents should treat this as "what's the
+    // weakest reachability NEAT actually knows about?"
+    const minConfidence = sorted.reduce(
+      (m, n) => Math.min(m, n.confidence),
+      Number.POSITIVE_INFINITY,
+    )
+    const provenances = [...new Set(sorted.map((n) => n.edgeProvenance))]
+    return formatToolResponse({
+      summary: `Blast radius for ${result.origin}: ${result.totalAffected} affected node${result.totalAffected === 1 ? '' : 's'} reachable downstream.`,
+      block: blockLines.join('\n'),
+      confidence: Number.isFinite(minConfidence) ? minConfidence : undefined,
+      provenance: provenances.length ? provenances : undefined,
+    })
   }, `Node ${input.nodeId} not found in the graph.`)
 }
 
@@ -145,13 +155,18 @@ export async function getDependencies(
     )
     const outbound = edges.outbound
     if (outbound.length === 0) {
-      return text(`${input.nodeId} has no outgoing dependencies in the graph.`)
+      return formatEmptyResponse(`${input.nodeId} has no outgoing dependencies in the graph.`)
     }
-    const lines = [`Dependencies of ${input.nodeId}:`, '']
-    for (const e of dedupeBestProvenance(outbound)) {
-      lines.push(`  • ${e.target} — ${e.type} (${e.provenance})${edgeMeta(e)}`)
-    }
-    return text(lines.join('\n'))
+    const deduped = dedupeBestProvenance(outbound)
+    const blockLines = deduped.map(
+      (e) => `  • ${e.target} — ${e.type} (${e.provenance})${edgeMeta(e)}`,
+    )
+    const provenances = [...new Set(deduped.map((e) => e.provenance))]
+    return formatToolResponse({
+      summary: `${input.nodeId} has ${deduped.length} dependenc${deduped.length === 1 ? 'y' : 'ies'} in the graph.`,
+      block: blockLines.join('\n'),
+      provenance: provenances,
+    })
   }, `Node ${input.nodeId} not found in the graph.`)
 }
 
@@ -169,13 +184,14 @@ export async function getObservedDependencies(
       const note = hasExtracted
         ? ' Static (EXTRACTED) dependencies exist but no runtime traffic has been seen — is OTel running?'
         : ''
-      return text(`No OBSERVED dependencies for ${input.nodeId}.${note}`)
+      return formatEmptyResponse(`No OBSERVED dependencies for ${input.nodeId}.${note}`)
     }
-    const lines = [`Runtime dependencies of ${input.nodeId} (OBSERVED):`, '']
-    for (const e of observed) {
-      lines.push(`  • ${e.target} — ${e.type}${edgeMeta(e)}`)
-    }
-    return text(lines.join('\n'))
+    const blockLines = observed.map((e) => `  • ${e.target} — ${e.type}${edgeMeta(e)}`)
+    return formatToolResponse({
+      summary: `${input.nodeId} has ${observed.length} runtime dependenc${observed.length === 1 ? 'y' : 'ies'} confirmed by OTel.`,
+      block: blockLines.join('\n'),
+      provenance: Provenance.OBSERVED,
+    })
   }, `Node ${input.nodeId} not found in the graph.`)
 }
 
@@ -243,20 +259,23 @@ export async function getIncidentHistory(
       projectPath(input.project, `/incidents/${encodeURIComponent(input.nodeId)}`),
     )
     if (events.length === 0) {
-      return text(`No incidents recorded against ${input.nodeId}.`)
+      return formatEmptyResponse(`No incidents recorded against ${input.nodeId}.`)
     }
     // ndjson order is append-time = oldest first. Reverse so the most recent
     // event leads, then trim to the requested limit.
     const ordered = [...events].reverse().slice(0, input.limit ?? 20)
-    const lines = [
-      `Recent incidents on ${input.nodeId} (${ordered.length} of ${events.length}):`,
-      '',
-    ]
+    const blockLines: string[] = []
     for (const ev of ordered) {
-      lines.push(`  ${ev.timestamp} — ${ev.service}: ${ev.errorMessage}`)
-      lines.push(`    trace=${ev.traceId} span=${ev.spanId}`)
+      blockLines.push(`  ${ev.timestamp} — ${ev.service}: ${ev.errorMessage}`)
+      blockLines.push(`    trace=${ev.traceId} span=${ev.spanId}`)
     }
-    return text(lines.join('\n'))
+    return formatToolResponse({
+      summary: `${input.nodeId} has ${events.length} recorded incident${events.length === 1 ? '' : 's'}; showing the ${ordered.length} most recent.`,
+      block: blockLines.join('\n'),
+      // ErrorEvents are observation records, not graph edges — provenance is
+      // OBSERVED by definition (the OTel span happened).
+      provenance: Provenance.OBSERVED,
+    })
   }, `Node ${input.nodeId} not found in the graph.`)
 }
 
@@ -280,25 +299,31 @@ export async function semanticSearch(
       projectPath(input.project, `/search?q=${encodeURIComponent(input.query)}`),
     )
     if (result.matches.length === 0) {
-      return text(`No matches for "${input.query}".`)
+      return formatEmptyResponse(`No matches for "${input.query}".`)
     }
     const provider = result.provider ?? 'substring'
-    const lines = [
-      `Search results for "${input.query}" (${provider}):`,
-      '',
-    ]
+    const blockLines: string[] = []
+    let topScore: number | undefined
     for (const n of result.matches) {
       // Embedding tiers attach a cosine score in [0,1]; substring fallback
       // doesn't, so we elide the score when it's the placeholder 1.
-      const scoreBit =
-        provider !== 'substring' && typeof n.score === 'number'
-          ? ` [score=${n.score.toFixed(2)}]`
-          : ''
-      lines.push(`  • ${n.id} (${n.type}) — ${(n as { name?: string }).name ?? n.id}${scoreBit}`)
+      const score = provider !== 'substring' && typeof n.score === 'number' ? n.score : undefined
+      const scoreBit = score !== undefined ? ` [score=${score.toFixed(2)}]` : ''
+      if (score !== undefined && (topScore === undefined || score > topScore)) topScore = score
+      blockLines.push(
+        `  • ${n.id} (${n.type}) — ${(n as { name?: string }).name ?? n.id}${scoreBit}`,
+      )
     }
-    return text(lines.join('\n'))
+    return formatToolResponse({
+      summary: `Found ${result.matches.length} match${result.matches.length === 1 ? '' : 'es'} for "${input.query}" via ${provider} provider.`,
+      block: blockLines.join('\n'),
+      // Top similarity score doubles as a "how confident is the embedder
+      // about the best match" signal. Substring provider returns no score —
+      // the footer shows n/a in that case.
+      confidence: topScore,
+    })
   } catch (err) {
-    return errorText(`Error talking to neat-core: ${(err as Error).message}`)
+    return formatErrorResponse(`Error talking to neat-core: ${(err as Error).message}`)
   }
 }
 
@@ -338,49 +363,55 @@ export async function getGraphDiff(
       result.changed.edges.length
     const baseLabel = result.base.exportedAt ?? 'unknown'
     if (total === 0) {
-      return text(
+      return formatEmptyResponse(
         `No differences between the current graph and ${input.againstSnapshot} (base exportedAt=${baseLabel}).`,
       )
     }
-    const lines = [
-      `Diff against ${input.againstSnapshot}:`,
+    const blockLines: string[] = [
       `  base exportedAt:    ${baseLabel}`,
       `  current exportedAt: ${result.current.exportedAt}`,
       '',
     ]
     if (result.added.nodes.length || result.added.edges.length) {
-      lines.push('Added:')
-      for (const n of result.added.nodes) lines.push(`  + node ${n.id} (${n.type})`)
+      blockLines.push('Added:')
+      for (const n of result.added.nodes) blockLines.push(`  + node ${n.id} (${n.type})`)
       for (const e of result.added.edges)
-        lines.push(`  + edge ${e.id} — ${e.source} -> ${e.target} (${e.type}, ${e.provenance})`)
-      lines.push('')
+        blockLines.push(`  + edge ${e.id} — ${e.source} -> ${e.target} (${e.type}, ${e.provenance})`)
+      blockLines.push('')
     }
     if (result.removed.nodes.length || result.removed.edges.length) {
-      lines.push('Removed:')
-      for (const n of result.removed.nodes) lines.push(`  - node ${n.id} (${n.type})`)
+      blockLines.push('Removed:')
+      for (const n of result.removed.nodes) blockLines.push(`  - node ${n.id} (${n.type})`)
       for (const e of result.removed.edges)
-        lines.push(`  - edge ${e.id} — ${e.source} -> ${e.target} (${e.type}, ${e.provenance})`)
-      lines.push('')
+        blockLines.push(`  - edge ${e.id} — ${e.source} -> ${e.target} (${e.type}, ${e.provenance})`)
+      blockLines.push('')
     }
     if (result.changed.nodes.length || result.changed.edges.length) {
-      lines.push('Changed:')
+      blockLines.push('Changed:')
       for (const c of result.changed.nodes) {
-        lines.push(`  ~ node ${c.id} — ${summariseAttrDiff(c.before, c.after)}`)
+        blockLines.push(`  ~ node ${c.id} — ${summariseAttrDiff(c.before, c.after)}`)
       }
       for (const c of result.changed.edges) {
         const provBit =
           c.before.provenance !== c.after.provenance
             ? `provenance ${c.before.provenance} → ${c.after.provenance}`
             : summariseAttrDiff(c.before, c.after)
-        lines.push(`  ~ edge ${c.id} — ${provBit}`)
+        blockLines.push(`  ~ edge ${c.id} — ${provBit}`)
       }
     }
-    return text(lines.join('\n').trimEnd())
+    return formatToolResponse({
+      summary: `Diff against ${input.againstSnapshot}: ${total} change${total === 1 ? '' : 's'} between the snapshot and the live graph.`,
+      block: blockLines.join('\n').trimEnd(),
+      // Diff results don't have a per-result provenance — the diff spans
+      // every edge type and provenance kind. Footer shows n/a.
+    })
   } catch (err) {
     if (err instanceof HttpError && err.status === 400) {
-      return errorText(`Could not load snapshot ${input.againstSnapshot}: ${err.message}`)
+      return formatErrorResponse(
+        `Could not load snapshot ${input.againstSnapshot}: ${err.message}`,
+      )
     }
-    return errorText(`Error talking to neat-core: ${(err as Error).message}`)
+    return formatErrorResponse(`Error talking to neat-core: ${(err as Error).message}`)
   }
 }
 
@@ -429,21 +460,24 @@ export async function getRecentStaleEdges(
       projectPath(input.project, `/incidents/stale${qs}`),
     )
     if (events.length === 0) {
-      return text(
+      return formatEmptyResponse(
         input.edgeType
           ? `No stale ${input.edgeType} edges recorded.`
           : 'No stale-edge transitions recorded yet.',
       )
     }
-    const lines = [`Recent stale-edge transitions (${events.length}):`, '']
-    for (const e of events) {
-      lines.push(
+    const blockLines = events.map(
+      (e) =>
         `  ${e.transitionedAt} — ${e.source} -[${e.edgeType}]-> ${e.target}` +
-          ` (last seen ${e.lastObserved}, threshold ${formatDuration(e.thresholdMs)})`,
-      )
-    }
-    return text(lines.join('\n'))
+        ` (last seen ${e.lastObserved}, threshold ${formatDuration(e.thresholdMs)})`,
+    )
+    return formatToolResponse({
+      summary: `${events.length} stale-edge transition${events.length === 1 ? '' : 's'} recorded${input.edgeType ? ` for ${input.edgeType}` : ''}.`,
+      block: blockLines.join('\n'),
+      // STALE by definition — every event is a transition into STALE.
+      provenance: Provenance.STALE,
+    })
   } catch (err) {
-    return errorText(`Error talking to neat-core: ${(err as Error).message}`)
+    return formatErrorResponse(`Error talking to neat-core: ${(err as Error).message}`)
   }
 }
