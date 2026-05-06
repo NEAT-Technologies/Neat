@@ -3,7 +3,7 @@
 > **⚠️ Work in progress.** This repository is an MVP under active development. Many architectural decisions were intentionally optimised for development speed.
 
 [![CI](https://github.com/NEAT-Technologies/Neat/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/NEAT-Technologies/Neat/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/NEAT-Technologies/Neat)](https://github.com/NEAT-Technologies/Neat)
+[![License](https://img.shields.io/github/license/NEAT-Technologies/Neat)](BSL)
 [![Release](https://img.shields.io/github/v/release/NEAT-Technologies/Neat)](https://github.com/NEAT-Technologies/Neat/releases)
 [![Website](https://img.shields.io/badge/website-neat.is-black)](https://neat.is)
 
