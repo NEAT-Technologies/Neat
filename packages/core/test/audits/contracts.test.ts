@@ -1267,6 +1267,46 @@ describe('Policy contracts (ADRs 042-045)', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// Distribution layer — neat init, SDK install, registry, daemon (ADRs 046-049)
+// ──────────────────────────────────────────────────────────────────────────
+describe('neat init contract (ADR-046)', () => {
+  it.todo('init prints discovery report before any file mutation (ADR-046 #2)')
+  it.todo('init does not modify package.json/requirements.txt/Gemfile/pom.xml without --apply (ADR-046 #4)')
+  it.todo('init never modifies lockfiles (package-lock, poetry.lock, Gemfile.lock) (ADR-046 #4)')
+  it.todo('init --dry-run produces a patch but does not write any file other than neat.patch (ADR-046 #3)')
+  it.todo('init is idempotent — second run on same project produces no graph diff (ADR-046 #6)')
+  it.todo('init writes ~/.neat/projects.json entry per ADR-048')
+  it.todo('init exits with non-zero on project name collision (ADR-046 #7)')
+})
+
+describe('SDK install contract (ADR-047)', () => {
+  it.todo('every installer module exports detect/plan/apply (ADR-047 #1)')
+  it.todo('Node installer plan adds @opentelemetry/sdk-node and modifies entrypoint (ADR-047 #2)')
+  it.todo('Python installer plan adds opentelemetry-distro and prefixes entrypoint (ADR-047 #2)')
+  it.todo('no installer plan output references package-lock.json/poetry.lock/Gemfile.lock (ADR-047 #4)')
+  it.todo('plan(dir) returns an empty plan when SDK is already installed (ADR-047 #5)')
+  it.todo('plan output is deterministic across runs (ADR-047 #6)')
+  it.todo('apply failure produces a neat-rollback.patch (ADR-047 #7)')
+})
+
+describe('Machine-level project registry contract (ADR-048)', () => {
+  it.todo('registry.ts is the only module reading/writing ~/.neat/projects.json (ADR-048 #8)')
+  it.todo('writes go through writeAtomically (tmp + rename) (ADR-048 #3)')
+  it.todo('writes acquire flock on ~/.neat/projects.json.lock (ADR-048 #4)')
+  it.todo('paths are stored as resolved absolute (no duplicate entries from relative paths) (ADR-048 #7)')
+  it.todo('removal does not delete neat-out/ or policy.json or user files (ADR-048 #6)')
+})
+
+describe('Daemon contract (ADR-049)', () => {
+  it.todo('daemon writes only via persist.ts loop and shutdown handlers (ADR-049 — mutation authority)')
+  it.todo('per-project graph isolation: failure in one project does not affect others (ADR-049 #4)')
+  it.todo('OTel span routing matches by service.name across registered projects (ADR-049 #5)')
+  it.todo('graceful degradation: missing registry → boot refuses with clear error (ADR-049 #6)')
+  it.todo('daemon writes PID to ~/.neat/neatd.pid (ADR-049 #7)')
+  it.todo('SIGHUP triggers registry re-read (ADR-049 #2)')
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // Queued — flipped from todo to live as cleanup issues land
 // ──────────────────────────────────────────────────────────────────────────
 describe('Queued contracts (issues #131-#145)', () => {
