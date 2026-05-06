@@ -8,7 +8,13 @@ import type {
   RootCauseResult,
   ServiceNode,
 } from '@neat/types'
-import { NodeType, PROV_RANK, Provenance } from '@neat/types'
+import {
+  BlastRadiusResultSchema,
+  NodeType,
+  PROV_RANK,
+  Provenance,
+  RootCauseResultSchema,
+} from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import { checkCompatibility, compatPairs } from './compat.js'
 
@@ -235,14 +241,17 @@ export function getRootCause(
     ? `${rootCauseReason} (observed error: ${errorEvent.errorMessage})`
     : rootCauseReason
 
-  return {
+  // Schema-validate before return (ADR-036, #139). A drift in the result
+  // shape becomes a runtime throw at the call site rather than a silently
+  // malformed payload reaching MCP / REST consumers.
+  return RootCauseResultSchema.parse({
     rootCauseNode,
     rootCauseReason: reason,
     traversalPath: walk.path,
     edgeProvenances: walk.edges.map((e) => e.provenance),
     confidence: confidenceFromMix(walk.edges),
     fixRecommendation,
-  }
+  })
 }
 
 // BFS along outgoing edges from origin. Records each reachable node with the
@@ -254,7 +263,7 @@ export function getBlastRadius(
   maxDepth = BLAST_RADIUS_DEFAULT_DEPTH,
 ): BlastRadiusResult {
   if (!graph.hasNode(nodeId)) {
-    return { origin: nodeId, affectedNodes: [], totalAffected: 0 }
+    return BlastRadiusResultSchema.parse({ origin: nodeId, affectedNodes: [], totalAffected: 0 })
   }
 
   // Each frame carries its full predecessor chain so the affected-node payload
@@ -302,9 +311,9 @@ export function getBlastRadius(
   const affectedNodes = [...seen.values()].sort(
     (a, b) => a.distance - b.distance || a.nodeId.localeCompare(b.nodeId),
   )
-  return {
+  return BlastRadiusResultSchema.parse({
     origin: nodeId,
     affectedNodes,
     totalAffected: affectedNodes.length,
-  }
+  })
 }
