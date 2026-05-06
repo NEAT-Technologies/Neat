@@ -27,8 +27,9 @@ Source of truth for sprint status. Update this file at the end of every session.
   - **v0.2.3 — Traversal rebuild.** Opens with contracts #9-#11. Ships #136-#139, #123.
   - **v0.2.4 — Policies + MCP refresh.** Opens with contracts #12-#18. Ships #115-#118, #143, #144.
   - **v0.2.5 — `neat init` + SDK install + Claude skill.** Opens with contracts #19-#22. Ships #119.
+  - **v0.2.6 — CLI parity + frontend-API surface.** Opens with contracts #23-#24. CLI verbs mirroring the nine MCP tools (so a human at a terminal has the same reach as an agent), plus whatever API surface Jed's v0.3.0 frontend track surfaces as a gap. The `(if needed)` qualifier is honest — parts of this milestone wait until v0.3.0 starts pulling on concrete demands.
 
-After v0.2.5: the MVP-success PR experiment (ADR-027). Self-hosting on the NEAT codebase activates only after that PR closes — until then NEAT is the target of construction, not the tool.
+After v0.2.6: the MVP-success PR experiment (ADR-027). Self-hosting on the NEAT codebase activates only after that PR closes — until then NEAT is the target of construction, not the tool.
 
 ### Active work — start here
 
