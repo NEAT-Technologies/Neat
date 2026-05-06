@@ -3,9 +3,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { CheckPoliciesScopeSchema, HypotheticalActionSchema } from '@neat/types'
 import { createHttpClient } from './client.js'
 import { registerResources } from './resources.js'
 import {
+  checkPolicies,
   getBlastRadius,
   getDependencies,
   getGraphDiff,
@@ -152,6 +154,25 @@ server.tool(
     project: projectField,
   },
   async (input) => getRecentStaleEdges(client, { ...input, project: projectFor(input) }),
+)
+
+server.tool(
+  'check_policies',
+  'Inspect or dry-run the project\'s policy.json. Without hypotheticalAction, returns currently-recorded violations. With hypotheticalAction, returns violations that would result if the action were applied. Architectural assertions in five shapes (structural / compatibility / provenance / ownership / blast-radius).',
+  {
+    scope: CheckPoliciesScopeSchema.optional().describe(
+      'Narrow to a subset. Default "all".',
+    ),
+    hypotheticalAction: HypotheticalActionSchema.optional().describe(
+      'Dry-run mode: simulate the action and return resulting violations. Omit for current state.',
+    ),
+    project: projectField,
+  },
+  async (input) =>
+    checkPolicies(client, {
+      ...input,
+      project: projectFor(input),
+    } as Parameters<typeof checkPolicies>[1]),
 )
 
 // Resources sit alongside tools — same data, different access pattern. Read

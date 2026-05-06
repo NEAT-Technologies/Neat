@@ -138,6 +138,42 @@ export type PolicyFile = z.infer<typeof PolicyFileSchema>
 // Emitted by the evaluator. Appended to policy-violations.ndjson.
 // Deterministic id (per ADR-043) means re-evaluating the same graph + same
 // policies produces the same violation ids; the writer skips duplicates.
+// Hypothetical action for POST /policies/check (ADR-045). Each action shape
+// names a candidate change to the graph; the engine simulates it and returns
+// any violations that *would* result. MVP scope is the two action shapes
+// below; new shapes need an ADR amendment.
+export const HypotheticalActionSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('promote-frontier'),
+    // The FrontierNode id that would be promoted.
+    frontierId: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('add-edge'),
+    source: z.string().min(1),
+    target: z.string().min(1),
+    edgeType: EdgeTypeSchema,
+    provenance: ProvenanceSchema,
+  }),
+])
+export type HypotheticalAction = z.infer<typeof HypotheticalActionSchema>
+
+// Body of POST /policies/check.
+export const PoliciesCheckBodySchema = z.object({
+  hypotheticalAction: HypotheticalActionSchema.optional(),
+})
+export type PoliciesCheckBody = z.infer<typeof PoliciesCheckBodySchema>
+
+// Scope filter for the check_policies MCP tool. 'all' (default) returns
+// every current violation; 'unresolved' is reserved for future resolution
+// tracking and behaves like 'all' for the MVP; { policyId } narrows to one
+// named policy.
+export const CheckPoliciesScopeSchema = z.union([
+  z.enum(['all', 'unresolved']),
+  z.object({ policyId: z.string().min(1) }),
+])
+export type CheckPoliciesScope = z.infer<typeof CheckPoliciesScopeSchema>
+
 export const PolicyViolationSchema = z.object({
   // ${policy.id}:${violation-context}. The violation-context is shape-
   // specific (e.g. nodeId for structural; edgeId for provenance).

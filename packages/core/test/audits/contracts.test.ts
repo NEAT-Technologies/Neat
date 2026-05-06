@@ -1572,15 +1572,48 @@ describe('MCP tool surface contract (ADR-039)', () => {
     // /graph/edges/:id anymore.
     expect(tools).not.toMatch(/getDependencies[\s\S]{0,500}\/graph\/edges/)
   })
-  it.todo('check_policies tool registered with optional hypotheticalAction (v0.2.4 #117)')
+  it('check_policies tool registered with optional hypotheticalAction (v0.2.4 #117)', () => {
+    const indexTs = readFileSync(join(MCP_SRC, 'index.ts'), 'utf8')
+    expect(indexTs).toMatch(/server\.tool\(\s*['"]check_policies['"]/)
+    expect(indexTs).toMatch(/HypotheticalActionSchema\.optional/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
 // REST API contract (ADR-040)
 // ──────────────────────────────────────────────────────────────────────────
 describe('REST API contract (ADR-040)', () => {
-  it.todo('every read endpoint mounts at both /X and /projects/:project/X')
-  it.todo('error responses are JSON-shaped { error, status, details? }')
+  it('every read endpoint mounts at both /X and /projects/:project/X', () => {
+    // Static scan: every scope.get / scope.post lives inside registerRoutes(),
+    // which buildApi calls twice — once at root, once under /projects/:project.
+    // The dual-mount comes from that one call site, so we assert the call
+    // pattern persists.
+    const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+    expect(api).toMatch(/registerRoutes\(app, routeCtx\)/)
+    expect(api).toMatch(/prefix:\s*['"]\/projects\/:project['"]/)
+    // No bare app.get / app.post outside the discovery /projects route.
+    const bareGet = api.match(/\bapp\.(get|post)\s*</g) ?? []
+    // The /projects discovery endpoint at the top level is the only allowed
+    // direct app.get; everything else routes through registerRoutes.
+    expect(bareGet.length).toBeLessThanOrEqual(1)
+  })
+
+  it('error responses are JSON-shaped { error, status, details? }', () => {
+    // Static scan: every reply.code(...).send(...) call inside api.ts that
+    // sends an error sends a JSON object with at least an `error` field.
+    // String error sends are a contract violation.
+    const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+    const offenders: string[] = []
+    api.split('\n').forEach((line, i) => {
+      const trimmed = line.trim()
+      if (trimmed.startsWith('//') || trimmed.startsWith('*')) return
+      // reply.code(NNN).send('string') or reply.code(NNN).send(`...`) — bad.
+      if (/reply\.code\(\d+\)\.send\(['"`]/.test(line)) {
+        offenders.push(`api.ts:${i + 1}: ${trimmed}`)
+      }
+    })
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
   it('GET /graph/node/:id/dependencies?depth=N exists (issue #144)', () => {
     const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
     expect(api).toMatch(/['"]\/graph\/node\/:id\/dependencies['"]/)
@@ -1588,8 +1621,21 @@ describe('REST API contract (ADR-040)', () => {
     expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH/)
     expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_MAX_DEPTH/)
   })
-  it.todo('POST endpoints validate inbound bodies with Zod schemas from @neat/types')
-  it.todo('GET /policies and /policies/violations exist (v0.2.4 #117)')
+  it('POST endpoints validate inbound bodies with Zod schemas from @neat/types', () => {
+    const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+    // Every scope.post body is parsed via a Zod schema from @neat/types.
+    // PoliciesCheckBodySchema.safeParse is the v0.2.4 instance; the Rule 5
+    // "no z.object in core" scan separately enforces that schemas live in
+    // @neat/types rather than being redefined inline.
+    expect(api).toMatch(/PoliciesCheckBodySchema\.safeParse/)
+  })
+
+  it('GET /policies and /policies/violations exist (v0.2.4 #117)', () => {
+    const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+    expect(api).toMatch(/['"]\/policies['"]/)
+    expect(api).toMatch(/['"]\/policies\/violations['"]/)
+    expect(api).toMatch(/['"]\/policies\/check['"]/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1847,8 +1893,45 @@ describe('Policy contracts (ADRs 042-045)', () => {
     // MCP coupling. Notification side effects belong to the alert action,
     // wired in #117 (the policy MCP surface).
   })
-  it.todo('alert action appends + emits notifications/resources/updated (ADR-044)')
-  it.todo('block action returns false from canPromoteFrontier when block-policy violates (ADR-044)')
+  it('alert action appends + emits notifications/resources/updated (ADR-044)', () => {
+    // Alert action's notification surface lives in mcp/src/resources.ts: the
+    // same poll-and-notify pattern as incidents fires sendResourceUpdated
+    // for neat://policies/violations whenever the log grows. Append happens
+    // through PolicyViolationsLog (covered by the log action assertion);
+    // the alert add-on is the resource-updated emit.
+    const resources = readFileSync(join(MCP_SRC, 'resources.ts'), 'utf8')
+    expect(resources).toMatch(/sendResourceUpdated\([^)]*POLICY_VIOLATIONS_URI[\s\S]{0,40}\)/)
+    // The poll loop reads /policies/violations to detect changes.
+    expect(resources).toMatch(/\/policies\/violations/)
+  })
+
+  it('block action returns false from canPromoteFrontier when block-policy violates (ADR-044)', async () => {
+    const { canPromoteFrontier } = await import('../../src/policy.js')
+    const { frontierId } = await import('@neat/types')
+    const fid = frontierId('blocked.host')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode(fid, { id: fid, type: NodeType.FrontierNode, name: 'blocked.host', host: 'blocked.host' })
+    // An ownership rule with severity critical defaults to onViolation: 'block'
+    // per ADR-044 §severity-driven defaults. Apply it to FrontierNode and the
+    // frontier under test trips it.
+    const policies = [
+      {
+        id: 'frontier-must-have-owner',
+        name: 'frontier nodes must declare an owner',
+        severity: 'critical' as const,
+        rule: {
+          type: 'ownership' as const,
+          nodeType: NodeType.FrontierNode,
+          field: 'owner',
+        },
+      },
+    ]
+    const ctx = { now: () => Date.parse('2026-05-06T00:00:00.000Z') }
+    const result = canPromoteFrontier(g, fid, policies, ctx)
+    expect(result.allowed).toBe(false)
+    expect(result.violations.length).toBeGreaterThan(0)
+    expect(result.violations.every((v) => v.onViolation === 'block')).toBe(true)
+  })
   it('severity-driven default actions (info→log, warning→alert, error→alert, critical→block) (ADR-044)', async () => {
     const { resolveOnViolation } = await import('../../src/policy.js')
     const baseRule = {
@@ -1880,9 +1963,28 @@ describe('Policy contracts (ADRs 042-045)', () => {
       }),
     ).toBe('block')
   })
-  it.todo('check_policies MCP tool registered with optional scope and hypotheticalAction (ADR-045)')
-  it.todo('GET /policies and /policies/violations REST endpoints with dual-mount (ADR-045)')
-  it.todo('neat://policies/violations MCP resource registered and emits updates (ADR-045)')
+  it('check_policies MCP tool registered with optional scope and hypotheticalAction (ADR-045)', () => {
+    const indexTs = readFileSync(join(MCP_SRC, 'index.ts'), 'utf8')
+    expect(indexTs).toMatch(/server\.tool\(\s*['"]check_policies['"]/)
+    expect(indexTs).toMatch(/CheckPoliciesScopeSchema\.optional/)
+    expect(indexTs).toMatch(/HypotheticalActionSchema\.optional/)
+  })
+
+  it('GET /policies and /policies/violations REST endpoints with dual-mount (ADR-045)', () => {
+    const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+    // /policies, /policies/violations, /policies/check all defined inside
+    // registerRoutes so they dual-mount per ADR-026.
+    expect(api).toMatch(/scope\.get<[\s\S]{0,200}>\(\s*['"]\/policies['"]/)
+    expect(api).toMatch(/scope\.get<[\s\S]{0,200}>\(\s*['"]\/policies\/violations['"]/)
+    expect(api).toMatch(/scope\.post<[\s\S]{0,200}>\(\s*['"]\/policies\/check['"]/)
+  })
+
+  it('neat://policies/violations MCP resource registered and emits updates (ADR-045)', () => {
+    const resources = readFileSync(join(MCP_SRC, 'resources.ts'), 'utf8')
+    expect(resources).toMatch(/POLICY_VIOLATIONS_URI/)
+    expect(resources).toMatch(/registerResource\(\s*['"]policies-violations['"]/)
+    expect(resources).toMatch(/sendResourceUpdated\([^)]*POLICY_VIOLATIONS_URI/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
