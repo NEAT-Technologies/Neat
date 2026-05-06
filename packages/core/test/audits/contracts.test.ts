@@ -1228,8 +1228,35 @@ describe('getBlastRadius contract (ADR-038)', () => {
     expect(result.totalAffected).toBe(result.affectedNodes.length)
   })
 
-  it.todo('BlastRadiusAffectedNode carries path field with origin → ... → nodeId (issue #137)')
-  it.todo('BlastRadiusAffectedNode carries confidence field cascaded from edges along path (issue #137)')
+  it('BlastRadiusAffectedNode carries path field with origin → ... → nodeId (issue #137)', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
+    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
+    const ab = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
+      id: ab, source: 'service:a', target: 'service:b',
+      type: EdgeType.CALLS, provenance: Provenance.OBSERVED,
+      lastObserved: '2026-05-06T00:00:00.000Z', callCount: 1, confidence: 1.0,
+    })
+    const result = getBlastRadius(g, 'service:a')
+    const b = result.affectedNodes.find((n) => n.nodeId === 'service:b')!
+    expect(b.path).toEqual(['service:a', 'service:b'])
+  })
+
+  it('BlastRadiusAffectedNode carries confidence field cascaded from edges along path (issue #137)', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
+    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
+    const ab = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
+      id: ab, source: 'service:a', target: 'service:b',
+      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
+    })
+    const result = getBlastRadius(g, 'service:a')
+    const b = result.affectedNodes.find((n) => n.nodeId === 'service:b')!
+    // 1-hop EXTRACTED ceiling = 0.5.
+    expect(b.confidence).toBeCloseTo(0.5, 5)
+  })
   it('BlastRadiusAffectedNode.distance schema rejects 0 (issue #138)', async () => {
     const { BlastRadiusAffectedNodeSchema } = await import('@neat/types')
     // distance must be positive — the origin is never in affectedNodes, so 0
@@ -1555,7 +1582,32 @@ describe('MCP tool surface contract (ADR-039)', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 
-  it.todo('every server.tool registration in mcp/src/index.ts has a name from the locked allowlist of nine tools (ADR-039)')
+  it('every server.tool registration in mcp/src/index.ts has a name from the locked allowlist of nine tools (ADR-039)', () => {
+    const ALLOWED = new Set([
+      'get_root_cause',
+      'get_blast_radius',
+      'get_dependencies',
+      'get_observed_dependencies',
+      'get_incident_history',
+      'semantic_search',
+      'get_graph_diff',
+      'get_recent_stale_edges',
+      'check_policies',
+    ])
+    const indexTs = readFileSync(join(MCP_SRC, 'index.ts'), 'utf8')
+    const re = /server\.tool\(\s*['"]([^'"]+)['"]/g
+    const found = new Set<string>()
+    let m: RegExpExecArray | null
+    while ((m = re.exec(indexTs)) !== null) {
+      found.add(m[1]!)
+    }
+    // Every found tool must be in the allowlist.
+    const offenders = [...found].filter((name) => !ALLOWED.has(name))
+    expect(offenders, offenders.join(', ')).toEqual([])
+    // And every allowed tool must be registered.
+    const missing = [...ALLOWED].filter((name) => !found.has(name))
+    expect(missing, missing.join(', ')).toEqual([])
+  })
   it('formatToolResponse helper exists at mcp/src/format.ts (issue #143)', () => {
     const formatPath = join(MCP_SRC, 'format.ts')
     const content = readFileSync(formatPath, 'utf8')
@@ -1990,12 +2042,16 @@ describe('Policy contracts (ADRs 042-045)', () => {
 // ──────────────────────────────────────────────────────────────────────────
 // Queued — flipped from todo to live as cleanup issues land
 // ──────────────────────────────────────────────────────────────────────────
-describe('Queued contracts (issues #140-#145)', () => {
+describe('Queued contracts (v0.2.1 leftovers — #141, #142, #145)', () => {
   // v0.2.2 OTel-ingest todos (#131-#135) used to live here. Removed when v0.2.2
   // closed — every ADR-033 assertion is live in its dedicated describe block.
   // v0.2.3 traversal todos (#136-#139) used to live here too. Removed when
   // v0.2.3 closed — every ADR-036/037/038 assertion is live in its dedicated
   // describe block.
+  // v0.2.4 MCP-refresh todos (#143, #144) likewise removed — both ADR-039
+  // assertions live in the MCP tool surface and queued-list duplicates were
+  // noise. The remaining three (#141, #142, #145) are v0.2.1 leftovers
+  // tracked under v0.x rolling cleanup per the v0.2.1 close.
   it('Ghost EXTRACTED edges removed on re-extract (issue #140)', async () => {
     const { extractedEdgeId } = await import('@neat/types')
     const { retireEdgesByFile } = await import('../../src/extract/retire.js')
@@ -2051,44 +2107,5 @@ describe('Queued contracts (issues #140-#145)', () => {
   })
   it.todo('Source-level DB connection + import detection (issue #141)')
   it.todo('ServiceNode.framework populated from package.json (issue #142)')
-  it('MCP tools emit standardized three-part response (issue #143)', () => {
-    // Static assertion: every server.tool implementation in tools.ts routes
-    // through formatToolResponse / formatEmptyResponse / formatErrorResponse.
-    // The tool body uses one of those exports somewhere; absent that, output
-    // drift is possible.
-    const tools = readFileSync(join(MCP_SRC, 'tools.ts'), 'utf8')
-    expect(tools).toMatch(/from\s+['"]\.\/format\.js['"]/)
-    expect(tools).toMatch(/formatToolResponse\s*\(/)
-    expect(tools).toMatch(/formatEmptyResponse\s*\(/)
-    expect(tools).toMatch(/formatErrorResponse\s*\(/)
-    // No raw `return text(...)` stragglers that bypass the helper.
-    expect(tools).not.toMatch(/return\s+text\s*\(/)
-  })
-  it('get_dependencies is transitive (issue #144)', async () => {
-    // End-to-end shape check: getTransitiveDependencies returns a flat list
-    // with distance + edgeType + provenance. Zod validates the shape on
-    // return; this assertion exercises the schema-validation path too.
-    const { getTransitiveDependencies } = await import('../../src/traverse.js')
-    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
-    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
-    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
-    g.addNode('service:c', { id: 'service:c', type: NodeType.ServiceNode, name: 'c', language: 'javascript' })
-    const ab = `${EdgeType.CALLS}:service:a->service:b`
-    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
-      id: ab, source: 'service:a', target: 'service:b',
-      type: EdgeType.CALLS, provenance: Provenance.OBSERVED,
-      lastObserved: '2026-05-06T00:00:00.000Z', callCount: 1, confidence: 1.0,
-    })
-    const bc = `${EdgeType.CALLS}:service:b->service:c`
-    g.addEdgeWithKey(bc, 'service:b', 'service:c', {
-      id: bc, source: 'service:b', target: 'service:c',
-      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
-    })
-    const result = getTransitiveDependencies(g, 'service:a', 3)
-    expect(result.total).toBe(2)
-    expect(result.dependencies[0]!.distance).toBe(1)
-    expect(result.dependencies[1]!.distance).toBe(2)
-    expect(result.dependencies[0]!.edgeType).toBe(EdgeType.CALLS)
-  })
   it.todo('Drop unused graphology-traversal/-shortest-path deps (issue #145)')
 })
