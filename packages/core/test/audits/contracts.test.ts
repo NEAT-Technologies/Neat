@@ -116,8 +116,54 @@ describe('Rule 2 — OBSERVED/EXTRACTED coexistence', () => {
 // Rule 3 — FRONTIER edges excluded from traversal
 // ──────────────────────────────────────────────────────────────────────────
 describe('Rule 3 — FRONTIER exclusion from traversal', () => {
-  it.todo('getRootCause skips FRONTIER edges (issue #136)')
-  it.todo('getBlastRadius skips FRONTIER edges (issue #136)')
+  it('getRootCause returns null when the only path to a candidate root cause is via FRONTIER (issue #136)', async () => {
+    const { frontierId, frontierEdgeId, extractedEdgeId, databaseId } = await import('@neat/types')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    // Origin is a DatabaseNode (the only origin getRootCause currently handles).
+    // The would-be culprit ServiceNode sits behind a FRONTIER edge — if FRONTIER
+    // were traversed, the walk would reach the service and check compat. With
+    // FRONTIER filtered, the walk halts at the database and returns null.
+    const dbId = databaseId('payments')
+    g.addNode(dbId, {
+      id: dbId,
+      type: NodeType.DatabaseNode,
+      name: 'payments',
+      engine: 'postgresql',
+      engineVersion: '15',
+      compatibleDrivers: [{ name: 'pg', minVersion: '8.0.0' }],
+    })
+    const fid = frontierId('mystery-host')
+    g.addNode(fid, { id: fid, type: NodeType.FrontierNode, name: 'mystery-host', host: 'mystery-host' })
+    const eId = frontierEdgeId(fid, dbId, EdgeType.CONNECTS_TO)
+    g.addEdgeWithKey(eId, fid, dbId, {
+      id: eId,
+      source: fid,
+      target: dbId,
+      type: EdgeType.CONNECTS_TO,
+      provenance: Provenance.FRONTIER,
+    })
+    expect(getRootCause(g, dbId)).toBeNull()
+    void extractedEdgeId
+  })
+
+  it('getBlastRadius does not enqueue past a FRONTIER edge (issue #136)', async () => {
+    const { frontierId, frontierEdgeId } = await import('@neat/types')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:origin', { id: 'service:origin', type: NodeType.ServiceNode, name: 'origin', language: 'javascript' })
+    const fid = frontierId('unknown:8080')
+    g.addNode(fid, { id: fid, type: NodeType.FrontierNode, name: 'unknown:8080', host: 'unknown:8080' })
+    const eId = frontierEdgeId('service:origin', fid, EdgeType.CALLS)
+    g.addEdgeWithKey(eId, 'service:origin', fid, {
+      id: eId,
+      source: 'service:origin',
+      target: fid,
+      type: EdgeType.CALLS,
+      provenance: Provenance.FRONTIER,
+    })
+    const result = getBlastRadius(g, 'service:origin')
+    expect(result.affectedNodes.find((n) => n.nodeId === fid)).toBeUndefined()
+    expect(result.totalAffected).toBe(0)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -961,7 +1007,16 @@ describe('Traversal contract (ADR-036)', () => {
     expect(re.test(content), 'traverse.ts must be read-only').toBe(false)
   })
 
-  it.todo('FRONTIER edges are filtered (not just deprioritized) by bestEdgeBySource / bestEdgeByTarget (issue #136)')
+  it('FRONTIER edges are filtered (not just deprioritized) by bestEdgeBySource / bestEdgeByTarget (issue #136)', () => {
+    const content = readFileSync(join(CORE_SRC, 'traverse.ts'), 'utf8')
+    // Both helpers must guard with `Provenance.FRONTIER`. The contract is "skip,
+    // not deprioritize" — relying on PROV_RANK alone is the v0.1.x bug.
+    const helpers = ['bestEdgeBySource', 'bestEdgeByTarget']
+    for (const helper of helpers) {
+      const re = new RegExp(`function\\s+${helper}\\b[\\s\\S]*?provenance\\s*===\\s*Provenance\\.FRONTIER`)
+      expect(re.test(content), `${helper} must filter FRONTIER edges explicitly`).toBe(true)
+    }
+  })
   it.todo('confidenceFromMix multiplies per-edge confidences (multiplicative cascade)')
   it.todo('getRootCause result passes RootCauseResultSchema.parse (issue #139)')
   it.todo('getBlastRadius result passes BlastRadiusResultSchema.parse (issue #139)')
