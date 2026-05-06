@@ -117,7 +117,6 @@ The Railway gates from M6 are still informational. AWS is the more likely produc
 - One issue → one branch named `<num>-<slug>` → one PR.
 - PR body says `Refs #N`, **not** `Closes #N`. The user closes issues by hand after verifying.
 - Commits and PRs read like a colleague wrote them. No "this commit introduces" or release-notes-y bullets. See ADR-008.
-- **No** `Co-Authored-By: Claude` trailer on commits — human authors only (ADR-006).
 - Stack γ PRs on top of merged β work, not on each other. `main` rebase is the easier merge story.
 - Every package emits ESM + CJS + DTS via tsup. Don't ship ESM-only.
 

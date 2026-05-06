@@ -29,3 +29,16 @@ export const NodeType = {
 } as const
 
 export type NodeTypeValue = (typeof NodeType)[keyof typeof NodeType]
+
+import { z } from 'zod'
+
+// Zod-side mirror of NodeType, exported for schemas that need to discriminate
+// or filter by node type at parse time (policy rules, traversal results, etc.).
+// Adding a new node type means adding it to NodeType above and to this enum.
+export const NodeTypeSchema = z.enum([
+  NodeType.ServiceNode,
+  NodeType.DatabaseNode,
+  NodeType.ConfigNode,
+  NodeType.InfraNode,
+  NodeType.FrontierNode,
+])

@@ -1587,9 +1587,95 @@ describe('Persistence contract (ADR-041)', () => {
 // Policy contracts (ADRs 042-045)
 // ──────────────────────────────────────────────────────────────────────────
 describe('Policy contracts (ADRs 042-045)', () => {
-  it.todo('PolicyFileSchema exists in @neat/types/policy.ts with version: z.literal(1) (ADR-042)')
-  it.todo('Policy is a discriminated union by rule.type with five MVP types (ADR-042)')
-  it.todo('PolicyFileSchema.parse fails loudly on malformed policy.json (ADR-042)')
+  it('PolicyFileSchema exists in @neat/types/policy.ts with version: z.literal(1) (ADR-042)', async () => {
+    const { PolicyFileSchema } = await import('@neat/types')
+    // version must be the literal 1; anything else fails parse.
+    expect(() =>
+      PolicyFileSchema.parse({ version: 1, policies: [] }),
+    ).not.toThrow()
+    expect(() =>
+      PolicyFileSchema.parse({ version: 2, policies: [] }),
+    ).toThrow()
+    // The schema source lives at packages/types/src/policy.ts (path-asserted
+    // so a future refactor moving the schema elsewhere surfaces here).
+    const policyTs = readFileSync(join(TYPES_SRC, 'policy.ts'), 'utf8')
+    expect(policyTs).toMatch(/version:\s*z\.literal\(1\)/)
+  })
+
+  it('Policy is a discriminated union by rule.type with five MVP types (ADR-042)', async () => {
+    const { PolicyRuleSchema } = await import('@neat/types')
+    // All five MVP rule types must round-trip through the discriminator.
+    const cases: Array<{ type: string; rule: unknown }> = [
+      {
+        type: 'structural',
+        rule: {
+          type: 'structural',
+          fromNodeType: 'ServiceNode',
+          edgeType: 'CONNECTS_TO',
+          toNodeType: 'DatabaseNode',
+        },
+      },
+      { type: 'compatibility', rule: { type: 'compatibility' } },
+      {
+        type: 'provenance',
+        rule: { type: 'provenance', edgeType: 'CALLS', required: 'OBSERVED' },
+      },
+      { type: 'ownership', rule: { type: 'ownership', nodeType: 'ServiceNode' } },
+      {
+        type: 'blast-radius',
+        rule: { type: 'blast-radius', nodeType: 'ServiceNode', maxAffected: 5 },
+      },
+    ]
+    for (const c of cases) {
+      expect(() => PolicyRuleSchema.parse(c.rule), `failed on ${c.type}`).not.toThrow()
+    }
+    // Unknown rule.type fails the discriminator.
+    expect(() =>
+      PolicyRuleSchema.parse({ type: 'fictional', whatever: true }),
+    ).toThrow()
+  })
+
+  it('PolicyFileSchema.parse fails loudly on malformed policy.json (ADR-042)', async () => {
+    const { PolicyFileSchema } = await import('@neat/types')
+    // Missing top-level fields.
+    expect(() => PolicyFileSchema.parse({})).toThrow()
+    // Wrong version.
+    expect(() => PolicyFileSchema.parse({ version: 2, policies: [] })).toThrow()
+    // Duplicate policy ids — superRefine catches it.
+    expect(() =>
+      PolicyFileSchema.parse({
+        version: 1,
+        policies: [
+          {
+            id: 'dup',
+            name: 'A',
+            severity: 'info',
+            rule: { type: 'compatibility' },
+          },
+          {
+            id: 'dup',
+            name: 'B',
+            severity: 'info',
+            rule: { type: 'compatibility' },
+          },
+        ],
+      }),
+    ).toThrow(/duplicate policy id/)
+    // Invalid rule body still fails.
+    expect(() =>
+      PolicyFileSchema.parse({
+        version: 1,
+        policies: [
+          {
+            id: 'bad-rule',
+            name: 'bad',
+            severity: 'info',
+            rule: { type: 'structural' /* missing fromNodeType etc. */ },
+          },
+        ],
+      }),
+    ).toThrow()
+  })
   it.todo('evaluateAllPolicies is pure and dispatches by rule.type (ADR-043)')
   it.todo('PolicyViolation ids are deterministic (ADR-043)')
   it.todo('post-ingest, post-extract, post-stale-transition all trigger evaluateAllPolicies (ADR-043)')
