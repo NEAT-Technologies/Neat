@@ -66,11 +66,13 @@ describe('getRootCause', () => {
     const res = await getRootCause(client, { errorNode: 'database:payments-db' })
     expect(res.isError).toBeFalsy()
     const text = res.content[0].text
-    expect(text).toContain('Root cause identified: service:service-b')
+    // Three-part response per ADR-039: summary + block + footer.
+    expect(text).toContain('Root cause for database:payments-db is service:service-b')
     expect(text).toContain('database:payments-db ← service:service-b ← service:service-a')
-    expect(text).toContain('Confidence: 1.00')
     expect(text).toContain('OBSERVED, OBSERVED')
     expect(text).toContain('Recommended fix: Upgrade service-b pg driver to >= 8.0.0')
+    // Footer: confidence as decimal, provenance unique values.
+    expect(text).toMatch(/confidence: 1\.00 · provenance: OBSERVED/)
     expect(capture.paths).toEqual(['/traverse/root-cause/database%3Apayments-db'])
   })
 
@@ -127,13 +129,15 @@ describe('getBlastRadius', () => {
       },
     })
     const res = await getBlastRadius(client, { nodeId: 'service:service-a' })
-    const lines = res.content[0].text.split('\n')
-    expect(lines[0]).toContain('Blast radius for service:service-a (2 affected)')
+    const text = res.content[0].text
+    expect(text).toContain('Blast radius for service:service-a: 2 affected nodes')
     // service-b at distance 1 should appear before payments-db at distance 2
+    const lines = text.split('\n')
     const bIdx = lines.findIndex((l) => l.includes('service:service-b'))
     const dbIdx = lines.findIndex((l) => l.includes('database:payments-db'))
     expect(bIdx).toBeGreaterThan(0)
     expect(dbIdx).toBeGreaterThan(bIdx)
+    expect(text).toMatch(/provenance: OBSERVED/)
   })
 
   it('flags STALE edges explicitly', async () => {
@@ -207,11 +211,12 @@ describe('getDependencies', () => {
     })
     const res = await getDependencies(client, { nodeId: 'service:service-a' })
     const text = res.content[0].text
-    expect(text).toContain('Dependencies of service:service-a')
+    expect(text).toContain('service:service-a has 1 dependency')
     expect(text).toContain('service:service-b — CALLS (OBSERVED)')
     expect(text).toContain('callCount=11')
     // The EXTRACTED twin should be deduped out.
     expect(text.split('\n').filter((l) => l.includes('service:service-b'))).toHaveLength(1)
+    expect(text).toMatch(/provenance: OBSERVED/)
   })
 
   it('returns a friendly message when there are no outgoing edges', async () => {
@@ -274,9 +279,10 @@ describe('getObservedDependencies', () => {
     })
     const res = await getObservedDependencies(client, { nodeId: 'service:service-a' })
     const text = res.content[0].text
-    expect(text).toContain('Runtime dependencies of service:service-a')
+    expect(text).toContain('service:service-a has 1 runtime dependency confirmed by OTel')
     expect(text).toContain('service:service-b')
     expect(text).toContain('lastObserved=2026-05-01T15:51:11.967Z')
+    expect(text).toMatch(/provenance: OBSERVED/)
   })
 
   it('explains the OTel-down case when only EXTRACTED edges exist', async () => {
@@ -325,7 +331,8 @@ describe('getIncidentHistory', () => {
     })
     const res = await getIncidentHistory(client, { nodeId: 'database:payments-db' })
     const text = res.content[0].text
-    expect(text).toContain('Recent incidents on database:payments-db (2 of 2)')
+    expect(text).toContain('database:payments-db has 2 recorded incidents')
+    expect(text).toContain('showing the 2 most recent')
     const newerIdx = text.indexOf('SCRAM')
     const olderIdx = text.indexOf('older')
     expect(newerIdx).toBeGreaterThan(0)
@@ -345,7 +352,8 @@ describe('getIncidentHistory', () => {
     }))
     const { client } = clientFor({ '/incidents/database:payments-db': events })
     const res = await getIncidentHistory(client, { nodeId: 'database:payments-db', limit: 2 })
-    expect(res.content[0].text).toContain('(2 of 5)')
+    expect(res.content[0].text).toContain('has 5 recorded incidents')
+    expect(res.content[0].text).toContain('showing the 2 most recent')
   })
 
   it('returns a friendly message for an empty list', async () => {
@@ -510,9 +518,10 @@ describe('getRecentStaleEdges', () => {
     })
     const res = await getRecentStaleEdges(client, {})
     const out = res.content[0].text
-    expect(out).toContain('Recent stale-edge transitions (2)')
+    expect(out).toContain('2 stale-edge transitions recorded')
     expect(out).toContain('service:b -[CONNECTS_TO]-> database:c')
     expect(out).toContain('service:a -[CALLS]-> service:b')
+    expect(out).toMatch(/provenance: STALE/)
     expect(capture.paths[0]).toBe('/incidents/stale')
   })
 

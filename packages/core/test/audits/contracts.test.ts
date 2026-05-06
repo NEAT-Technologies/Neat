@@ -1556,7 +1556,15 @@ describe('MCP tool surface contract (ADR-039)', () => {
   })
 
   it.todo('every server.tool registration in mcp/src/index.ts has a name from the locked allowlist of nine tools (ADR-039)')
-  it.todo('formatToolResponse helper exists at mcp/src/format.ts (issue #143)')
+  it('formatToolResponse helper exists at mcp/src/format.ts (issue #143)', () => {
+    const formatPath = join(MCP_SRC, 'format.ts')
+    const content = readFileSync(formatPath, 'utf8')
+    expect(content).toMatch(/export function formatToolResponse/)
+    // Three-part output shape: summary + block + footer.
+    expect(content).toMatch(/confidence:.*provenance:/)
+    // Empty-result footer reads n/a / n/a per the contract.
+    expect(content).toMatch(/n\/a/)
+  })
   it.todo('get_dependencies is transitive — calls /graph/node/:id/dependencies?depth=N (issue #144)')
   it.todo('check_policies tool registered with optional hypotheticalAction (v0.2.4 #117)')
 })
@@ -1929,7 +1937,19 @@ describe('Queued contracts (issues #140-#145)', () => {
   })
   it.todo('Source-level DB connection + import detection (issue #141)')
   it.todo('ServiceNode.framework populated from package.json (issue #142)')
-  it.todo('MCP tools emit standardized three-part response (issue #143)')
+  it('MCP tools emit standardized three-part response (issue #143)', () => {
+    // Static assertion: every server.tool implementation in tools.ts routes
+    // through formatToolResponse / formatEmptyResponse / formatErrorResponse.
+    // The tool body uses one of those exports somewhere; absent that, output
+    // drift is possible.
+    const tools = readFileSync(join(MCP_SRC, 'tools.ts'), 'utf8')
+    expect(tools).toMatch(/from\s+['"]\.\/format\.js['"]/)
+    expect(tools).toMatch(/formatToolResponse\s*\(/)
+    expect(tools).toMatch(/formatEmptyResponse\s*\(/)
+    expect(tools).toMatch(/formatErrorResponse\s*\(/)
+    // No raw `return text(...)` stragglers that bypass the helper.
+    expect(tools).not.toMatch(/return\s+text\s*\(/)
+  })
   it.todo('get_dependencies is transitive (issue #144)')
   it.todo('Drop unused graphology-traversal/-shortest-path deps (issue #145)')
 })
