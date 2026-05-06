@@ -1605,18 +1605,12 @@ describe('Policy contracts (ADRs 042-045)', () => {
 // ──────────────────────────────────────────────────────────────────────────
 // Queued — flipped from todo to live as cleanup issues land
 // ──────────────────────────────────────────────────────────────────────────
-describe('Queued contracts (issues #136-#145)', () => {
-  // v0.2.2 OTel-ingest todos (#131-#135) used to live here as duplicates of
-  // the ADR-033 describe block above. They were removed when v0.2.2 closed —
-  // every ADR-033 assertion is live in its dedicated describe block now.
-  it.todo('FRONTIER edges skipped by traversal (issue #136)')
-  it.todo('BlastRadiusAffectedNode carries path and confidence (issue #137)')
-  it.todo('BlastRadius distance schema rejects 0 (issue #138)')
-  // #139 has its own dedicated live tests in the Rule 5, Traversal, getRootCause,
-  // and getBlastRadius describe blocks above. The queued-list entry stayed as a
-  // todo until the dedicated ones flipped — keeping a placeholder here is just
-  // noise once the assertions are live.
-  // (Was: it.todo('Traversal results validated against Zod schemas (issue #139)'))
+describe('Queued contracts (issues #140-#145)', () => {
+  // v0.2.2 OTel-ingest todos (#131-#135) used to live here. Removed when v0.2.2
+  // closed — every ADR-033 assertion is live in its dedicated describe block.
+  // v0.2.3 traversal todos (#136-#139) used to live here too. Removed when
+  // v0.2.3 closed — every ADR-036/037/038 assertion is live in its dedicated
+  // describe block.
   it('Ghost EXTRACTED edges removed on re-extract (issue #140)', async () => {
     const { extractedEdgeId } = await import('@neat/types')
     const { retireEdgesByFile } = await import('../../src/extract/retire.js')
