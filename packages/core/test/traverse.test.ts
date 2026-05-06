@@ -106,7 +106,9 @@ describe('getRootCause', () => {
     addEdge(g, connectsEdge(Provenance.EXTRACTED))
 
     const result = getRootCause(g, 'database:payments-db')
-    expect(result!.confidence).toBe(0.5)
+    // Multiplicative cascade per ADR-036: two EXTRACTED edges at ceiling 0.5
+    // each → 0.5 × 0.5 = 0.25. Pre-contract min-reduce returned 0.5.
+    expect(result!.confidence).toBeCloseTo(0.25, 5)
     expect(result!.edgeProvenances).toEqual([Provenance.EXTRACTED, Provenance.EXTRACTED])
   })
 
@@ -287,11 +289,17 @@ describe('getBlastRadius', () => {
         nodeId: 'service:service-b',
         distance: 1,
         edgeProvenance: Provenance.EXTRACTED,
+        path: ['service:service-a', 'service:service-b'],
+        // 1-hop EXTRACTED at ceiling 0.5 → 0.5.
+        confidence: 0.5,
       },
       {
         nodeId: 'database:payments-db',
         distance: 2,
         edgeProvenance: Provenance.EXTRACTED,
+        path: ['service:service-a', 'service:service-b', 'database:payments-db'],
+        // 2-hop EXTRACTED-only path: 0.5 × 0.5 = 0.25 (multiplicative cascade).
+        confidence: 0.25,
       },
     ])
   })
@@ -342,6 +350,8 @@ describe('getBlastRadius', () => {
         nodeId: 'service:service-b',
         distance: 1,
         edgeProvenance: Provenance.EXTRACTED,
+        path: ['service:service-a', 'service:service-b'],
+        confidence: 0.5,
       },
     ])
   })

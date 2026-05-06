@@ -19,6 +19,13 @@ export const BlastRadiusAffectedNodeSchema = z.object({
   // mechanically (ADR-038, issue #138).
   distance: z.number().int().positive(),
   edgeProvenance: ProvenanceSchema,
+  // path: origin → ... → nodeId. Length === distance + 1. Surfaced from the
+  // BFS predecessor chain so consumers don't have to reconstruct it from
+  // distance + the graph (ADR-038, issue #137).
+  path: z.array(z.string()).min(2),
+  // confidence: confidenceFromMix(...edgesAlongPath). Multiplicative cascade —
+  // each hop is independent evidence and uncertainty compounds. ADR-036.
+  confidence: z.number().min(0).max(1),
 })
 export type BlastRadiusAffectedNode = z.infer<typeof BlastRadiusAffectedNodeSchema>
 
