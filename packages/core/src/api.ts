@@ -11,11 +11,7 @@ import type {
   Policy,
   PolicyViolation,
 } from '@neat/types'
-import {
-  HypotheticalActionSchema,
-  PoliciesCheckBodySchema,
-  PolicySeveritySchema,
-} from '@neat/types'
+import { PoliciesCheckBodySchema, PolicySeveritySchema } from '@neat/types'
 import {
   evaluateAllPolicies,
   loadPolicyFile,
