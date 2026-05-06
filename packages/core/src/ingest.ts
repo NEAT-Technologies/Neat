@@ -48,6 +48,11 @@ export interface IngestContext {
   // appends the ErrorEvent itself — the path used by ad-hoc scripts and tests
   // that don't go through buildOtelReceiver. ADR-033 §Error events.
   writeErrorEventInline?: boolean
+  // Post-mutation policy trigger (ADR-043). Fires after handleSpan finishes
+  // and the queue is drained. Daemons wire this to evaluateAllPolicies +
+  // PolicyViolationsLog.append. Ad-hoc callers leave it undefined; their tests
+  // don't need policy side effects.
+  onPolicyTrigger?: (graph: NeatGraph) => Promise<void> | void
 }
 
 const HOUR_MS = 60 * 60 * 1000
@@ -597,6 +602,10 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     }
   }
   void affectedNode
+
+  // Post-ingest policy trigger (ADR-043). The hook is awaited so failures
+  // surface; daemons wrap it in a try/catch that logs without throwing.
+  if (ctx.onPolicyTrigger) await ctx.onPolicyTrigger(ctx.graph)
 }
 
 export { stitchTrace }
@@ -790,6 +799,10 @@ export interface StalenessLoopOptions {
   thresholds?: Record<string, number>
   intervalMs?: number
   staleEventsPath?: string
+  // Post-stale-transition policy trigger (ADR-043). Fires after each tick of
+  // markStaleEdges so policies see the new STALE state. Daemons wire this to
+  // evaluateAllPolicies + PolicyViolationsLog.append.
+  onPolicyTrigger?: (graph: NeatGraph) => Promise<void> | void
 }
 
 export function startStalenessLoop(
@@ -806,6 +819,7 @@ export function startStalenessLoop(
           thresholds: options.thresholds,
           staleEventsPath: options.staleEventsPath,
         })
+        if (options.onPolicyTrigger) await options.onPolicyTrigger(graph)
       } catch (err) {
         console.error('staleness tick failed', err)
       }

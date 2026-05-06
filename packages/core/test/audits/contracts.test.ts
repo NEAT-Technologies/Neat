@@ -1580,7 +1580,19 @@ describe('Persistence contract (ADR-041)', () => {
     const persist = readFileSync(join(CORE_SRC, 'persist.ts'), 'utf8')
     expect(persist).toMatch(/const\s+SCHEMA_VERSION\s*=\s*\d+/)
   })
-  it.todo('policy-violations.ndjson append-only writer exists (v0.2.4 #116)')
+  it('policy-violations.ndjson append-only writer exists (v0.2.4 #116)', async () => {
+    // Static existence assertion — the writer lives in policy.ts (not
+    // persist.ts; policy-shaped writes belong to the policy module per the
+    // policy-evaluation contract). PolicyViolationsLog dedupes on id.
+    const { PolicyViolationsLog } = await import('../../src/policy.js')
+    expect(PolicyViolationsLog).toBeDefined()
+    const policyTs = readFileSync(join(CORE_SRC, 'policy.ts'), 'utf8')
+    // Append-only: only fs.appendFile, never fs.writeFile or fs.truncate
+    // against the violations log.
+    expect(policyTs).toMatch(/fs\.appendFile/)
+    expect(policyTs).not.toMatch(/fs\.writeFile\([^)]*violations/)
+    expect(policyTs).not.toMatch(/fs\.truncate/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1676,13 +1688,178 @@ describe('Policy contracts (ADRs 042-045)', () => {
       }),
     ).toThrow()
   })
-  it.todo('evaluateAllPolicies is pure and dispatches by rule.type (ADR-043)')
-  it.todo('PolicyViolation ids are deterministic (ADR-043)')
-  it.todo('post-ingest, post-extract, post-stale-transition all trigger evaluateAllPolicies (ADR-043)')
-  it.todo('log action appends to ndjson with no MCP notification (ADR-044)')
+  it('evaluateAllPolicies is pure and dispatches by rule.type (ADR-043)', async () => {
+    const { evaluateAllPolicies } = await import('../../src/policy.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:lonely', {
+      id: 'service:lonely',
+      type: NodeType.ServiceNode,
+      name: 'lonely',
+      language: 'javascript',
+    })
+    const policy = {
+      id: 'must-connect',
+      name: 'service must reach a database',
+      severity: 'warning' as const,
+      rule: {
+        type: 'structural' as const,
+        fromNodeType: NodeType.ServiceNode,
+        edgeType: EdgeType.CONNECTS_TO,
+        toNodeType: NodeType.DatabaseNode,
+      },
+    }
+    const ctx = { now: () => Date.parse('2026-05-06T00:00:00.000Z') }
+    const a = evaluateAllPolicies(g, [policy], ctx)
+    const b = evaluateAllPolicies(g, [policy], ctx)
+    // Same inputs → same violations (purity).
+    expect(a).toEqual(b)
+    expect(a).toHaveLength(1)
+    expect(a[0]!.ruleType).toBe('structural')
+    expect(a[0]!.policyId).toBe('must-connect')
+    expect(a[0]!.subject.nodeId).toBe('service:lonely')
+  })
+
+  it('PolicyViolation ids are deterministic (ADR-043)', async () => {
+    const { evaluateAllPolicies } = await import('../../src/policy.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:lonely', {
+      id: 'service:lonely',
+      type: NodeType.ServiceNode,
+      name: 'lonely',
+      language: 'javascript',
+    })
+    const policy = {
+      id: 'must-connect',
+      name: 'service must reach a database',
+      severity: 'warning' as const,
+      rule: {
+        type: 'structural' as const,
+        fromNodeType: NodeType.ServiceNode,
+        edgeType: EdgeType.CONNECTS_TO,
+        toNodeType: NodeType.DatabaseNode,
+      },
+    }
+    const a = evaluateAllPolicies(g, [policy], { now: () => 1 })
+    const b = evaluateAllPolicies(g, [policy], { now: () => 9999 })
+    // observedAt differs across calls, but the deterministic id does not.
+    expect(a[0]!.id).toBe(b[0]!.id)
+    expect(a[0]!.id).toBe('must-connect:service:lonely')
+  })
+
+  it('post-ingest, post-extract, post-stale-transition all trigger evaluateAllPolicies (ADR-043)', async () => {
+    const { handleSpan, markStaleEdges, startStalenessLoop } = await import('../../src/ingest.js')
+    const { extractFromDirectory } = await import('../../src/extract/index.js')
+    const { mkdtempSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const path = await import('node:path')
+
+    const calls: string[] = []
+    const trigger = (label: string) => async () => {
+      calls.push(label)
+    }
+
+    // post-ingest
+    const g1: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    const errorsPath = path.join(mkdtempSync(path.join(tmpdir(), 'policy-trigger-')), 'errors.ndjson')
+    await handleSpan(
+      {
+        graph: g1,
+        errorsPath,
+        now: () => 1,
+        onPolicyTrigger: trigger('ingest'),
+      },
+      {
+        traceId: 't',
+        spanId: 's',
+        service: 'svc',
+        name: 'op',
+        startTimeUnixNano: '0',
+        endTimeUnixNano: '0',
+        durationNanos: 0n,
+        attributes: {},
+      },
+    )
+
+    // post-extract
+    const tmpScan = mkdtempSync(path.join(tmpdir(), 'policy-extract-'))
+    await extractFromDirectory(
+      new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false }),
+      tmpScan,
+      { onPolicyTrigger: trigger('extract') },
+    )
+
+    // post-stale: drive a tick by hand instead of waiting on the interval.
+    const g3: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    const stop = startStalenessLoop(g3, { intervalMs: 1, onPolicyTrigger: trigger('stale') })
+    await new Promise((r) => setTimeout(r, 20))
+    stop()
+    void markStaleEdges // referenced via the loop — keep the import alive.
+
+    expect(calls).toContain('ingest')
+    expect(calls).toContain('extract')
+    expect(calls).toContain('stale')
+  })
+
+  it('log action appends to ndjson with no MCP notification (ADR-044)', async () => {
+    const { PolicyViolationsLog } = await import('../../src/policy.js')
+    const { mkdtempSync, readFileSync: rfs } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const path = await import('node:path')
+    const tmp = path.join(mkdtempSync(path.join(tmpdir(), 'policy-log-')), 'policy-violations.ndjson')
+    const log = new PolicyViolationsLog(tmp)
+    const v = {
+      id: 'p1:n1',
+      policyId: 'p1',
+      policyName: 'p1',
+      severity: 'info' as const,
+      onViolation: 'log' as const,
+      ruleType: 'structural' as const,
+      subject: { nodeId: 'n1' },
+      message: 'm',
+      observedAt: '2026-05-06T00:00:00.000Z',
+    }
+    expect(await log.append(v)).toBe(true)
+    // Idempotent on id — second append is skipped.
+    expect(await log.append(v)).toBe(false)
+    const lines = rfs(tmp, 'utf8').trim().split('\n')
+    expect(lines).toHaveLength(1)
+    // The log writer emits no notifications — by construction, it has no
+    // MCP coupling. Notification side effects belong to the alert action,
+    // wired in #117 (the policy MCP surface).
+  })
   it.todo('alert action appends + emits notifications/resources/updated (ADR-044)')
   it.todo('block action returns false from canPromoteFrontier when block-policy violates (ADR-044)')
-  it.todo('severity-driven default actions (info→log, warning→alert, error→alert, critical→block) (ADR-044)')
+  it('severity-driven default actions (info→log, warning→alert, error→alert, critical→block) (ADR-044)', async () => {
+    const { resolveOnViolation } = await import('../../src/policy.js')
+    const baseRule = {
+      type: 'structural' as const,
+      fromNodeType: NodeType.ServiceNode,
+      edgeType: EdgeType.CONNECTS_TO,
+      toNodeType: NodeType.DatabaseNode,
+    }
+    expect(
+      resolveOnViolation({ id: 'i', name: 'i', severity: 'info', rule: baseRule }),
+    ).toBe('log')
+    expect(
+      resolveOnViolation({ id: 'w', name: 'w', severity: 'warning', rule: baseRule }),
+    ).toBe('alert')
+    expect(
+      resolveOnViolation({ id: 'e', name: 'e', severity: 'error', rule: baseRule }),
+    ).toBe('alert')
+    expect(
+      resolveOnViolation({ id: 'c', name: 'c', severity: 'critical', rule: baseRule }),
+    ).toBe('block')
+    // Explicit override beats the default.
+    expect(
+      resolveOnViolation({
+        id: 'override',
+        name: 'override',
+        severity: 'info',
+        onViolation: 'block',
+        rule: baseRule,
+      }),
+    ).toBe('block')
+  })
   it.todo('check_policies MCP tool registered with optional scope and hypotheticalAction (ADR-045)')
   it.todo('GET /policies and /policies/violations REST endpoints with dual-mount (ADR-045)')
   it.todo('neat://policies/violations MCP resource registered and emits updates (ADR-045)')
