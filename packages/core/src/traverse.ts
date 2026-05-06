@@ -127,18 +127,19 @@ function lastObservedAge(edge: GraphEdge, now: number): number | undefined {
   return Math.max(0, now - t)
 }
 
-// Path-level confidence is the bottleneck along the walk: the weakest edge
-// dictates the result. Multiplying would punish long-but-strong walks;
-// taking the min keeps the existing semantics while letting per-edge signal
-// pull the number down where it matters.
+// Path-level confidence is the *product* of per-edge confidences (ADR-036).
+// Each hop is independent evidence and uncertainty compounds — a 3-hop path
+// of edges at confidence 0.8 each gives 0.512, not 0.8. Multiplying punishes
+// long walks accordingly, which is the contract's intent: traversal should
+// surface the cumulative trust the graph actually has, not the weakest link
+// alone.
 function confidenceFromMix(edges: GraphEdge[], now = Date.now()): number {
   if (edges.length === 0) return 1.0
-  let min = 1
+  let product = 1
   for (const e of edges) {
-    const c = confidenceForEdge(e, now)
-    if (c < min) min = c
+    product *= confidenceForEdge(e, now)
   }
-  return Math.max(0, Math.min(1, min))
+  return Math.max(0, Math.min(1, product))
 }
 
 interface Walk {
@@ -256,23 +257,31 @@ export function getBlastRadius(
     return { origin: nodeId, affectedNodes: [], totalAffected: 0 }
   }
 
+  // Each frame carries its full predecessor chain so the affected-node payload
+  // can surface `path` (origin → ... → nodeId) and `confidence` (cascaded over
+  // every edge along that path). The BFS visits each reachable node once on
+  // its shortest-distance path; later frames at greater distance are dropped.
   interface Frame {
     nodeId: string
     distance: number
-    edge: GraphEdge | null
+    path: string[]
+    pathEdges: GraphEdge[]
   }
 
   const seen = new Map<string, BlastRadiusAffectedNode>()
-  const queue: Frame[] = [{ nodeId, distance: 0, edge: null }]
+  const queue: Frame[] = [{ nodeId, distance: 0, path: [nodeId], pathEdges: [] }]
   const enqueued = new Set<string>([nodeId])
 
   while (queue.length > 0) {
     const frame = queue.shift()!
-    if (frame.distance > 0 && frame.edge) {
+    if (frame.distance > 0 && frame.pathEdges.length > 0) {
+      const lastEdge = frame.pathEdges[frame.pathEdges.length - 1]!
       seen.set(frame.nodeId, {
         nodeId: frame.nodeId,
         distance: frame.distance,
-        edgeProvenance: frame.edge.provenance,
+        edgeProvenance: lastEdge.provenance,
+        path: frame.path,
+        confidence: confidenceFromMix(frame.pathEdges),
       })
     }
     if (frame.distance >= maxDepth) continue
@@ -281,7 +290,12 @@ export function getBlastRadius(
     for (const [tgtId, edge] of outgoing) {
       if (enqueued.has(tgtId)) continue
       enqueued.add(tgtId)
-      queue.push({ nodeId: tgtId, distance: frame.distance + 1, edge })
+      queue.push({
+        nodeId: tgtId,
+        distance: frame.distance + 1,
+        path: [...frame.path, tgtId],
+        pathEdges: [...frame.pathEdges, edge],
+      })
     }
   }
 

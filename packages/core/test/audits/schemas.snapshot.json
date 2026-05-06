@@ -4,6 +4,12 @@
       "affectedNodes": {
         "_array": {
           "_object": {
+            "confidence": {
+              "_number": [
+                "max",
+                "min"
+              ]
+            },
             "distance": {
               "_number": [
                 "int",
@@ -19,7 +25,10 @@
                 "STALE"
               ]
             },
-            "nodeId": "_string"
+            "nodeId": "_string",
+            "path": {
+              "_array": "_string"
+            }
           }
         }
       },

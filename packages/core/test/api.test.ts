@@ -131,7 +131,9 @@ describe('REST API (fastify.inject)', () => {
       'service:service-b',
       'service:service-a',
     ])
-    expect(body.confidence).toBe(0.5)
+    // Multiplicative cascade per ADR-036: two EXTRACTED hops at ceiling 0.5 each
+    // → 0.25 (was 0.5 under min-reduce).
+    expect(body.confidence).toBeCloseTo(0.25, 5)
     expect(body.fixRecommendation).toMatch(/8\.0\.0/)
   })
 
@@ -164,26 +166,23 @@ describe('REST API (fastify.inject)', () => {
     // and the db-config.yaml ConfigNode are reachable from service-b at
     // distance 2.
     expect(body.totalAffected).toBe(4)
-    expect(body.affectedNodes).toContainEqual({
-      nodeId: 'service:service-b',
-      distance: 1,
-      edgeProvenance: 'EXTRACTED',
-    })
-    expect(body.affectedNodes).toContainEqual({
-      nodeId: 'database:payments-db',
-      distance: 2,
-      edgeProvenance: 'EXTRACTED',
-    })
-    expect(body.affectedNodes).toContainEqual({
-      nodeId: 'config:service-b/db-config.yaml',
-      distance: 2,
-      edgeProvenance: 'EXTRACTED',
-    })
-    expect(body.affectedNodes).toContainEqual({
-      nodeId: 'infra:container-image:node:20-bookworm-slim',
-      distance: 1,
-      edgeProvenance: 'EXTRACTED',
-    })
+    // path + confidence land per ADR-038 §affectedNodes payload. Property-style
+    // assertions so this test doesn't pin every BFS path detail — the contract
+    // tests in contracts.test.ts pin the per-node invariants tightly.
+    for (const n of body.affectedNodes) {
+      expect(n.path[0]).toBe('service:service-a')
+      expect(n.path[n.path.length - 1]).toBe(n.nodeId)
+      expect(n.path.length).toBe(n.distance + 1)
+      expect(n.confidence).toBeGreaterThan(0)
+      expect(n.confidence).toBeLessThanOrEqual(1)
+    }
+    const ids = body.affectedNodes.map((n: { nodeId: string }) => n.nodeId).sort()
+    expect(ids).toEqual([
+      'config:service-b/db-config.yaml',
+      'database:payments-db',
+      'infra:container-image:node:20-bookworm-slim',
+      'service:service-b',
+    ])
   })
 
   it('GET /traverse/blast-radius/:nodeId returns 404 for an unknown node', async () => {

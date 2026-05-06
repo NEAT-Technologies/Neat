@@ -1017,7 +1017,28 @@ describe('Traversal contract (ADR-036)', () => {
       expect(re.test(content), `${helper} must filter FRONTIER edges explicitly`).toBe(true)
     }
   })
-  it.todo('confidenceFromMix multiplies per-edge confidences (multiplicative cascade)')
+  it('confidenceFromMix multiplies per-edge confidences (multiplicative cascade)', () => {
+    // The cascade is observable through getBlastRadius: a 2-hop EXTRACTED-only
+    // path puts the per-edge confidence at the EXTRACTED ceiling 0.5. Min-reduce
+    // would return 0.5; the contract requires the product 0.25.
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
+    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
+    g.addNode('service:c', { id: 'service:c', type: NodeType.ServiceNode, name: 'c', language: 'javascript' })
+    const ab = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
+      id: ab, source: 'service:a', target: 'service:b',
+      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
+    })
+    const bc = `${EdgeType.CALLS}:service:b->service:c`
+    g.addEdgeWithKey(bc, 'service:b', 'service:c', {
+      id: bc, source: 'service:b', target: 'service:c',
+      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
+    })
+    const result = getBlastRadius(g, 'service:a')
+    const c = result.affectedNodes.find((n) => n.nodeId === 'service:c')!
+    expect(c.confidence).toBeCloseTo(0.25, 5)
+  })
   it.todo('getRootCause result passes RootCauseResultSchema.parse (issue #139)')
   it.todo('getBlastRadius result passes BlastRadiusResultSchema.parse (issue #139)')
 })
@@ -1075,6 +1096,8 @@ describe('getBlastRadius contract (ADR-038)', () => {
         nodeId: 'service:x',
         distance: 0,
         edgeProvenance: Provenance.OBSERVED,
+        path: ['service:origin', 'service:x'],
+        confidence: 1.0,
       }),
     ).toThrow()
     // Distance 1 stays valid.
@@ -1083,12 +1106,97 @@ describe('getBlastRadius contract (ADR-038)', () => {
         nodeId: 'service:x',
         distance: 1,
         edgeProvenance: Provenance.OBSERVED,
+        path: ['service:origin', 'service:x'],
+        confidence: 1.0,
       }),
     ).not.toThrow()
   })
+
+  it('BlastRadiusAffectedNode carries path field with origin → ... → nodeId (issue #137)', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
+    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
+    g.addNode('service:c', { id: 'service:c', type: NodeType.ServiceNode, name: 'c', language: 'javascript' })
+    const ab = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
+      id: ab, source: 'service:a', target: 'service:b',
+      type: EdgeType.CALLS, provenance: Provenance.OBSERVED,
+      lastObserved: '2026-05-06T00:00:00.000Z', callCount: 1, confidence: 1.0,
+    })
+    const bc = `${EdgeType.CALLS}:service:b->service:c`
+    g.addEdgeWithKey(bc, 'service:b', 'service:c', {
+      id: bc, source: 'service:b', target: 'service:c',
+      type: EdgeType.CALLS, provenance: Provenance.OBSERVED,
+      lastObserved: '2026-05-06T00:00:00.000Z', callCount: 1, confidence: 1.0,
+    })
+    const result = getBlastRadius(g, 'service:a')
+    const b = result.affectedNodes.find((n) => n.nodeId === 'service:b')!
+    const c = result.affectedNodes.find((n) => n.nodeId === 'service:c')!
+    expect(b.path).toEqual(['service:a', 'service:b'])
+    expect(c.path).toEqual(['service:a', 'service:b', 'service:c'])
+  })
+
+  it('BlastRadiusAffectedNode carries confidence field cascaded from edges along path (issue #137)', () => {
+    // Two OBSERVED hops at confidence 1.0 each → product 1.0. Two EXTRACTED
+    // hops at ceiling 0.5 each → product 0.25 (multiplicative cascade per
+    // ADR-036; min-reduce would give 0.5).
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
+    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
+    g.addNode('service:c', { id: 'service:c', type: NodeType.ServiceNode, name: 'c', language: 'javascript' })
+    const ab = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
+      id: ab, source: 'service:a', target: 'service:b',
+      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
+    })
+    const bc = `${EdgeType.CALLS}:service:b->service:c`
+    g.addEdgeWithKey(bc, 'service:b', 'service:c', {
+      id: bc, source: 'service:b', target: 'service:c',
+      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
+    })
+    const result = getBlastRadius(g, 'service:a')
+    const c = result.affectedNodes.find((n) => n.nodeId === 'service:c')!
+    expect(c.confidence).toBeCloseTo(0.25, 5)
+  })
+
   it.todo('result schema-validates before return (issue #139)')
-  it.todo('origin is never present in affectedNodes')
-  it.todo('path[0] === origin and path[path.length - 1] === affectedNode.nodeId for every entry')
+
+  it('origin is never present in affectedNodes', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
+    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
+    const ab = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
+      id: ab, source: 'service:a', target: 'service:b',
+      type: EdgeType.CALLS, provenance: Provenance.OBSERVED,
+      lastObserved: '2026-05-06T00:00:00.000Z', callCount: 1, confidence: 1.0,
+    })
+    const result = getBlastRadius(g, 'service:a')
+    expect(result.affectedNodes.find((n) => n.nodeId === 'service:a')).toBeUndefined()
+  })
+
+  it('path[0] === origin and path[path.length - 1] === affectedNode.nodeId for every entry', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
+    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
+    g.addNode('service:c', { id: 'service:c', type: NodeType.ServiceNode, name: 'c', language: 'javascript' })
+    const ab = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
+      id: ab, source: 'service:a', target: 'service:b',
+      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
+    })
+    const bc = `${EdgeType.CALLS}:service:b->service:c`
+    g.addEdgeWithKey(bc, 'service:b', 'service:c', {
+      id: bc, source: 'service:b', target: 'service:c',
+      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
+    })
+    const result = getBlastRadius(g, 'service:a')
+    for (const n of result.affectedNodes) {
+      expect(n.path[0]).toBe('service:a')
+      expect(n.path[n.path.length - 1]).toBe(n.nodeId)
+      expect(n.path.length).toBe(n.distance + 1)
+    }
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
