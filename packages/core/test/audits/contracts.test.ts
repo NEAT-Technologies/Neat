@@ -208,8 +208,55 @@ describe('Rule 5 — Shared schemas, no local redefinitions', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 
-  it.todo('getRootCause validates result against RootCauseResultSchema (issue #139)')
-  it.todo('getBlastRadius validates result against BlastRadiusResultSchema (issue #139)')
+  it('getRootCause validates result against RootCauseResultSchema (issue #139)', async () => {
+    // Property assertion: any non-null result returned by getRootCause must
+    // round-trip through the schema. The fixture matches the demo graph the
+    // existing traverse.test.ts uses.
+    const { extractedEdgeId } = await import('@neat/types')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('database:payments-db', {
+      id: 'database:payments-db',
+      type: NodeType.DatabaseNode,
+      name: 'payments-db',
+      engine: 'postgresql',
+      engineVersion: '15',
+      compatibleDrivers: [{ name: 'pg', minVersion: '8.0.0' }],
+    })
+    g.addNode('service:b', {
+      id: 'service:b',
+      type: NodeType.ServiceNode,
+      name: 'b',
+      language: 'javascript',
+      dependencies: { pg: '7.4.0' },
+    })
+    const eId = extractedEdgeId('service:b', 'database:payments-db', EdgeType.CONNECTS_TO)
+    g.addEdgeWithKey(eId, 'service:b', 'database:payments-db', {
+      id: eId,
+      source: 'service:b',
+      target: 'database:payments-db',
+      type: EdgeType.CONNECTS_TO,
+      provenance: Provenance.EXTRACTED,
+    })
+    const result = getRootCause(g, 'database:payments-db')
+    expect(result).not.toBeNull()
+    expect(() => RootCauseResultSchema.parse(result)).not.toThrow()
+  })
+
+  it('getBlastRadius validates result against BlastRadiusResultSchema (issue #139)', () => {
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
+    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
+    const ab = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
+      id: ab, source: 'service:a', target: 'service:b',
+      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
+    })
+    expect(() => BlastRadiusResultSchema.parse(getBlastRadius(g, 'service:a'))).not.toThrow()
+    // Empty-result branch (origin missing) also schema-validates.
+    expect(() =>
+      BlastRadiusResultSchema.parse(getBlastRadius(g, 'service:does-not-exist')),
+    ).not.toThrow()
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1039,8 +1086,17 @@ describe('Traversal contract (ADR-036)', () => {
     const c = result.affectedNodes.find((n) => n.nodeId === 'service:c')!
     expect(c.confidence).toBeCloseTo(0.25, 5)
   })
-  it.todo('getRootCause result passes RootCauseResultSchema.parse (issue #139)')
-  it.todo('getBlastRadius result passes BlastRadiusResultSchema.parse (issue #139)')
+  it('getRootCause result passes RootCauseResultSchema.parse (issue #139)', () => {
+    // Static scan: traverse.ts must call RootCauseResultSchema.parse before
+    // returning. The mutation-authority and FRONTIER scans use the same
+    // shape. This catches a future refactor that drops the validation guard.
+    const content = readFileSync(join(CORE_SRC, 'traverse.ts'), 'utf8')
+    expect(content).toMatch(/RootCauseResultSchema\.parse\s*\(/)
+  })
+  it('getBlastRadius result passes BlastRadiusResultSchema.parse (issue #139)', () => {
+    const content = readFileSync(join(CORE_SRC, 'traverse.ts'), 'utf8')
+    expect(content).toMatch(/BlastRadiusResultSchema\.parse\s*\(/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1062,7 +1118,13 @@ describe('getRootCause contract (ADR-037)', () => {
 
   it.todo('ServiceNode origin produces a result when an upstream service violates node-engine compat (issue #123 generalization)')
   it.todo('ConfigNode origin returns null cleanly (no registered shape)')
-  it.todo('result schema-validates before return (issue #139)')
+  it('result schema-validates before return (issue #139)', () => {
+    // Already exercised end-to-end in the Rule 5 block (line ~211); this
+    // assertion locks the implementation gate at the contract-block level so
+    // future refactors that drop the .parse() call surface here too.
+    const content = readFileSync(join(CORE_SRC, 'traverse.ts'), 'utf8')
+    expect(content).toMatch(/RootCauseResultSchema\.parse\s*\(/)
+  })
   it.todo('traversalPath[0] is the origin and last entry is rootCauseNode')
 })
 
@@ -1159,7 +1221,13 @@ describe('getBlastRadius contract (ADR-038)', () => {
     expect(c.confidence).toBeCloseTo(0.25, 5)
   })
 
-  it.todo('result schema-validates before return (issue #139)')
+  it('result schema-validates before return (issue #139)', () => {
+    // Sibling assertion to the getRootCause one at line ~1121. Pinned at the
+    // implementation-file level so a refactor that drops .parse() on the
+    // BlastRadius return path surfaces here.
+    const content = readFileSync(join(CORE_SRC, 'traverse.ts'), 'utf8')
+    expect(content).toMatch(/BlastRadiusResultSchema\.parse\s*\(/)
+  })
 
   it('origin is never present in affectedNodes', () => {
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
@@ -1462,7 +1530,11 @@ describe('Queued contracts (issues #136-#145)', () => {
   it.todo('FRONTIER edges skipped by traversal (issue #136)')
   it.todo('BlastRadiusAffectedNode carries path and confidence (issue #137)')
   it.todo('BlastRadius distance schema rejects 0 (issue #138)')
-  it.todo('Traversal results validated against Zod schemas (issue #139)')
+  // #139 has its own dedicated live tests in the Rule 5, Traversal, getRootCause,
+  // and getBlastRadius describe blocks above. The queued-list entry stayed as a
+  // todo until the dedicated ones flipped — keeping a placeholder here is just
+  // noise once the assertions are live.
+  // (Was: it.todo('Traversal results validated against Zod schemas (issue #139)'))
   it('Ghost EXTRACTED edges removed on re-extract (issue #140)', async () => {
     const { extractedEdgeId } = await import('@neat/types')
     const { retireEdgesByFile } = await import('../../src/extract/retire.js')
