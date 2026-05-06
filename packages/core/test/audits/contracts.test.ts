@@ -1010,7 +1010,27 @@ describe('getBlastRadius contract (ADR-038)', () => {
 
   it.todo('BlastRadiusAffectedNode carries path field with origin → ... → nodeId (issue #137)')
   it.todo('BlastRadiusAffectedNode carries confidence field cascaded from edges along path (issue #137)')
-  it.todo('BlastRadiusAffectedNode.distance schema rejects 0 (issue #138)')
+  it('BlastRadiusAffectedNode.distance schema rejects 0 (issue #138)', async () => {
+    const { BlastRadiusAffectedNodeSchema } = await import('@neat/types')
+    // distance must be positive — the origin is never in affectedNodes, so 0
+    // has no meaning. Locking this in the schema keeps the BFS at traverse.ts
+    // honest mechanically.
+    expect(() =>
+      BlastRadiusAffectedNodeSchema.parse({
+        nodeId: 'service:x',
+        distance: 0,
+        edgeProvenance: Provenance.OBSERVED,
+      }),
+    ).toThrow()
+    // Distance 1 stays valid.
+    expect(() =>
+      BlastRadiusAffectedNodeSchema.parse({
+        nodeId: 'service:x',
+        distance: 1,
+        edgeProvenance: Provenance.OBSERVED,
+      }),
+    ).not.toThrow()
+  })
   it.todo('result schema-validates before return (issue #139)')
   it.todo('origin is never present in affectedNodes')
   it.todo('path[0] === origin and path[path.length - 1] === affectedNode.nodeId for every entry')
