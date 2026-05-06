@@ -26,9 +26,17 @@ export interface ExtractResult {
   frontiersPromoted: number
 }
 
+export interface ExtractOptions {
+  // Post-extract policy trigger (ADR-043). Awaited after frontier promotion
+  // so policies see the final post-pass graph state. Daemons wire this to
+  // evaluateAllPolicies + PolicyViolationsLog.append.
+  onPolicyTrigger?: (graph: NeatGraph) => Promise<void> | void
+}
+
 export async function extractFromDirectory(
   graph: NeatGraph,
   scanPath: string,
+  opts: ExtractOptions = {},
 ): Promise<ExtractResult> {
   await ensureCompatLoaded()
   const services = await discoverServices(scanPath)
@@ -40,6 +48,11 @@ export async function extractFromDirectory(
   const phase4 = await addCallEdges(graph, services)
   const phase5 = await addInfra(graph, scanPath, services)
   const frontiersPromoted = promoteFrontierNodes(graph)
+
+  // Post-extract policy trigger (ADR-043). Fires after frontier promotion so
+  // policies see the post-pass graph (including any FRONTIER → OBSERVED edge
+  // upgrades that just landed).
+  if (opts.onPolicyTrigger) await opts.onPolicyTrigger(graph)
 
   return {
     nodesAdded:
