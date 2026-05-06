@@ -184,70 +184,70 @@ describe('getBlastRadius', () => {
 })
 
 describe('getDependencies', () => {
-  it('returns outgoing edges with the best provenance per pair', async () => {
+  it('returns transitive dependencies grouped by distance with best provenance per pair (#144)', async () => {
     const { client } = clientFor({
-      '/graph/edges/service:service-a': {
-        inbound: [],
-        outbound: [
+      '/graph/node/service:service-a/dependencies?depth=3': {
+        origin: 'service:service-a',
+        depth: 3,
+        total: 2,
+        dependencies: [
           {
-            id: 'CALLS:service:service-a->service:service-b',
-            source: 'service:service-a',
-            target: 'service:service-b',
-            type: EdgeType.CALLS,
-            provenance: Provenance.EXTRACTED,
+            nodeId: 'service:service-b',
+            distance: 1,
+            edgeType: EdgeType.CALLS,
+            provenance: Provenance.OBSERVED,
           },
           {
-            id: 'CALLS:OBSERVED:service:service-a->service:service-b',
-            source: 'service:service-a',
-            target: 'service:service-b',
-            type: EdgeType.CALLS,
-            provenance: Provenance.OBSERVED,
-            confidence: 1,
-            callCount: 11,
-            lastObserved: '2026-05-01T15:51:11.967Z',
+            nodeId: 'database:payments-db',
+            distance: 2,
+            edgeType: EdgeType.CONNECTS_TO,
+            provenance: Provenance.EXTRACTED,
           },
         ],
       },
     })
     const res = await getDependencies(client, { nodeId: 'service:service-a' })
     const text = res.content[0].text
-    expect(text).toContain('service:service-a has 1 dependency')
+    expect(text).toContain('service:service-a has 2 dependencies reachable to depth 3 (1 direct)')
+    expect(text).toContain('Direct (distance 1):')
     expect(text).toContain('service:service-b — CALLS (OBSERVED)')
-    expect(text).toContain('callCount=11')
-    // The EXTRACTED twin should be deduped out.
-    expect(text.split('\n').filter((l) => l.includes('service:service-b'))).toHaveLength(1)
-    expect(text).toMatch(/provenance: OBSERVED/)
+    expect(text).toContain('Distance 2:')
+    expect(text).toContain('database:payments-db — CONNECTS_TO (EXTRACTED)')
+    expect(text).toMatch(/provenance: OBSERVED, EXTRACTED|provenance: EXTRACTED, OBSERVED/)
   })
 
-  it('returns a friendly message when there are no outgoing edges', async () => {
+  it('returns a friendly message when there are no dependencies', async () => {
     const { client } = clientFor({
-      '/graph/edges/database:payments-db': { inbound: [], outbound: [] },
+      '/graph/node/database:payments-db/dependencies?depth=3': {
+        origin: 'database:payments-db',
+        depth: 3,
+        total: 0,
+        dependencies: [],
+      },
     })
     const res = await getDependencies(client, { nodeId: 'database:payments-db' })
-    expect(res.content[0].text).toContain('no outgoing dependencies')
+    expect(res.content[0].text).toContain('no dependencies')
   })
 
-  it('surfaces signal numbers (spans, errors, age) when the edge carries them', async () => {
-    const { client } = clientFor({
-      '/graph/edges/service:service-a': {
-        inbound: [],
-        outbound: [
+  it('depth=1 returns direct dependencies only', async () => {
+    const { client, capture } = clientFor({
+      '/graph/node/service:service-a/dependencies?depth=1': {
+        origin: 'service:service-a',
+        depth: 1,
+        total: 1,
+        dependencies: [
           {
-            id: 'CALLS:OBSERVED:service:service-a->service:service-b',
-            source: 'service:service-a',
-            target: 'service:service-b',
-            type: EdgeType.CALLS,
+            nodeId: 'service:service-b',
+            distance: 1,
+            edgeType: EdgeType.CALLS,
             provenance: Provenance.OBSERVED,
-            signal: { spanCount: 1247, errorCount: 3, lastObservedAgeMs: 5000 },
           },
         ],
       },
     })
-    const res = await getDependencies(client, { nodeId: 'service:service-a' })
-    const out = res.content[0].text
-    expect(out).toContain('spans=1247')
-    expect(out).toContain('errors=3')
-    expect(out).toContain('age=5s')
+    const res = await getDependencies(client, { nodeId: 'service:service-a', depth: 1 })
+    expect(capture.paths[0]).toBe('/graph/node/service%3Aservice-a/dependencies?depth=1')
+    expect(res.content[0].text).toContain('service:service-a has 1 direct dependency')
   })
 })
 
@@ -557,6 +557,12 @@ describe('project routing', () => {
         affectedNodes: [],
       },
       '/projects/alpha/graph/edges/service:a': { inbound: [], outbound: [] },
+      '/projects/alpha/graph/node/service:a/dependencies?depth=3': {
+        origin: 'service:a',
+        depth: 3,
+        total: 0,
+        dependencies: [],
+      },
       '/projects/alpha/incidents/service:a': [],
       '/projects/alpha/search?q=foo': { query: 'foo', provider: 'substring', matches: [] },
       '/projects/alpha/graph/diff?against=snap.json': {

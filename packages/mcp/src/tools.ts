@@ -11,6 +11,7 @@ import type {
   GraphEdge,
   GraphNode,
   RootCauseResult,
+  TransitiveDependenciesResult,
 } from '@neat/types'
 import { Provenance } from '@neat/types'
 import { HttpError, type HttpClient } from './client.js'
@@ -142,28 +143,58 @@ interface EdgesResponse {
 
 export interface DependenciesInput {
   nodeId: string
+  // BFS depth. Default 3; max 10. Direct-only consumers pass 1.
+  depth?: number
   project?: string
 }
 
+// Transitive get_dependencies (issue #144). Calls the new core endpoint
+// /graph/node/:id/dependencies?depth=N which BFS-walks outbound. The output
+// groups results by hop so direct dependencies stand out from transitives —
+// agents asked "what does X depend on?" usually want the direct list with
+// transitives as context.
 export async function getDependencies(
   client: HttpClient,
   input: DependenciesInput,
 ): Promise<ToolResponse> {
+  const depth = input.depth ?? 3
+  const path = projectPath(
+    input.project,
+    `/graph/node/${encodeURIComponent(input.nodeId)}/dependencies?depth=${depth}`,
+  )
+
   return withMissingNodeFallback(async () => {
-    const edges = await client.get<EdgesResponse>(
-      projectPath(input.project, `/graph/edges/${encodeURIComponent(input.nodeId)}`),
-    )
-    const outbound = edges.outbound
-    if (outbound.length === 0) {
-      return formatEmptyResponse(`${input.nodeId} has no outgoing dependencies in the graph.`)
+    const result = await client.get<TransitiveDependenciesResult>(path)
+    if (result.total === 0) {
+      return formatEmptyResponse(
+        depth === 1
+          ? `${input.nodeId} has no direct dependencies in the graph.`
+          : `${input.nodeId} has no dependencies (BFS to depth ${depth}).`,
+      )
     }
-    const deduped = dedupeBestProvenance(outbound)
-    const blockLines = deduped.map(
-      (e) => `  • ${e.target} — ${e.type} (${e.provenance})${edgeMeta(e)}`,
-    )
-    const provenances = [...new Set(deduped.map((e) => e.provenance))]
+    // Group by distance so the structured block reads as concentric rings.
+    const byDistance = new Map<number, typeof result.dependencies>()
+    for (const dep of result.dependencies) {
+      const ring = byDistance.get(dep.distance) ?? []
+      ring.push(dep)
+      byDistance.set(dep.distance, ring)
+    }
+    const blockLines: string[] = []
+    for (const distance of [...byDistance.keys()].sort((a, b) => a - b)) {
+      const label = distance === 1 ? 'Direct (distance 1)' : `Distance ${distance}`
+      blockLines.push(`${label}:`)
+      for (const dep of byDistance.get(distance)!) {
+        blockLines.push(`  • ${dep.nodeId} — ${dep.edgeType} (${dep.provenance})`)
+      }
+    }
+    const provenances = [...new Set(result.dependencies.map((d) => d.provenance))]
+    const directCount = byDistance.get(1)?.length ?? 0
+    const summary =
+      depth === 1
+        ? `${input.nodeId} has ${directCount} direct dependenc${directCount === 1 ? 'y' : 'ies'}.`
+        : `${input.nodeId} has ${result.total} dependenc${result.total === 1 ? 'y' : 'ies'} reachable to depth ${depth} (${directCount} direct).`
     return formatToolResponse({
-      summary: `${input.nodeId} has ${deduped.length} dependenc${deduped.length === 1 ? 'y' : 'ies'} in the graph.`,
+      summary,
       block: blockLines.join('\n'),
       provenance: provenances,
     })
@@ -222,26 +253,6 @@ function formatDuration(ms: number): string {
   const h = Math.round(m / 60)
   if (h < 48) return `${h}h`
   return `${Math.round(h / 24)}d`
-}
-
-// Two services can have an EXTRACTED edge AND an OBSERVED edge AND an INFERRED
-// edge between the same pair. For "dependencies" output we want one line per
-// (target, type), preferring the most-trustworthy provenance.
-function dedupeBestProvenance(edges: GraphEdge[]): GraphEdge[] {
-  const rank: Record<string, number> = {
-    OBSERVED: 3,
-    INFERRED: 2,
-    EXTRACTED: 1,
-    STALE: 0,
-    FRONTIER: 0,
-  }
-  const best = new Map<string, GraphEdge>()
-  for (const e of edges) {
-    const key = `${e.target}|${e.type}`
-    const cur = best.get(key)
-    if (!cur || rank[e.provenance] > rank[cur.provenance]) best.set(key, e)
-  }
-  return [...best.values()]
 }
 
 export interface IncidentHistoryInput {

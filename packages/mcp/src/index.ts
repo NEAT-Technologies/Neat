@@ -74,9 +74,16 @@ server.tool(
 
 server.tool(
   'get_dependencies',
-  'List the outgoing dependencies of a node — both static (EXTRACTED from source) and runtime (OBSERVED via OTel), de-duplicated to the most trustworthy provenance per pair.',
+  'List the transitive outgoing dependencies of a node, BFS to depth N (default 3, max 10). Each result carries distance, edge type, and provenance — both static (EXTRACTED) and runtime (OBSERVED). Pass depth=1 for direct-only.',
   {
     nodeId: z.string().describe('Graph node id to inspect'),
+    depth: z
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .optional()
+      .describe('BFS depth (default 3, max 10). depth=1 returns direct dependencies only.'),
     project: projectField,
   },
   async (input) => getDependencies(client, { ...input, project: projectFor(input) }),

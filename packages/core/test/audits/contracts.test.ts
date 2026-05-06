@@ -1565,7 +1565,13 @@ describe('MCP tool surface contract (ADR-039)', () => {
     // Empty-result footer reads n/a / n/a per the contract.
     expect(content).toMatch(/n\/a/)
   })
-  it.todo('get_dependencies is transitive — calls /graph/node/:id/dependencies?depth=N (issue #144)')
+  it('get_dependencies is transitive — calls /graph/node/:id/dependencies?depth=N (issue #144)', () => {
+    const tools = readFileSync(join(MCP_SRC, 'tools.ts'), 'utf8')
+    expect(tools).toMatch(/\/graph\/node\/[^`'"\s]*dependencies\?depth=/)
+    // The old direct-only path is gone — getDependencies must not call
+    // /graph/edges/:id anymore.
+    expect(tools).not.toMatch(/getDependencies[\s\S]{0,500}\/graph\/edges/)
+  })
   it.todo('check_policies tool registered with optional hypotheticalAction (v0.2.4 #117)')
 })
 
@@ -1575,7 +1581,13 @@ describe('MCP tool surface contract (ADR-039)', () => {
 describe('REST API contract (ADR-040)', () => {
   it.todo('every read endpoint mounts at both /X and /projects/:project/X')
   it.todo('error responses are JSON-shaped { error, status, details? }')
-  it.todo('GET /graph/node/:id/dependencies?depth=N exists (issue #144)')
+  it('GET /graph/node/:id/dependencies?depth=N exists (issue #144)', () => {
+    const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+    expect(api).toMatch(/['"]\/graph\/node\/:id\/dependencies['"]/)
+    // Default 3, max 10 per the contract.
+    expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH/)
+    expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_MAX_DEPTH/)
+  })
   it.todo('POST endpoints validate inbound bodies with Zod schemas from @neat/types')
   it.todo('GET /policies and /policies/violations exist (v0.2.4 #117)')
 })
@@ -1950,6 +1962,31 @@ describe('Queued contracts (issues #140-#145)', () => {
     // No raw `return text(...)` stragglers that bypass the helper.
     expect(tools).not.toMatch(/return\s+text\s*\(/)
   })
-  it.todo('get_dependencies is transitive (issue #144)')
+  it('get_dependencies is transitive (issue #144)', async () => {
+    // End-to-end shape check: getTransitiveDependencies returns a flat list
+    // with distance + edgeType + provenance. Zod validates the shape on
+    // return; this assertion exercises the schema-validation path too.
+    const { getTransitiveDependencies } = await import('../../src/traverse.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', { id: 'service:a', type: NodeType.ServiceNode, name: 'a', language: 'javascript' })
+    g.addNode('service:b', { id: 'service:b', type: NodeType.ServiceNode, name: 'b', language: 'javascript' })
+    g.addNode('service:c', { id: 'service:c', type: NodeType.ServiceNode, name: 'c', language: 'javascript' })
+    const ab = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(ab, 'service:a', 'service:b', {
+      id: ab, source: 'service:a', target: 'service:b',
+      type: EdgeType.CALLS, provenance: Provenance.OBSERVED,
+      lastObserved: '2026-05-06T00:00:00.000Z', callCount: 1, confidence: 1.0,
+    })
+    const bc = `${EdgeType.CALLS}:service:b->service:c`
+    g.addEdgeWithKey(bc, 'service:b', 'service:c', {
+      id: bc, source: 'service:b', target: 'service:c',
+      type: EdgeType.CALLS, provenance: Provenance.EXTRACTED,
+    })
+    const result = getTransitiveDependencies(g, 'service:a', 3)
+    expect(result.total).toBe(2)
+    expect(result.dependencies[0]!.distance).toBe(1)
+    expect(result.dependencies[1]!.distance).toBe(2)
+    expect(result.dependencies[0]!.edgeType).toBe(EdgeType.CALLS)
+  })
   it.todo('Drop unused graphology-traversal/-shortest-path deps (issue #145)')
 })
