@@ -204,8 +204,20 @@ describe('BlastRadiusResultSchema', () => {
     const b = {
       origin: 'service-a',
       affectedNodes: [
-        { nodeId: 'service-b', distance: 1, edgeProvenance: 'OBSERVED' as const },
-        { nodeId: 'payments-db', distance: 2, edgeProvenance: 'OBSERVED' as const },
+        {
+          nodeId: 'service-b',
+          distance: 1,
+          edgeProvenance: 'OBSERVED' as const,
+          path: ['service-a', 'service-b'],
+          confidence: 1.0,
+        },
+        {
+          nodeId: 'payments-db',
+          distance: 2,
+          edgeProvenance: 'OBSERVED' as const,
+          path: ['service-a', 'service-b', 'payments-db'],
+          confidence: 1.0,
+        },
       ],
       totalAffected: 2,
     }
