@@ -684,5 +684,55 @@
         "_array": "_string"
       }
     }
+  },
+  "TransitiveDependenciesResultSchema": {
+    "_object": {
+      "dependencies": {
+        "_array": {
+          "_object": {
+            "distance": {
+              "_number": [
+                "int",
+                "min"
+              ]
+            },
+            "edgeType": {
+              "_enum": [
+                "CALLS",
+                "CONFIGURED_BY",
+                "CONNECTS_TO",
+                "CONSUMES_FROM",
+                "DEPENDS_ON",
+                "PUBLISHES_TO",
+                "RUNS_ON"
+              ]
+            },
+            "nodeId": "_string",
+            "provenance": {
+              "_enum": [
+                "EXTRACTED",
+                "FRONTIER",
+                "INFERRED",
+                "OBSERVED",
+                "STALE"
+              ]
+            }
+          }
+        }
+      },
+      "depth": {
+        "_number": [
+          "int",
+          "min"
+        ]
+      },
+      "origin": "_string",
+      "total": {
+        "_number": [
+          "int",
+          "min"
+        ]
+      }
+    }
   }
 }

@@ -31,6 +31,7 @@ import {
   PolicyViolationSchema,
   ProvenanceSchema,
   RootCauseResultSchema,
+  TransitiveDependenciesResultSchema,
 } from '@neat/types'
 
 const SNAPSHOT_PATH = join(__dirname, 'schemas.snapshot.json')
@@ -47,6 +48,7 @@ const BINDING_SCHEMAS: Record<string, z.ZodTypeAny> = {
   ErrorEventSchema,
   RootCauseResultSchema,
   BlastRadiusResultSchema,
+  TransitiveDependenciesResultSchema,
   PolicyFileSchema,
   PolicyViolationSchema,
 }

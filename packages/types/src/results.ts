@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ProvenanceSchema } from './edges.js'
+import { ProvenanceSchema, EdgeTypeSchema } from './edges.js'
 
 export const RootCauseResultSchema = z.object({
   rootCauseNode: z.string(),
@@ -35,3 +35,28 @@ export const BlastRadiusResultSchema = z.object({
   totalAffected: z.number().int().nonnegative(),
 })
 export type BlastRadiusResult = z.infer<typeof BlastRadiusResultSchema>
+
+// Transitive get_dependencies (issue #144). Flat list with distance, edge
+// type, and provenance per dependency. Sibling shape to BlastRadius but
+// thinner — no path tracking, no confidence cascade. Use cases live in the
+// MCP get_dependencies tool ("what does X depend on, transitively?").
+export const TransitiveDependencySchema = z.object({
+  nodeId: z.string(),
+  // Distance from the origin in BFS hops. The origin itself is never in
+  // dependencies, so distance is positive (>= 1).
+  distance: z.number().int().positive(),
+  // Type of the edge that brought traversal to this node (CALLS,
+  // CONNECTS_TO, DEPENDS_ON, etc.).
+  edgeType: EdgeTypeSchema,
+  // Provenance of that edge.
+  provenance: ProvenanceSchema,
+})
+export type TransitiveDependency = z.infer<typeof TransitiveDependencySchema>
+
+export const TransitiveDependenciesResultSchema = z.object({
+  origin: z.string(),
+  depth: z.number().int().positive(),
+  dependencies: z.array(TransitiveDependencySchema),
+  total: z.number().int().nonnegative(),
+})
+export type TransitiveDependenciesResult = z.infer<typeof TransitiveDependenciesResultSchema>

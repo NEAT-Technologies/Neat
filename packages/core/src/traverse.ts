@@ -7,6 +7,8 @@ import type {
   GraphNode,
   RootCauseResult,
   ServiceNode,
+  TransitiveDependenciesResult,
+  TransitiveDependency,
 } from '@neat/types'
 import {
   BlastRadiusResultSchema,
@@ -14,6 +16,7 @@ import {
   PROV_RANK,
   Provenance,
   RootCauseResultSchema,
+  TransitiveDependenciesResultSchema,
 } from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import {
@@ -403,5 +406,74 @@ export function getBlastRadius(
     origin: nodeId,
     affectedNodes,
     totalAffected: affectedNodes.length,
+  })
+}
+
+// Default + max depth for transitive get_dependencies (issue #144). Default
+// 3 keeps the output legible at the agent layer; the contract caps the
+// caller-supplied value at 10 to prevent BFS blow-up on dense graphs.
+export const TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH = 3
+export const TRANSITIVE_DEPENDENCIES_MAX_DEPTH = 10
+
+// Transitive get_dependencies (ADR-039 / #144). BFS outbound from origin to
+// `depth` hops, returning a flat list with distance, edgeType, and provenance
+// per dependency. Origin is never in the list. Direct-only consumers pass
+// depth=1; the MCP get_dependencies tool defaults to 3.
+//
+// Reuses bestEdgeByTarget (FRONTIER filtered, PROV_RANK-best per pair) so
+// dedup behavior matches the rest of traversal. Result is schema-validated
+// before return per ADR-036 §Result schema validation.
+export function getTransitiveDependencies(
+  graph: NeatGraph,
+  nodeId: string,
+  depth: number = TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH,
+): TransitiveDependenciesResult {
+  if (!graph.hasNode(nodeId)) {
+    return TransitiveDependenciesResultSchema.parse({
+      origin: nodeId,
+      depth,
+      dependencies: [],
+      total: 0,
+    })
+  }
+
+  interface Frame {
+    nodeId: string
+    distance: number
+    edge: GraphEdge | null
+  }
+
+  const seen = new Map<string, TransitiveDependency>()
+  const queue: Frame[] = [{ nodeId, distance: 0, edge: null }]
+  const enqueued = new Set<string>([nodeId])
+
+  while (queue.length > 0) {
+    const frame = queue.shift()!
+    if (frame.distance > 0 && frame.edge) {
+      seen.set(frame.nodeId, {
+        nodeId: frame.nodeId,
+        distance: frame.distance,
+        edgeType: frame.edge.type,
+        provenance: frame.edge.provenance,
+      })
+    }
+    if (frame.distance >= depth) continue
+
+    const outgoing = bestEdgeByTarget(graph, graph.outboundEdges(frame.nodeId))
+    for (const [tgtId, edge] of outgoing) {
+      if (enqueued.has(tgtId)) continue
+      enqueued.add(tgtId)
+      queue.push({ nodeId: tgtId, distance: frame.distance + 1, edge })
+    }
+  }
+
+  const dependencies = [...seen.values()].sort(
+    (a, b) => a.distance - b.distance || a.nodeId.localeCompare(b.nodeId),
+  )
+  return TransitiveDependenciesResultSchema.parse({
+    origin: nodeId,
+    depth,
+    dependencies,
+    total: dependencies.length,
   })
 }

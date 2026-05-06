@@ -9,7 +9,13 @@ import type { NeatGraph } from './graph.js'
 import { DEFAULT_PROJECT } from './graph.js'
 import { extractFromDirectory } from './extract.js'
 import { readErrorEvents, readStaleEvents } from './ingest.js'
-import { getBlastRadius, getRootCause } from './traverse.js'
+import {
+  getBlastRadius,
+  getRootCause,
+  getTransitiveDependencies,
+  TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH,
+  TRANSITIVE_DEPENDENCIES_MAX_DEPTH,
+} from './traverse.js'
 import { computeGraphDiff, loadSnapshotForDiff } from './diff.js'
 import type { SearchIndex } from './search.js'
 import type { Projects, ProjectContext } from './projects.js'
@@ -159,6 +165,28 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
       return { inbound, outbound }
     },
   )
+
+  // Transitive dependencies (issue #144). BFS outbound to depth N, returning
+  // a flat list with distance + edgeType + provenance per dependency.
+  // Default depth 3, max 10. The MCP get_dependencies tool calls this.
+  scope.get<{
+    Params: { project?: string; id: string }
+    Querystring: { depth?: string }
+  }>('/graph/node/:id/dependencies', async (req, reply) => {
+    const proj = resolveProject(registry, req, reply)
+    if (!proj) return
+    const { id } = req.params
+    if (!proj.graph.hasNode(id)) {
+      return reply.code(404).send({ error: 'node not found', id })
+    }
+    const depth = req.query.depth ? Number(req.query.depth) : TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH
+    if (!Number.isFinite(depth) || depth < 1 || depth > TRANSITIVE_DEPENDENCIES_MAX_DEPTH) {
+      return reply.code(400).send({
+        error: `depth must be an integer in [1, ${TRANSITIVE_DEPENDENCIES_MAX_DEPTH}]`,
+      })
+    }
+    return getTransitiveDependencies(proj.graph, id, depth)
+  })
 
   scope.get<{ Params: { project?: string } }>('/incidents', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
