@@ -8,7 +8,7 @@ import type {
   RootCauseResult,
   ServiceNode,
 } from '@neat/types'
-import { NodeType, PROV_RANK } from '@neat/types'
+import { NodeType, PROV_RANK, Provenance } from '@neat/types'
 import type { NeatGraph } from './graph.js'
 import { checkCompatibility, compatPairs } from './compat.js'
 
@@ -29,10 +29,14 @@ const BLAST_RADIUS_DEFAULT_DEPTH = 10
 // Multiple edges between the same pair coexist by provenance (EXTRACTED next to
 // OBSERVED next to INFERRED). Traversal walks the system as the graph "sees it
 // best", so for any neighbour pair we pick the highest-provenance edge.
+// FRONTIER means unknown territory — ADR-036 / Rule 3 require these edges to
+// be skipped, not merely deprioritized. Filtering happens here so the rest of
+// traversal can stay generic.
 function bestEdgeBySource(graph: NeatGraph, edgeIds: string[]): Map<string, GraphEdge> {
   const best = new Map<string, GraphEdge>()
   for (const id of edgeIds) {
     const e = graph.getEdgeAttributes(id) as GraphEdge
+    if (e.provenance === Provenance.FRONTIER) continue
     const cur = best.get(e.source)
     if (!cur || PROV_RANK[e.provenance] > PROV_RANK[cur.provenance]) {
       best.set(e.source, e)
@@ -45,6 +49,7 @@ function bestEdgeByTarget(graph: NeatGraph, edgeIds: string[]): Map<string, Grap
   const best = new Map<string, GraphEdge>()
   for (const id of edgeIds) {
     const e = graph.getEdgeAttributes(id) as GraphEdge
+    if (e.provenance === Provenance.FRONTIER) continue
     const cur = best.get(e.target)
     if (!cur || PROV_RANK[e.provenance] > PROV_RANK[cur.provenance]) {
       best.set(e.target, e)
