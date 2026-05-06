@@ -14,6 +14,10 @@ export interface ProjectPaths {
   errorsPath: string
   staleEventsPath: string
   embeddingsCachePath: string
+  // Policy-violations log per ADR-041 § Append-only ndjson sidecars. Lives
+  // in the same neat-out directory as the other ndjson sidecars; daemons
+  // wire PolicyViolationsLog to it.
+  policyViolationsPath: string
 }
 
 // Default project keeps the legacy filenames so existing M5 / β / γ users
@@ -25,6 +29,7 @@ export function pathsForProject(project: string, baseDir: string): ProjectPaths 
       errorsPath: path.join(baseDir, 'errors.ndjson'),
       staleEventsPath: path.join(baseDir, 'stale-events.ndjson'),
       embeddingsCachePath: path.join(baseDir, 'embeddings.json'),
+      policyViolationsPath: path.join(baseDir, 'policy-violations.ndjson'),
     }
   }
   return {
@@ -32,6 +37,7 @@ export function pathsForProject(project: string, baseDir: string): ProjectPaths 
     errorsPath: path.join(baseDir, `errors.${project}.ndjson`),
     staleEventsPath: path.join(baseDir, `stale-events.${project}.ndjson`),
     embeddingsCachePath: path.join(baseDir, `embeddings.${project}.json`),
+    policyViolationsPath: path.join(baseDir, `policy-violations.${project}.ndjson`),
   }
 }
 

@@ -17,7 +17,7 @@ import type {
   ListResourcesResult,
   ReadResourceResult,
 } from '@modelcontextprotocol/sdk/types.js'
-import type { ErrorEvent, GraphEdge, GraphNode } from '@neat/types'
+import type { ErrorEvent, GraphEdge, GraphNode, PolicyViolation } from '@neat/types'
 import { HttpError, type HttpClient } from './client.js'
 
 interface EdgesResponse {
@@ -33,6 +33,8 @@ interface SerializedGraph {
 const NODE_RESOURCE_MIME = 'application/json'
 const INCIDENTS_URI = 'neat://incidents/recent'
 const INCIDENTS_DEFAULT_LIMIT = 50
+const POLICY_VIOLATIONS_URI = 'neat://policies/violations'
+const POLICY_VIOLATIONS_DEFAULT_LIMIT = 100
 
 function nodeUri(id: string): string {
   // Node ids contain `:` which RFC 6570 percent-encodes; doing it explicitly
@@ -106,6 +108,32 @@ export async function readNodeResource(
       }
     }
     throw err
+  }
+}
+
+export async function readPolicyViolationsResource(
+  client: HttpClient,
+  limit: number = POLICY_VIOLATIONS_DEFAULT_LIMIT,
+  project?: string,
+): Promise<ReadResourceResult> {
+  const violations = await client.get<PolicyViolation[]>(
+    `${corePrefix(project)}/policies/violations`,
+  )
+  // Latest first; cap at limit so an exploding violations log doesn't blow
+  // up the resource read. The full file is still on disk for forensic use.
+  const ordered = [...violations].reverse().slice(0, limit)
+  return {
+    contents: [
+      {
+        uri: POLICY_VIOLATIONS_URI,
+        mimeType: NODE_RESOURCE_MIME,
+        text: JSON.stringify(
+          { count: ordered.length, total: violations.length, violations: ordered },
+          null,
+          2,
+        ),
+      },
+    ],
   }
 }
 
@@ -205,29 +233,61 @@ export function registerResources(
     async () => readRecentIncidentsResource(client, INCIDENTS_DEFAULT_LIMIT, project),
   )
 
+  // neat://policies/violations — static. Same poll-and-notify pattern as
+  // incidents. Subscribers get resource-updated notifications when the
+  // policy-violations.ndjson grows. ADR-045.
+  server.registerResource(
+    'policies-violations',
+    POLICY_VIOLATIONS_URI,
+    {
+      description:
+        'Current policy violations from policy-violations.ndjson, newest first. JSON: { count, total, violations[] }.',
+      mimeType: NODE_RESOURCE_MIME,
+    },
+    async () => readPolicyViolationsResource(client, POLICY_VIOLATIONS_DEFAULT_LIMIT, project),
+  )
+
   let stopped = false
   let timer: NodeJS.Timeout | null = null
-  let last: { total: number; lastId?: string } | null = null
+  let lastIncidents: { total: number; lastId?: string } | null = null
+  let lastViolations: { total: number; lastId?: string } | null = null
 
   const tick = async (): Promise<void> => {
     if (stopped) return
+    // Incidents poll.
     try {
       const events = await client.get<ErrorEvent[]>(`${corePrefix(project)}/incidents`)
       const next = {
         total: events.length,
         lastId: events.length > 0 ? events[events.length - 1].id : undefined,
       }
-      if (incidentsChanged(last, next)) {
-        // Underlying low-level Server has the notification senders. The
-        // McpServer high-level wrapper exposes it via .server.
-        await server.server.sendResourceUpdated({ uri: INCIDENTS_URI }).catch(() => {
-          // No transport connected yet, or the client dropped — either way we
-          // just skip this notification rather than crashing the poll loop.
-        })
+      if (incidentsChanged(lastIncidents, next)) {
+        await server.server.sendResourceUpdated({ uri: INCIDENTS_URI }).catch(() => {})
       }
-      last = next
+      lastIncidents = next
     } catch {
-      // Core down or not reachable — keep polling, the next tick will catch up.
+      // Core down — keep polling, next tick will catch up.
+    }
+    // Policy-violations poll. Fires the alert action's notifications/
+    // resources/updated for neat://policies/violations subscribers per
+    // ADR-044 §alert. Same change-detection shape as incidents.
+    try {
+      const violations = await client.get<PolicyViolation[]>(
+        `${corePrefix(project)}/policies/violations`,
+      )
+      const next = {
+        total: violations.length,
+        lastId:
+          violations.length > 0 ? violations[violations.length - 1].id : undefined,
+      }
+      if (incidentsChanged(lastViolations, next)) {
+        await server.server
+          .sendResourceUpdated({ uri: POLICY_VIOLATIONS_URI })
+          .catch(() => {})
+      }
+      lastViolations = next
+    } catch {
+      // Core down or no policies yet — keep polling.
     }
   }
 

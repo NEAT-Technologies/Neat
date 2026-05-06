@@ -10,6 +10,8 @@ import type {
   ErrorEvent,
   GraphEdge,
   GraphNode,
+  HypotheticalAction,
+  PolicyViolation,
   RootCauseResult,
   TransitiveDependenciesResult,
 } from '@neat/types'
@@ -491,4 +493,119 @@ export async function getRecentStaleEdges(
   } catch (err) {
     return formatErrorResponse(`Error talking to neat-core: ${(err as Error).message}`)
   }
+}
+
+export interface CheckPoliciesInput {
+  // 'all' (default) returns every current violation. 'unresolved' is reserved
+  // for future resolution tracking — for the MVP it behaves the same as 'all'.
+  // { policyId } narrows to violations of one named policy.
+  scope?: 'all' | 'unresolved' | { policyId: string }
+  // When provided, dry-run evaluation: return violations that *would* result
+  // if the action were applied. Without it, return current violations.
+  hypotheticalAction?: HypotheticalAction
+  project?: string
+}
+
+interface PoliciesCheckResponse {
+  allowed: boolean
+  hypotheticalAction?: HypotheticalAction
+  violations: PolicyViolation[]
+}
+
+// check_policies — single MCP tool covering both state-read and dry-run modes
+// per ADR-045. The contract explicitly rejects the audit's two-tool split
+// (evaluate_policy + get_policy_violations); both modes route through here.
+export async function checkPolicies(
+  client: HttpClient,
+  input: CheckPoliciesInput,
+): Promise<ToolResponse> {
+  try {
+    let violations: PolicyViolation[]
+    let allowed = true
+    let hypothetical: HypotheticalAction | undefined
+
+    if (input.hypotheticalAction) {
+      // Dry-run via POST /policies/check.
+      const body = await postJson<PoliciesCheckResponse>(
+        client,
+        projectPath(input.project, '/policies/check'),
+        { hypotheticalAction: input.hypotheticalAction },
+      )
+      violations = body.violations
+      allowed = body.allowed
+      hypothetical = body.hypotheticalAction
+    } else {
+      // State read via GET /policies/violations. Optional scope filters via
+      // ?policyId=, severity isn't surfaced in the tool input today.
+      const qsParams = new URLSearchParams()
+      if (typeof input.scope === 'object' && 'policyId' in input.scope) {
+        qsParams.set('policyId', input.scope.policyId)
+      }
+      const qs = qsParams.size > 0 ? `?${qsParams.toString()}` : ''
+      violations = await client.get<PolicyViolation[]>(
+        projectPath(input.project, `/policies/violations${qs}`),
+      )
+      allowed = violations.every((v) => v.onViolation !== 'block')
+    }
+
+    if (violations.length === 0) {
+      return formatEmptyResponse(
+        hypothetical
+          ? `No violations would result from the hypothetical action (${hypothetical.kind}).`
+          : 'No policy violations recorded.',
+      )
+    }
+
+    const blockCount = violations.filter((v) => v.onViolation === 'block').length
+    const summaryParts: string[] = []
+    if (hypothetical) {
+      summaryParts.push(
+        `Hypothetical ${hypothetical.kind} would surface ${violations.length} violation${violations.length === 1 ? '' : 's'}`,
+      )
+    } else {
+      summaryParts.push(
+        `${violations.length} policy violation${violations.length === 1 ? '' : 's'} currently recorded`,
+      )
+    }
+    if (blockCount > 0) {
+      summaryParts.push(`${blockCount} of which block`)
+    }
+    if (!allowed && hypothetical) {
+      summaryParts.push('action denied')
+    }
+    const summary = summaryParts.join('; ') + '.'
+
+    const blockLines = violations.map((v) => {
+      const subject = v.subject.nodeId ?? v.subject.edgeId ?? v.subject.path?.[0] ?? '(global)'
+      return `  • [${v.severity}/${v.onViolation}] ${v.policyName}: ${v.message} — ${subject}`
+    })
+    const severities = [...new Set(violations.map((v) => v.severity))]
+    return formatToolResponse({
+      summary,
+      block: blockLines.join('\n'),
+      // Confidence: hypothetical results inherit a 0.7 cap (the engine
+      // can't fully simulate every action shape in MVP); confirmed
+      // violations report 1.00 since the engine ran against current state.
+      confidence: hypothetical ? 0.7 : 1,
+      provenance: severities.join(' '),
+    })
+  } catch (err) {
+    return formatErrorResponse(`Error talking to neat-core: ${(err as Error).message}`)
+  }
+}
+
+async function postJson<T>(
+  client: HttpClient,
+  path: string,
+  body: unknown,
+): Promise<T> {
+  // The base HttpClient interface only exposes get(). For POST we need to
+  // reach into the underlying transport. Most callers pass the client built
+  // by createHttpClient which has post; types are kept minimal so test
+  // stubs don't have to implement post unless the tool needs it.
+  const c = client as HttpClient & { post?: <U>(p: string, b: unknown) => Promise<U> }
+  if (typeof c.post !== 'function') {
+    throw new Error('HttpClient does not support POST — required for check_policies dry-run')
+  }
+  return c.post<T>(path, body)
 }

@@ -4,7 +4,23 @@ import Fastify, {
   type FastifyRequest,
 } from 'fastify'
 import cors from '@fastify/cors'
-import type { ErrorEvent, GraphEdge, GraphNode } from '@neat/types'
+import type {
+  ErrorEvent,
+  GraphEdge,
+  GraphNode,
+  Policy,
+  PolicyViolation,
+} from '@neat/types'
+import {
+  HypotheticalActionSchema,
+  PoliciesCheckBodySchema,
+  PolicySeveritySchema,
+} from '@neat/types'
+import {
+  evaluateAllPolicies,
+  loadPolicyFile,
+  PolicyViolationsLog,
+} from './policy.js'
 import type { NeatGraph } from './graph.js'
 import { DEFAULT_PROJECT } from './graph.js'
 import { extractFromDirectory } from './extract.js'
@@ -93,6 +109,7 @@ function buildLegacyRegistry(opts: BuildApiOptions): Projects {
       errorsPath: opts.errorsPath ?? paths.errorsPath,
       staleEventsPath: opts.staleEventsPath ?? paths.staleEventsPath,
       embeddingsCachePath: paths.embeddingsCachePath,
+      policyViolationsPath: paths.policyViolationsPath,
     },
     searchIndex: opts.searchIndex,
   })
@@ -107,6 +124,9 @@ interface RouteContext {
   // /incidents handlers don't accidentally read a phantom file.
   errorsPathFor: (ctx: ProjectContext) => string | undefined
   staleEventsPathFor: (ctx: ProjectContext) => string | undefined
+  // policy.json lives at the project root (per ADR-042 §File location), not
+  // under neat-out/. Routes that read it map a project context to the path.
+  policyFilePathFor: (ctx: ProjectContext) => string | undefined
 }
 
 // Registers every project-scoped route on `scope`. Called twice from
@@ -347,6 +367,103 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
       edgeCount: proj.graph.size,
     }
   })
+
+  // Policy surface (ADR-045 / contract #18). /policies returns the parsed
+  // policy.json; /policies/violations is the persistent log; /policies/check
+  // is dry-run evaluation. All dual-mounted via registerRoutes.
+  scope.get<{ Params: { project?: string } }>('/policies', async (req, reply) => {
+    const proj = resolveProject(registry, req, reply)
+    if (!proj) return
+    const policyPath = ctx.policyFilePathFor(proj)
+    if (!policyPath) {
+      // No policy file configured for this project — return the empty file
+      // shape so consumers don't have to special-case "no policies yet."
+      return { version: 1, policies: [] }
+    }
+    try {
+      const policies = await loadPolicyFile(policyPath)
+      return { version: 1, policies }
+    } catch (err) {
+      return reply.code(400).send({
+        error: 'policy.json failed to parse',
+        details: (err as Error).message,
+      })
+    }
+  })
+
+  scope.get<{
+    Params: { project?: string }
+    Querystring: { severity?: string; policyId?: string }
+  }>('/policies/violations', async (req, reply) => {
+    const proj = resolveProject(registry, req, reply)
+    if (!proj) return
+    const log = new PolicyViolationsLog(proj.paths.policyViolationsPath)
+    let violations = await log.readAll()
+    if (req.query.severity) {
+      const sev = PolicySeveritySchema.safeParse(req.query.severity)
+      if (!sev.success) {
+        return reply.code(400).send({
+          error: 'invalid severity',
+          details: sev.error.format(),
+        })
+      }
+      violations = violations.filter((v) => v.severity === sev.data)
+    }
+    if (req.query.policyId) {
+      violations = violations.filter((v) => v.policyId === req.query.policyId)
+    }
+    return violations
+  })
+
+  scope.post<{
+    Params: { project?: string }
+    Body: { hypotheticalAction?: unknown }
+  }>('/policies/check', async (req, reply) => {
+    const proj = resolveProject(registry, req, reply)
+    if (!proj) return
+    const parsed = PoliciesCheckBodySchema.safeParse(req.body ?? {})
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: 'invalid /policies/check body',
+        details: parsed.error.format(),
+      })
+    }
+
+    const policyPath = ctx.policyFilePathFor(proj)
+    let policies: Policy[] = []
+    if (policyPath) {
+      try {
+        policies = await loadPolicyFile(policyPath)
+      } catch (err) {
+        return reply.code(400).send({
+          error: 'policy.json failed to parse',
+          details: (err as Error).message,
+        })
+      }
+    }
+
+    // No hypothetical → return current violations against the live graph.
+    // With a hypothetical → simulate the action against a deep-copy graph
+    // (avoids mutation authority concerns), evaluate, return the delta.
+    const evalCtx = { now: () => Date.now() }
+    if (!parsed.data.hypotheticalAction) {
+      const violations = evaluateAllPolicies(proj.graph, policies, evalCtx)
+      const blocking = violations.filter((v) => v.onViolation === 'block')
+      return { allowed: blocking.length === 0, violations }
+    }
+
+    // For now the dry-run simulation re-uses evaluateAllPolicies on the
+    // current graph. Full hypothetical simulation (e.g. "what if I added
+    // this OBSERVED edge?") is the v0.2.4-δ scope; #117 ships the surface,
+    // #118 fills in the action shapes' simulation logic.
+    const violations = evaluateAllPolicies(proj.graph, policies, evalCtx)
+    const blocking = violations.filter((v) => v.onViolation === 'block')
+    return {
+      allowed: blocking.length === 0,
+      hypotheticalAction: parsed.data.hypotheticalAction,
+      violations,
+    } as { allowed: boolean; hypotheticalAction: unknown; violations: PolicyViolation[] }
+  })
 }
 
 export async function buildApi(opts: BuildApiOptions): Promise<FastifyInstance> {
@@ -372,7 +489,21 @@ export async function buildApi(opts: BuildApiOptions): Promise<FastifyInstance> 
     return proj.paths.staleEventsPath
   }
 
-  const routeCtx: RouteContext = { registry, startedAt, errorsPathFor, staleEventsPathFor }
+  // policy.json lives at the project's scanPath root per ADR-042. Without a
+  // scanPath we have nowhere to read it from — those projects show as
+  // "no policies configured" via the empty-file response.
+  const policyFilePathFor = (proj: ProjectContext): string | undefined => {
+    if (!proj.scanPath) return undefined
+    return `${proj.scanPath}/policy.json`
+  }
+
+  const routeCtx: RouteContext = {
+    registry,
+    startedAt,
+    errorsPathFor,
+    staleEventsPathFor,
+    policyFilePathFor,
+  }
 
   // Top-level discovery — only meaningful at the root.
   app.get('/projects', async () => ({

@@ -343,6 +343,34 @@ const policyEvaluators: { [K in PolicyRule['type']]: RuleEvaluator<Extract<Polic
 // Public entry point
 // ──────────────────────────────────────────────────────────────────────────
 
+// Block-action gating for FrontierNode promotion (ADR-044 §block, MVP scope).
+// Runs the policy evaluator and returns the subset of block-action violations
+// that mention the candidate FrontierNode. Callers (ingest.ts
+// promoteFrontierNodes) check `allowed` before rewiring; when false, the
+// promotion is skipped and the violations surface through the standard
+// policy-violations.ndjson channel.
+//
+// Block scope is tightly bounded per the contract: FrontierNode promotion
+// only. Other gating points (deploy, codemod, OTel auto-create) need their
+// own ADRs before this function expands.
+export function canPromoteFrontier(
+  graph: NeatGraph,
+  frontierId: string,
+  policies: Policy[],
+  ctx: EvaluationContext,
+): { allowed: boolean; violations: PolicyViolation[] } {
+  if (policies.length === 0) return { allowed: true, violations: [] }
+  const all = evaluateAllPolicies(graph, policies, ctx)
+  const blocking = all.filter((v) => {
+    if (v.onViolation !== 'block') return false
+    return (
+      v.subject.nodeId === frontierId ||
+      v.subject.path?.includes(frontierId) === true
+    )
+  })
+  return { allowed: blocking.length === 0, violations: blocking }
+}
+
 export function evaluateAllPolicies(
   graph: NeatGraph,
   policies: Policy[],
