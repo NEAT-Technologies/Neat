@@ -43,3 +43,17 @@ export {
   type GraphDiff,
   type PersistedSnapshot,
 } from './diff.js'
+export {
+  addProject,
+  getProject,
+  listProjects,
+  normalizeProjectPath,
+  ProjectNameCollisionError,
+  readRegistry,
+  registryLockPath,
+  registryPath,
+  removeProject,
+  setStatus,
+  touchLastSeen,
+  writeAtomically,
+} from './registry.js'
