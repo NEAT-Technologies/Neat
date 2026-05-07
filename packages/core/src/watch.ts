@@ -17,6 +17,12 @@ import {
   promoteFrontierNodes,
   startStalenessLoop,
 } from './ingest.js'
+import {
+  evaluateAllPolicies,
+  loadPolicyFile,
+  PolicyViolationsLog,
+} from './policy.js'
+import type { Policy } from '@neat/types'
 import { buildOtelReceiver } from './otel.js'
 import { startOtelGrpcReceiver } from './otel-grpc.js'
 import { loadGraphFromDisk, startPersistLoop } from './persist.js'
@@ -211,13 +217,53 @@ export async function startWatch(
   const debounceMs = opts.debounceMs ?? 1000
 
   await loadGraphFromDisk(graph, opts.outPath)
+
+  // Load policies + open the violations log once at startup. policy.json
+  // lives at the project root per ADR-042 §File location; absent file is
+  // a perfectly fine state (loadPolicyFile returns []). Reload-on-change
+  // is queued for v0.2.5 — the kickoff doc tracks it.
+  const policyFilePath = path.join(opts.scanPath, 'policy.json')
+  const policyViolationsPath = path.join(path.dirname(opts.outPath), 'policy-violations.ndjson')
+  let policies: Policy[] = []
+  try {
+    policies = await loadPolicyFile(policyFilePath)
+    if (policies.length > 0) {
+      console.log(`policies: loaded ${policies.length} from ${policyFilePath}`)
+    }
+  } catch (err) {
+    console.warn(`policies: failed to load ${policyFilePath} — ${(err as Error).message}`)
+  }
+  const policyLog = new PolicyViolationsLog(policyViolationsPath)
+
+  // Single shared trigger callback wired into post-ingest, post-extract, and
+  // post-stale per ADR-043. Failures append to console.warn but don't kill
+  // the daemon — a malformed evaluator shouldn't take down ingest.
+  const onPolicyTrigger = async (g: NeatGraph): Promise<void> => {
+    if (policies.length === 0) return
+    try {
+      const violations = evaluateAllPolicies(g, policies, { now: () => Date.now() })
+      for (const v of violations) await policyLog.append(v)
+    } catch (err) {
+      console.warn(`policies: evaluation failed — ${(err as Error).message}`)
+    }
+  }
+
+  // The post-extract trigger fires from extractFromDirectory via opts.
+  // For the initial extract here we run it inline so violations land on
+  // startup before the receiver opens. Subsequent watch-driven re-extract
+  // passes go through runExtractPhases which doesn't take the hook directly
+  // — we run it after each flush() instead.
   const initial = await runExtractPhases(graph, opts.scanPath, new Set(ALL_PHASES))
   console.log(
     `extract: ${initial.nodesAdded} new nodes, ${initial.edgesAdded} new edges (graph total ${graph.order}/${graph.size})`,
   )
+  await onPolicyTrigger(graph)
 
   const stopPersist = startPersistLoop(graph, opts.outPath)
-  const stopStaleness = startStalenessLoop(graph, { staleEventsPath: opts.staleEventsPath })
+  const stopStaleness = startStalenessLoop(graph, {
+    staleEventsPath: opts.staleEventsPath,
+    onPolicyTrigger,
+  })
 
   const host = opts.host ?? '0.0.0.0'
   const port = opts.port ?? 8080
@@ -268,6 +314,7 @@ export async function startWatch(
     graph,
     errorsPath: opts.errorsPath,
     writeErrorEventInline: false,
+    onPolicyTrigger,
   })
   const onErrorSpanSync = makeErrorSpanWriter(opts.errorsPath)
   const otelHttp = await buildOtelReceiver({ onSpan, onErrorSpanSync })
@@ -281,7 +328,11 @@ export async function startWatch(
     // awaits onSpan synchronously (otel-grpc.ts), so the same durability
     // guarantee is met without a separate sync hook. Non-blocking gRPC
     // ingest is out of scope for the v0.2.2 batch.
-    const onSpanGrpc = makeSpanHandler({ graph, errorsPath: opts.errorsPath })
+    const onSpanGrpc = makeSpanHandler({
+      graph,
+      errorsPath: opts.errorsPath,
+      onPolicyTrigger,
+    })
     const r = await startOtelGrpcReceiver({ onSpan: onSpanGrpc, host, port: grpcPort })
     console.log(`neat-core OTLP/gRPC receiver on ${r.address}`)
     grpcReceiver = r
@@ -319,6 +370,12 @@ export async function startWatch(
           console.warn('[watch] semantic_search refresh failed', err)
         }
       }
+      // Post-extract policy trigger (ADR-043). The runExtractPhases call
+      // doesn't take the hook directly — it runs through promoteFrontierNodes
+      // for FRONTIER → OBSERVED upgrades but doesn't load policies itself.
+      // Firing the evaluator here keeps the trigger surface symmetric across
+      // ingest / extract / stale paths.
+      await onPolicyTrigger(graph)
     } catch (err) {
       console.error('[watch] re-extract failed', err)
     }

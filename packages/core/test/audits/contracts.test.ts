@@ -1945,6 +1945,26 @@ describe('Policy contracts (ADRs 042-045)', () => {
     // MCP coupling. Notification side effects belong to the alert action,
     // wired in #117 (the policy MCP surface).
   })
+  it('watch.ts wires onPolicyTrigger into ingest, extract, and stale paths (ADR-043)', () => {
+    // Static scan: the daemon loads policies once, builds a PolicyViolationsLog,
+    // and threads onPolicyTrigger into makeSpanHandler / startStalenessLoop /
+    // the post-flush re-extract path. Without this wiring the engine is
+    // dormant in production — every contract assertion would still pass
+    // because the function exists, but no policy.json would ever evaluate
+    // outside POST /policies/check.
+    const watchTs = readFileSync(join(CORE_SRC, 'watch.ts'), 'utf8')
+    expect(watchTs).toMatch(/loadPolicyFile\s*\(/)
+    expect(watchTs).toMatch(/PolicyViolationsLog/)
+    expect(watchTs).toMatch(/evaluateAllPolicies\s*\(/)
+    expect(watchTs).toMatch(/onPolicyTrigger/)
+    // Wired into the three trigger paths: makeSpanHandler call(s), the
+    // staleness-loop options object, and at least one direct invocation
+    // after the watch-driven flush() to cover post-extract.
+    const onSpanHandlerCount = (watchTs.match(/makeSpanHandler\(\{[^}]*onPolicyTrigger/g) ?? []).length
+    expect(onSpanHandlerCount).toBeGreaterThanOrEqual(1)
+    expect(watchTs).toMatch(/startStalenessLoop\([^)]*\{[\s\S]*onPolicyTrigger/m)
+  })
+
   it('alert action appends + emits notifications/resources/updated (ADR-044)', () => {
     // Alert action's notification surface lives in mcp/src/resources.ts: the
     // same poll-and-notify pattern as incidents fires sendResourceUpdated
@@ -1955,6 +1975,62 @@ describe('Policy contracts (ADRs 042-045)', () => {
     expect(resources).toMatch(/sendResourceUpdated\([^)]*POLICY_VIOLATIONS_URI[\s\S]{0,40}\)/)
     // The poll loop reads /policies/violations to detect changes.
     expect(resources).toMatch(/\/policies\/violations/)
+  })
+
+  it('promoteFrontierNodes honors canPromoteFrontier and skips block-gated frontiers (ADR-044)', async () => {
+    const { promoteFrontierNodes } = await import('../../src/ingest.js')
+    const { frontierId, frontierEdgeId } = await import('@neat/types')
+    const fid = frontierId('blocked.host')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', {
+      id: 'service:caller',
+      type: NodeType.ServiceNode,
+      name: 'caller',
+      language: 'javascript',
+    })
+    // Service whose name matches the frontier host → would otherwise promote.
+    g.addNode('service:resolved', {
+      id: 'service:resolved',
+      type: NodeType.ServiceNode,
+      name: 'blocked.host',
+      language: 'javascript',
+      aliases: ['blocked.host'],
+    })
+    g.addNode(fid, {
+      id: fid,
+      type: NodeType.FrontierNode,
+      name: 'blocked.host',
+      host: 'blocked.host',
+    })
+    const eId = frontierEdgeId('service:caller', fid, EdgeType.CALLS)
+    g.addEdgeWithKey(eId, 'service:caller', fid, {
+      id: eId,
+      source: 'service:caller',
+      target: fid,
+      type: EdgeType.CALLS,
+      provenance: Provenance.FRONTIER,
+      lastObserved: '2026-05-07T00:00:00.000Z',
+      callCount: 1,
+    })
+    // Critical-severity ownership policy on FrontierNode → defaults to block.
+    const policies = [
+      {
+        id: 'frontier-must-have-owner',
+        name: 'frontier nodes must declare an owner',
+        severity: 'critical' as const,
+        rule: {
+          type: 'ownership' as const,
+          nodeType: NodeType.FrontierNode,
+          field: 'owner',
+        },
+      },
+    ]
+    const ctx = { now: () => Date.parse('2026-05-07T00:00:00.000Z') }
+    const promoted = promoteFrontierNodes(g, { policies, policyCtx: ctx })
+    expect(promoted).toBe(0)
+    // Frontier is still in the graph because the block fired.
+    expect(g.hasNode(fid)).toBe(true)
+    expect(g.hasEdge(eId)).toBe(true)
   })
 
   it('block action returns false from canPromoteFrontier when block-policy violates (ADR-044)', async () => {
