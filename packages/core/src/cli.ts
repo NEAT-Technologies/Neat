@@ -71,6 +71,10 @@ function usage(): void {
   console.log('  uninstall <name>')
   console.log('                 Remove a project from the registry. Does not touch')
   console.log('                 neat-out/, policy.json, or any user file.')
+  console.log('  skill          Install or print the Claude Code MCP drop-in.')
+  console.log('                 Flags:')
+  console.log('                   --print-config   print the JSON snippet to stdout')
+  console.log('                   --apply          merge mcpServers.neat into ~/.claude.json')
   console.log('')
   console.log('flags:')
   console.log('  --project <name>   Name the project this command targets. Default: "default".')
@@ -85,6 +89,7 @@ interface ParsedArgs {
   apply: boolean
   dryRun: boolean
   noInstall: boolean
+  printConfig: boolean
   positional: string[]
 }
 
@@ -94,6 +99,7 @@ function parseArgs(rest: string[]): ParsedArgs {
   let apply = false
   let dryRun = false
   let noInstall = false
+  let printConfig = false
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i] as string
     if (arg === '--project') {
@@ -122,9 +128,13 @@ function parseArgs(rest: string[]): ParsedArgs {
       noInstall = true
       continue
     }
+    if (arg === '--print-config') {
+      printConfig = true
+      continue
+    }
     positional.push(arg)
   }
-  return { project, apply, dryRun, noInstall, positional }
+  return { project, apply, dryRun, noInstall, printConfig, positional }
 }
 
 function summarise(nodes: GraphNode[], edges: GraphEdge[]): string {
@@ -309,6 +319,83 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
   return { exitCode: 0, writtenFiles: written }
 }
 
+// ── Claude Code skill (ADR-049 / v0.2.5 step 6) ────────────────────────
+//
+// The skill is a one-shot MCP-config drop-in. Source of truth for the
+// snippet lives here (the @neat/claude-skill package's
+// claude_code_config.json holds an identical copy for documentation; a
+// contract test keeps the two byte-aligned).
+export const CLAUDE_SKILL_CONFIG = {
+  mcpServers: {
+    neat: {
+      type: 'stdio' as const,
+      command: 'npx',
+      args: ['-y', '@neat/mcp'],
+      env: {
+        NEAT_API_URL: 'http://localhost:8080',
+      },
+    },
+  },
+}
+
+function claudeConfigPath(): string {
+  // ~/.claude.json is Claude Code's user-level MCP config. Tests override
+  // via NEAT_CLAUDE_CONFIG so they don't touch the real file.
+  const override = process.env.NEAT_CLAUDE_CONFIG
+  if (override && override.length > 0) return path.resolve(override)
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
+  return path.join(home, '.claude.json')
+}
+
+export interface SkillOptions {
+  apply: boolean
+  printConfig: boolean
+}
+
+export async function runSkill(opts: SkillOptions): Promise<{ exitCode: number }> {
+  const snippet = JSON.stringify(CLAUDE_SKILL_CONFIG, null, 2) + '\n'
+
+  if (opts.printConfig) {
+    process.stdout.write(snippet)
+    return { exitCode: 0 }
+  }
+
+  if (opts.apply) {
+    const target = claudeConfigPath()
+    let existing: Record<string, unknown> = {}
+    try {
+      existing = JSON.parse(await fs.readFile(target, 'utf8'))
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error(`neat skill: failed to read ${target} — ${(err as Error).message}`)
+        return { exitCode: 1 }
+      }
+    }
+    // Merge mcpServers.neat without disturbing other entries the user
+    // might have wired up by hand.
+    const mcp =
+      (existing as { mcpServers?: Record<string, unknown> }).mcpServers ?? {}
+    const merged = {
+      ...existing,
+      mcpServers: { ...mcp, neat: CLAUDE_SKILL_CONFIG.mcpServers.neat },
+    }
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.writeFile(target, JSON.stringify(merged, null, 2) + '\n', 'utf8')
+    console.log(`neat skill: wrote mcpServers.neat to ${target}`)
+    console.log('restart Claude Code to pick up the new MCP server.')
+    return { exitCode: 0 }
+  }
+
+  console.log('neat skill — Claude Code MCP drop-in for NEAT')
+  console.log('')
+  console.log('  --print-config   print the JSON snippet to stdout')
+  console.log('  --apply          merge mcpServers.neat into ~/.claude.json')
+  console.log('')
+  console.log('Manual install: copy mcpServers.neat from --print-config into ~/.claude.json,')
+  console.log('then restart Claude Code. See packages/claude-skill/SKILL.md for the tool list.')
+  return { exitCode: 0 }
+}
+
 async function main(): Promise<void> {
   const [, , cmd, ...rest] = process.argv
 
@@ -462,6 +549,12 @@ async function main(): Promise<void> {
       console.error((err as Error).message)
       process.exit(1)
     }
+    return
+  }
+
+  if (cmd === 'skill') {
+    const result = await runSkill({ apply: parsed.apply, printConfig: parsed.printConfig })
+    if (result.exitCode !== 0) process.exit(result.exitCode)
     return
   }
 
