@@ -2393,13 +2393,204 @@ describe('neat init contract (ADR-046)', () => {
 })
 
 describe('SDK install contract (ADR-047)', () => {
-  it.todo('every installer module exports detect/plan/apply (ADR-047 #1)')
-  it.todo('Node installer plan adds @opentelemetry/sdk-node and modifies entrypoint (ADR-047 #2)')
+  async function makeNodeService(): Promise<{ dir: string; cleanup: () => Promise<void> }> {
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const dir = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-installer-js-'))
+    return {
+      dir: await fs2.realpath(dir),
+      cleanup: () => fs2.rm(dir, { recursive: true, force: true }),
+    }
+  }
+
+  it('every installer module exports detect/plan/apply (ADR-047 #1)', async () => {
+    const { INSTALLERS } = await import('../../src/installers/index.js')
+    expect(INSTALLERS.length).toBeGreaterThan(0)
+    for (const inst of INSTALLERS) {
+      expect(typeof inst.name).toBe('string')
+      expect(inst.name.length).toBeGreaterThan(0)
+      expect(typeof inst.detect).toBe('function')
+      expect(typeof inst.plan).toBe('function')
+      expect(typeof inst.apply).toBe('function')
+    }
+  })
+
+  it('Node installer plan adds @opentelemetry/sdk-node and modifies entrypoint (ADR-047 #2)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await fs2.writeFile(
+        path2.join(dir, 'package.json'),
+        JSON.stringify(
+          { name: 'svc', version: '0.0.0', scripts: { start: 'node server.js' } },
+          null,
+          2,
+        ),
+      )
+      const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+      expect(await javascriptInstaller.detect(dir)).toBe(true)
+      const plan = await javascriptInstaller.plan(dir)
+      expect(plan.language).toBe('javascript')
+      const depNames = plan.dependencyEdits.map((d) => d.name)
+      expect(depNames).toContain('@opentelemetry/sdk-node')
+      expect(depNames).toContain('@opentelemetry/api')
+      expect(depNames).toContain('@opentelemetry/auto-instrumentations-node')
+      for (const dep of plan.dependencyEdits) {
+        expect(dep.kind).toBe('add')
+        expect(dep.file).toBe(path2.join(dir, 'package.json'))
+      }
+      expect(plan.entrypointEdits).toHaveLength(1)
+      const ep = plan.entrypointEdits[0]!
+      expect(ep.before).toBe('node server.js')
+      expect(ep.after).toContain('@opentelemetry/auto-instrumentations-node/register')
+      expect(plan.envEdits.some((e) => e.key === 'OTEL_EXPORTER_OTLP_ENDPOINT')).toBe(true)
+    } finally {
+      await cleanup()
+    }
+  })
+
   it.todo('Python installer plan adds opentelemetry-distro and prefixes entrypoint (ADR-047 #2)')
-  it.todo('no installer plan output references package-lock.json/poetry.lock/Gemfile.lock (ADR-047 #4)')
-  it.todo('plan(dir) returns an empty plan when SDK is already installed (ADR-047 #5)')
-  it.todo('plan output is deterministic across runs (ADR-047 #6)')
-  it.todo('apply failure produces a neat-rollback.patch (ADR-047 #7)')
+
+  it('no installer plan output references package-lock.json/poetry.lock/Gemfile.lock (ADR-047 #4)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const lockfiles = [
+      'package-lock.json',
+      'pnpm-lock.yaml',
+      'yarn.lock',
+      'poetry.lock',
+      'Pipfile.lock',
+      'Gemfile.lock',
+      'Cargo.lock',
+    ]
+    const { INSTALLERS } = await import('../../src/installers/index.js')
+    const offenders: string[] = []
+    for (const inst of INSTALLERS) {
+      const { dir, cleanup } = await makeNodeService()
+      try {
+        // Drop in everything an installer might detect on, plus a lockfile
+        // for every language. Plans are pure data — no side effects from
+        // calling them, so this is safe across all installers.
+        await fs2.writeFile(
+          path2.join(dir, 'package.json'),
+          JSON.stringify({ name: 'svc', version: '0.0.0', scripts: { start: 'node s.js' } }),
+        )
+        await fs2.writeFile(path2.join(dir, 'pyproject.toml'), '[project]\nname="svc"')
+        await fs2.writeFile(path2.join(dir, 'requirements.txt'), 'flask==3.0.0\n')
+        for (const lock of lockfiles) {
+          await fs2.writeFile(path2.join(dir, lock), '{}')
+        }
+        if (!(await inst.detect(dir))) continue
+        const plan = await inst.plan(dir)
+        const allFiles = [
+          ...plan.dependencyEdits.map((e) => e.file),
+          ...plan.entrypointEdits.map((e) => e.file),
+          ...plan.envEdits.map((e) => e.file).filter((f): f is string => f !== null),
+        ]
+        for (const f of allFiles) {
+          const base = path2.basename(f)
+          if (lockfiles.includes(base)) {
+            offenders.push(`${inst.name}: plan references lockfile ${f}`)
+          }
+        }
+      } finally {
+        await cleanup()
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('plan(dir) returns an empty plan when SDK is already installed (ADR-047 #5)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await fs2.writeFile(
+        path2.join(dir, 'package.json'),
+        JSON.stringify({
+          name: 'svc',
+          version: '0.0.0',
+          scripts: {
+            start: 'node --require @opentelemetry/auto-instrumentations-node/register server.js',
+          },
+          dependencies: {
+            '@opentelemetry/api': '^1.9.0',
+            '@opentelemetry/sdk-node': '^0.57.0',
+            '@opentelemetry/auto-instrumentations-node': '^0.55.0',
+          },
+        }),
+      )
+      const { javascriptInstaller, isEmptyPlan } = await import('../../src/installers/index.js')
+      const plan = await javascriptInstaller.plan(dir)
+      expect(isEmptyPlan(plan)).toBe(true)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('plan output is deterministic across runs (ADR-047 #6)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await fs2.writeFile(
+        path2.join(dir, 'package.json'),
+        JSON.stringify(
+          { name: 'svc', version: '0.0.0', scripts: { start: 'node server.js' } },
+          null,
+          2,
+        ),
+      )
+      const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+      const a = await javascriptInstaller.plan(dir)
+      const b = await javascriptInstaller.plan(dir)
+      expect(JSON.stringify(b)).toBe(JSON.stringify(a))
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('apply failure produces a neat-rollback.patch (ADR-047 #7)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      const manifest = path2.join(dir, 'package.json')
+      const original = JSON.stringify(
+        { name: 'svc', version: '0.0.0', scripts: { start: 'node server.js' } },
+        null,
+        2,
+      )
+      await fs2.writeFile(manifest, original)
+      const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+      // Construct a plan with a dependencyEdit pointing at a real manifest
+      // (so apply reads originals OK) plus an entrypointEdit pointing at a
+      // file that does not exist — the second pass crashes when reading
+      // originals for that file. The contract: the rollback path triggers
+      // and neat-rollback.patch lands on disk.
+      const ghost = path2.join(dir, 'does-not-exist', 'package.json')
+      await expect(
+        javascriptInstaller.apply({
+          language: 'javascript',
+          serviceDir: dir,
+          dependencyEdits: [{ file: manifest, kind: 'add', name: 'x', version: '1.0.0' }],
+          entrypointEdits: [{ file: ghost, before: 'a', after: 'b' }],
+          envEdits: [],
+        }),
+      ).rejects.toBeInstanceOf(Error)
+      // The real manifest was rolled back (still bears the original bytes).
+      const after = await fs2.readFile(manifest, 'utf8')
+      expect(after).toBe(original)
+      // And neat-rollback.patch lives at the service root.
+      const rollback = await fs2.readFile(path2.join(dir, 'neat-rollback.patch'), 'utf8')
+      expect(rollback).toContain('neat-rollback.patch')
+      expect(rollback).toContain(manifest)
+    } finally {
+      await cleanup()
+    }
+  })
 })
 
 describe('Machine-level project registry contract (ADR-048)', () => {

@@ -4,7 +4,9 @@
  */
 
 import type { Installer, InstallPlan } from './shared.js'
+import { javascriptInstaller } from './javascript.js'
 export { isEmptyPlan } from './shared.js'
+export { javascriptInstaller } from './javascript.js'
 export type {
   DependencyEdit,
   EntrypointEdit,
@@ -26,7 +28,9 @@ export const FORBIDDEN_LOCKFILES: ReadonlySet<string> = new Set([
   'go.sum',
 ])
 
-export const INSTALLERS: Installer[] = []
+// Order is priority — first match wins per service. JavaScript leads because
+// it's the most common shape in the projects NEAT targets.
+export const INSTALLERS: Installer[] = [javascriptInstaller]
 
 /**
  * Resolve the first installer that claims a given service directory. Returns
