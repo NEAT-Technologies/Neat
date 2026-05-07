@@ -5,8 +5,11 @@ import type {
   ErrorEvent,
   FrontierNode,
   GraphEdge,
+  Policy,
   ServiceNode,
 } from '@neat/types'
+import type { EvaluationContext as PolicyEvaluationContext } from './policy.js'
+import { canPromoteFrontier } from './policy.js'
 import {
   EdgeType,
   NodeType,
@@ -619,7 +622,20 @@ export { stitchTrace }
 // running it there picks up the case the issue describes: ingest fills in a
 // frontier when traffic arrives for an unknown host, and the next extraction
 // round resolves it.
-export function promoteFrontierNodes(graph: NeatGraph): number {
+// Optional gate for block-action policies (ADR-044). When `policies` is
+// non-empty, each candidate FrontierNode runs through `canPromoteFrontier`
+// before its incident edges are rewired. Block-action policies that fire on
+// the frontier veto the promotion — the FrontierNode persists; the next
+// extract pass tries again.
+export interface PromoteFrontierOptions {
+  policies?: Policy[]
+  policyCtx?: PolicyEvaluationContext
+}
+
+export function promoteFrontierNodes(
+  graph: NeatGraph,
+  opts: PromoteFrontierOptions = {},
+): number {
   const aliasIndex = new Map<string, string>()
   graph.forEachNode((id, attrs) => {
     const a = attrs as ServiceNode & { type?: string }
@@ -640,11 +656,22 @@ export function promoteFrontierNodes(graph: NeatGraph): number {
     toPromote.push({ frontierId: id, serviceId: target })
   })
 
+  let promoted = 0
   for (const { frontierId, serviceId } of toPromote) {
+    if (opts.policies && opts.policies.length > 0 && opts.policyCtx) {
+      const gate = canPromoteFrontier(graph, frontierId, opts.policies, opts.policyCtx)
+      if (!gate.allowed) {
+        // Block-action policy fired on this frontier — skip the rewire and
+        // leave the FrontierNode in place. Violations already surfaced via
+        // the policy log on the same evaluation pass.
+        continue
+      }
+    }
     rewireFrontierEdges(graph, frontierId, serviceId)
     graph.dropNode(frontierId)
+    promoted++
   }
-  return toPromote.length
+  return promoted
 }
 
 function rewireFrontierEdges(graph: NeatGraph, frontierId: string, serviceId: string): void {
