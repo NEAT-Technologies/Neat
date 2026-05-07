@@ -5,24 +5,63 @@ import { promises as fs } from 'node:fs'
 import type { GraphEdge, GraphNode, ServiceNode } from '@neat/types'
 import { DEFAULT_PROJECT, getGraph, resetGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
+import { discoverServices } from './extract/services.js'
+import type { DiscoveredService } from './extract/shared.js'
 import { saveGraphToDisk } from './persist.js'
 import { startWatch, type WatchHandle } from './watch.js'
 import { pathsForProject } from './projects.js'
-import { listProjects, removeProject, setStatus } from './registry.js'
+import {
+  addProject,
+  listProjects,
+  ProjectNameCollisionError,
+  removeProject,
+  setStatus,
+} from './registry.js'
+import {
+  INSTALLERS,
+  isEmptyPlan,
+  pickInstaller,
+  renderPatch,
+  type InstallPlan,
+  type PatchSection,
+} from './installers/index.js'
 
-interface InitOptions {
+export interface InitOptions {
   scanPath: string
   outPath: string
+  // The project's registry name. Defaults to the basename of the scan path
+  // when the user didn't pass `--project` (ADR-046 — project naming).
   project: string
+  // Whether `project` was set explicitly via `--project`. The flag affects
+  // which in-memory graph slot we use: explicit names get isolated slots
+  // per ADR-026, the default basename keeps using DEFAULT_PROJECT for
+  // back-compat with `neat watch`.
+  projectExplicit: boolean
+  apply: boolean
+  dryRun: boolean
+  noInstall: boolean
+}
+
+export interface InitResult {
+  // Process exit code. 0 on success, 1 on collision / runtime failure,
+  // 2 on misuse (handled before we get here, but documented for completeness).
+  exitCode: number
+  // Paths the run actually wrote to. Empty in `--dry-run` except for
+  // `neat.patch`. Useful for tests asserting "init only wrote X".
+  writtenFiles: string[]
 }
 
 function usage(): void {
   console.log('usage: neat <command> [args] [--project <name>]')
   console.log('')
   console.log('commands:')
-  console.log('  init <path>    Scan <path>, build the static graph, save a snapshot.')
+  console.log('  init <path>    One-time install: discover, extract, register, plan SDK install.')
   console.log('                 Snapshot lands in <path>/neat-out/graph.json by default')
   console.log('                 (or <path>/neat-out/<project>.json for non-default).')
+  console.log('                 Flags:')
+  console.log('                   --apply       run the SDK install patch in place')
+  console.log('                   --dry-run     write only neat.patch; do not register or snapshot')
+  console.log('                   --no-install  skip SDK install planning entirely')
   console.log('  watch <path>   Start neat-core, watch <path>, re-extract on changes.')
   console.log('                 PORT (default 8080), OTEL_PORT (4318), HOST (0.0.0.0)')
   console.log('                 control listeners. NEAT_OTLP_GRPC=true also opens 4317.')
@@ -37,12 +76,24 @@ function usage(): void {
   console.log('  --project <name>   Name the project this command targets. Default: "default".')
 }
 
-// Tiny argv parser — pulls `--project <name>` out of `rest` and returns the
-// rest as positional args. Doesn't try to be a full flags library; just
-// enough for #83 without pulling commander in.
-function pluckProject(rest: string[]): { project: string; positional: string[] } {
+// Tiny argv parser — pulls `--project <name>` and the v0.2.5 init flags
+// (`--apply`, `--dry-run`, `--no-install`) out of `rest`. Boolean flags are
+// only meaningful for `init`; the parser surfaces them unconditionally so
+// `main` can validate per-command.
+interface ParsedArgs {
+  project: string | null
+  apply: boolean
+  dryRun: boolean
+  noInstall: boolean
+  positional: string[]
+}
+
+function parseArgs(rest: string[]): ParsedArgs {
   const positional: string[] = []
-  let project = DEFAULT_PROJECT
+  let project: string | null = null
+  let apply = false
+  let dryRun = false
+  let noInstall = false
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i] as string
     if (arg === '--project') {
@@ -59,9 +110,21 @@ function pluckProject(rest: string[]): { project: string; positional: string[] }
       project = arg.slice('--project='.length)
       continue
     }
+    if (arg === '--apply') {
+      apply = true
+      continue
+    }
+    if (arg === '--dry-run') {
+      dryRun = true
+      continue
+    }
+    if (arg === '--no-install') {
+      noInstall = true
+      continue
+    }
     positional.push(arg)
   }
-  return { project, positional }
+  return { project, apply, dryRun, noInstall, positional }
 }
 
 function summarise(nodes: GraphNode[], edges: GraphEdge[]): string {
@@ -104,25 +167,129 @@ function findIncompatibilities(nodes: GraphNode[]): ServiceNode[] {
   )
 }
 
-async function runInit(opts: InitOptions): Promise<void> {
+function printDiscoveryReport(opts: InitOptions, services: DiscoveredService[]): void {
+  const languages = [...new Set(services.map((s) => s.node.language))].sort()
+  const mode = opts.dryRun ? 'dry-run' : opts.apply ? 'apply' : 'patch-only'
+  console.log('=== neat init: discovery ===')
+  console.log(`scan path: ${opts.scanPath}`)
+  console.log(`project:   ${opts.project}`)
+  console.log(`mode:      ${mode}`)
+  console.log(`services:  ${services.length}`)
+  for (const s of services) {
+    const where = s.node.repoPath && s.node.repoPath.length > 0 ? s.node.repoPath : '.'
+    console.log(`  - ${s.node.name} (${s.node.language}) — ${where}`)
+  }
+  console.log(`languages: ${languages.length > 0 ? languages.join(', ') : '(none)'}`)
+  if (opts.noInstall) {
+    console.log('install:   skipped (--no-install)')
+  } else if (opts.dryRun) {
+    console.log('install:   patch will be written to neat.patch; nothing else.')
+  } else if (opts.apply) {
+    console.log('install:   patch will be applied in place. Run `npm install` afterwards.')
+  } else {
+    console.log('install:   patch will be written to neat.patch for review.')
+  }
+  console.log('')
+}
+
+async function buildPatchSections(
+  services: DiscoveredService[],
+): Promise<PatchSection[]> {
+  const sections: PatchSection[] = []
+  for (const svc of services) {
+    const installer = await pickInstaller(svc.dir)
+    if (!installer) continue
+    const plan: InstallPlan = await installer.plan(svc.dir)
+    if (isEmptyPlan(plan)) continue
+    sections.push({ installer: installer.name, plan })
+  }
+  return sections
+}
+
+export async function runInit(opts: InitOptions): Promise<InitResult> {
+  const written: string[] = []
+
+  // ── Step 1: validate path ────────────────────────────────────────────
   const stat = await fs.stat(opts.scanPath).catch(() => null)
   if (!stat || !stat.isDirectory()) {
     console.error(`neat init: ${opts.scanPath} is not a directory`)
-    process.exit(2)
+    return { exitCode: 2, writtenFiles: written }
   }
 
-  resetGraph(opts.project)
-  const graph = getGraph(opts.project)
+  // ── Step 2: discovery (ADR-046 #2 — before any mutation) ─────────────
+  const services = await discoverServices(opts.scanPath)
+  printDiscoveryReport(opts, services)
+
+  // ── Step 3: plan SDK install (pure data, no fs writes) ───────────────
+  const sections = opts.noInstall ? [] : await buildPatchSections(services)
+  const patch = renderPatch(sections)
+  const patchPath = path.join(opts.scanPath, 'neat.patch')
+
+  // ── Step 4: dry-run shortcut — only neat.patch is allowed to land ────
+  if (opts.dryRun) {
+    await fs.writeFile(patchPath, patch, 'utf8')
+    written.push(patchPath)
+    console.log(`dry-run: patch written to ${patchPath}`)
+    console.log('rerun without --dry-run to register and snapshot.')
+    return { exitCode: 0, writtenFiles: written }
+  }
+
+  // ── Step 5: extraction + snapshot ────────────────────────────────────
+  // Use DEFAULT_PROJECT for the in-memory graph slot when --project wasn't
+  // explicitly passed; named projects get isolated slots per ADR-026.
+  const graphKey = opts.projectExplicit ? opts.project : DEFAULT_PROJECT
+  resetGraph(graphKey)
+  const graph = getGraph(graphKey)
   const result = await extractFromDirectory(graph, opts.scanPath)
   await saveGraphToDisk(graph, opts.outPath)
+  written.push(opts.outPath)
 
+  // ── Step 6: register in the machine-level registry ───────────────────
+  // Idempotent re-init of the same path under the same name refreshes the
+  // entry; collision against a different path exits non-zero (ADR-046 #7).
+  const languages = [...new Set(services.map((s) => s.node.language))].sort()
+  try {
+    await addProject({
+      name: opts.project,
+      path: opts.scanPath,
+      languages,
+      status: 'active',
+    })
+  } catch (err) {
+    if (err instanceof ProjectNameCollisionError) {
+      console.error(`neat init: ${err.message}`)
+      console.error('pass --project <other-name> to register under a different name.')
+      return { exitCode: 1, writtenFiles: written }
+    }
+    throw err
+  }
+
+  // ── Step 7: write or apply patch ─────────────────────────────────────
+  if (!opts.noInstall) {
+    if (opts.apply) {
+      for (const section of sections) {
+        const installer = INSTALLERS.find((i) => i.name === section.installer)
+        if (!installer) continue
+        await installer.apply(section.plan)
+      }
+      if (sections.length > 0) {
+        console.log('')
+        console.log('patch applied. Run `npm install` (or your language equivalent) to refresh lockfiles.')
+      }
+    } else {
+      await fs.writeFile(patchPath, patch, 'utf8')
+      written.push(patchPath)
+    }
+  }
+
+  // ── Step 8: summary + incompatibilities ──────────────────────────────
   const nodes: GraphNode[] = []
   graph.forEachNode((_id, attrs) => nodes.push(attrs))
   const edges: GraphEdge[] = []
   graph.forEachEdge((_id, attrs) => edges.push(attrs))
 
-  console.log(`scanned: ${opts.scanPath}`)
-  console.log(`project: ${opts.project}`)
+  console.log('')
+  console.log('=== neat init: summary ===')
   console.log(`snapshot: ${opts.outPath}`)
   console.log(`added: ${result.nodesAdded} nodes, ${result.edgesAdded} edges`)
   console.log(`total:  ${graph.order} nodes, ${graph.size} edges`)
@@ -138,6 +305,8 @@ async function runInit(opts: InitOptions): Promise<void> {
       }
     }
   }
+
+  return { exitCode: 0, writtenFiles: written }
 }
 
 async function main(): Promise<void> {
@@ -148,7 +317,9 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
-  const { project, positional } = pluckProject(rest)
+  const parsed = parseArgs(rest)
+  const { positional, apply, dryRun, noInstall } = parsed
+  const project = parsed.project ?? DEFAULT_PROJECT
 
   if (cmd === 'init') {
     const target = positional[0]
@@ -157,12 +328,31 @@ async function main(): Promise<void> {
       usage()
       process.exit(2)
     }
+    if (apply && dryRun) {
+      console.error('neat init: --apply and --dry-run are mutually exclusive')
+      process.exit(2)
+    }
     const scanPath = path.resolve(target)
+    // ADR-046 — when --project isn't passed, the registry name defaults to
+    // the basename of the scan path. The in-memory graph slot stays on
+    // DEFAULT_PROJECT (back-compat with existing `neat watch` invocations).
+    const projectExplicit = parsed.project !== null
+    const projectName = projectExplicit ? project : path.basename(scanPath)
     // Default project keeps writing to graph.json (ADR-026 back-compat);
     // named projects use <project>.json under the same neat-out directory.
-    const fallback = pathsForProject(project, path.join(scanPath, 'neat-out')).snapshotPath
+    const projectKey = projectExplicit ? project : DEFAULT_PROJECT
+    const fallback = pathsForProject(projectKey, path.join(scanPath, 'neat-out')).snapshotPath
     const outPath = path.resolve(process.env.NEAT_OUT_PATH ?? fallback)
-    await runInit({ scanPath, outPath, project })
+    const result = await runInit({
+      scanPath,
+      outPath,
+      project: projectName,
+      projectExplicit,
+      apply,
+      dryRun,
+      noInstall,
+    })
+    if (result.exitCode !== 0) process.exit(result.exitCode)
     return
   }
 
@@ -297,7 +487,13 @@ async function main(): Promise<void> {
   process.exit(1)
 }
 
-main().catch((err) => {
-  console.error(err)
-  process.exit(1)
-})
+// Only auto-run when invoked as the CLI entry point. Importing this module
+// from tests must not start the parser; otherwise vitest sees a stray
+// `process.exit` from `main()` running with no argv.
+const entry = process.argv[1] ?? ''
+if (/[\\/]cli\.(?:cjs|js)$/.test(entry) || entry.endsWith('/cli')) {
+  main().catch((err) => {
+    console.error(err)
+    process.exit(1)
+  })
+}
