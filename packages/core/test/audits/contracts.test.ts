@@ -2120,13 +2120,276 @@ describe('Policy contracts (ADRs 042-045)', () => {
 // All queued for v0.2.5 #119 implementation.
 // ──────────────────────────────────────────────────────────────────────────
 describe('neat init contract (ADR-046)', () => {
-  it.todo('init prints discovery report before any file mutation (ADR-046 #2)')
-  it.todo('init does not modify package.json/requirements.txt/Gemfile/pom.xml without --apply (ADR-046 #4)')
-  it.todo('init never modifies lockfiles (package-lock, poetry.lock, Gemfile.lock) (ADR-046 #4)')
-  it.todo('init --dry-run produces a patch but does not write any file other than neat.patch (ADR-046 #3)')
-  it.todo('init is idempotent — second run on same project produces no graph diff (ADR-046 #6)')
-  it.todo('init writes ~/.neat/projects.json entry per ADR-048')
-  it.todo('init exits with non-zero on project name collision (ADR-046 #7)')
+  // Shared scaffolding: every test below works in a fresh tmp NEAT_HOME and a
+  // fresh tmp scan path so they're independent of one another and of the
+  // user's real ~/.neat. The scan path always carries one minimal Node
+  // service so discovery returns something real.
+  async function setupSandbox(): Promise<{
+    home: string
+    project: string
+    projectReal: string
+    cleanup: () => Promise<void>
+  }> {
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const home = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-init-home-'))
+    const project = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-init-project-'))
+    const projectReal = await fs2.realpath(project)
+    await fs2.writeFile(
+      path2.join(projectReal, 'package.json'),
+      JSON.stringify({ name: 'sandbox-svc', version: '0.0.0' }, null, 2),
+    )
+    return {
+      home,
+      project,
+      projectReal,
+      cleanup: async () => {
+        await fs2.rm(home, { recursive: true, force: true })
+        await fs2.rm(project, { recursive: true, force: true })
+      },
+    }
+  }
+
+  async function withInit<T>(
+    fn: (ctx: {
+      home: string
+      projectReal: string
+      runInit: typeof import('../../src/cli.js').runInit
+      defaultOpts: import('../../src/cli.js').InitOptions
+    }) => Promise<T>,
+  ): Promise<T> {
+    const path2 = await import('node:path')
+    const sandbox = await setupSandbox()
+    const prevHome = process.env.NEAT_HOME
+    const prevLog = console.log
+    process.env.NEAT_HOME = sandbox.home
+    console.log = () => {}
+    try {
+      const { runInit } = await import('../../src/cli.js')
+      const defaultOpts: import('../../src/cli.js').InitOptions = {
+        scanPath: sandbox.projectReal,
+        outPath: path2.join(sandbox.projectReal, 'neat-out', 'graph.json'),
+        project: 'sandbox',
+        projectExplicit: true,
+        apply: false,
+        dryRun: false,
+        noInstall: false,
+      }
+      return await fn({
+        home: sandbox.home,
+        projectReal: sandbox.projectReal,
+        runInit,
+        defaultOpts,
+      })
+    } finally {
+      console.log = prevLog
+      if (prevHome === undefined) delete process.env.NEAT_HOME
+      else process.env.NEAT_HOME = prevHome
+      await sandbox.cleanup()
+    }
+  }
+
+  it('init prints discovery report before any file mutation (ADR-046 #2)', async () => {
+    // We can't intercept fs.* easily without mocks, so we anchor on the
+    // observable order in source: runInit calls printDiscoveryReport before
+    // anything that mutates disk (`saveGraphToDisk`, `addProject`,
+    // `fs.writeFile(patchPath`). The check is structural, not runtime —
+    // exactly the shape ADR-046 #2 asks for.
+    const cli = readFileSync(join(CORE_SRC, 'cli.ts'), 'utf8')
+    const initBody = cli.match(/export async function runInit[\s\S]*?\n\}\n/)?.[0] ?? ''
+    expect(initBody.length).toBeGreaterThan(0)
+
+    const idxReport = initBody.indexOf('printDiscoveryReport(')
+    const idxSave = initBody.indexOf('saveGraphToDisk(')
+    const idxRegister = initBody.indexOf('addProject(')
+    const idxPatchWrite = initBody.indexOf("fs.writeFile(patchPath")
+    expect(idxReport).toBeGreaterThan(0)
+    expect(idxSave).toBeGreaterThan(idxReport)
+    expect(idxRegister).toBeGreaterThan(idxReport)
+    expect(idxPatchWrite).toBeGreaterThan(idxReport)
+  })
+
+  it('init does not modify package.json/requirements.txt/Gemfile/pom.xml without --apply (ADR-046 #4)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    await withInit(async ({ projectReal, runInit, defaultOpts }) => {
+      const manifests = ['package.json', 'requirements.txt', 'Gemfile', 'pom.xml']
+      const stub = '{"name":"sandbox-svc","version":"0.0.0"}'
+      for (const m of manifests) {
+        if (m !== 'package.json') {
+          await fs2.writeFile(path2.join(projectReal, m), stub)
+        }
+      }
+      const before = new Map<string, string>()
+      for (const m of manifests) {
+        before.set(m, await fs2.readFile(path2.join(projectReal, m), 'utf8'))
+      }
+      const result = await runInit({ ...defaultOpts, apply: false })
+      expect(result.exitCode).toBe(0)
+      for (const m of manifests) {
+        const after = await fs2.readFile(path2.join(projectReal, m), 'utf8')
+        expect(after, `${m} was modified by init without --apply`).toBe(before.get(m))
+      }
+    })
+  })
+
+  it('init never modifies lockfiles (package-lock, poetry.lock, Gemfile.lock) (ADR-046 #4)', async () => {
+    // Two-part assertion. (a) Source-grep: nothing under installers/ or cli.ts
+    // names a lockfile as a write target. (b) End-to-end: --apply on a
+    // sandbox carrying lockfiles leaves them byte-identical.
+    const cli = readFileSync(join(CORE_SRC, 'cli.ts'), 'utf8')
+    const installerFiles = walkSrc(join(CORE_SRC, 'installers'))
+    const haystacks = [cli, ...installerFiles.map((f) => readFileSync(f, 'utf8'))]
+    const lockfiles = [
+      'package-lock.json',
+      'pnpm-lock.yaml',
+      'yarn.lock',
+      'poetry.lock',
+      'Pipfile.lock',
+      'Gemfile.lock',
+      'Cargo.lock',
+    ]
+    for (const haystack of haystacks) {
+      // The forbidden list lives in installers/index.ts as the SAFETY check
+      // — that's where we expect to see lockfile names. Anything else
+      // referencing them is the contract violation.
+      const lines = haystack.split('\n')
+      for (const lock of lockfiles) {
+        for (const line of lines) {
+          if (!line.includes(lock)) continue
+          if (line.includes('FORBIDDEN_LOCKFILES')) continue
+          if (line.trim().startsWith('//')) continue
+          if (line.trim().startsWith('*')) continue
+          // String entries inside the FORBIDDEN_LOCKFILES set itself.
+          if (/^\s*['"][^'"]+['"],?\s*$/.test(line)) continue
+          throw new Error(`unexpected lockfile reference: ${line.trim()}`)
+        }
+      }
+    }
+
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    await withInit(async ({ projectReal, runInit, defaultOpts }) => {
+      const lockfilePath = path2.join(projectReal, 'package-lock.json')
+      const lockBefore = '{"name":"sandbox-svc","lockfileVersion":3}'
+      await fs2.writeFile(lockfilePath, lockBefore)
+      const result = await runInit({ ...defaultOpts, apply: true })
+      expect(result.exitCode).toBe(0)
+      const lockAfter = await fs2.readFile(lockfilePath, 'utf8')
+      expect(lockAfter).toBe(lockBefore)
+    })
+  })
+
+  it('init --dry-run produces a patch but does not write any file other than neat.patch (ADR-046 #3)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    await withInit(async ({ home, projectReal, runInit, defaultOpts }) => {
+      const result = await runInit({ ...defaultOpts, dryRun: true })
+      expect(result.exitCode).toBe(0)
+      // neat.patch is the only file the dry-run is allowed to write.
+      const patchPath = path2.join(projectReal, 'neat.patch')
+      await expect(fs2.access(patchPath)).resolves.toBeUndefined()
+      expect(result.writtenFiles).toEqual([patchPath])
+      // No registry entry was written (the file should not exist at all).
+      await expect(
+        fs2.access(path2.join(home, 'projects.json')),
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      // No graph snapshot was written.
+      await expect(
+        fs2.access(path2.join(projectReal, 'neat-out', 'graph.json')),
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+  })
+
+  it('init is idempotent — second run on same project produces no graph diff (ADR-046 #6)', async () => {
+    const fs2 = await import('node:fs/promises')
+    await withInit(async ({ runInit, defaultOpts }) => {
+      const r1 = await runInit({ ...defaultOpts })
+      expect(r1.exitCode).toBe(0)
+      const snap1 = JSON.parse(await fs2.readFile(defaultOpts.outPath, 'utf8'))
+      const r2 = await runInit({ ...defaultOpts })
+      expect(r2.exitCode).toBe(0)
+      const snap2 = JSON.parse(await fs2.readFile(defaultOpts.outPath, 'utf8'))
+      // exportedAt is a per-write timestamp on the snapshot wrapper, not part
+      // of the graph itself. The graph payload must be byte-identical.
+      expect(snap2.graph).toEqual(snap1.graph)
+    })
+  })
+
+  it('init writes ~/.neat/projects.json entry per ADR-048', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    await withInit(async ({ home, projectReal, runInit, defaultOpts }) => {
+      const result = await runInit({ ...defaultOpts })
+      expect(result.exitCode).toBe(0)
+      const raw = await fs2.readFile(path2.join(home, 'projects.json'), 'utf8')
+      const reg = JSON.parse(raw)
+      expect(reg.version).toBe(1)
+      expect(reg.projects).toHaveLength(1)
+      expect(reg.projects[0]).toMatchObject({
+        name: 'sandbox',
+        path: projectReal,
+        status: 'active',
+      })
+      expect(reg.projects[0].languages).toContain('javascript')
+      expect(reg.projects[0].registeredAt).toMatch(/T/)
+    })
+  })
+
+  it('init exits with non-zero on project name collision (ADR-046 #7)', async () => {
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const home = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-init-collision-home-'))
+    const projectA = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-init-collision-a-'))
+    const projectB = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-init-collision-b-'))
+    const realA = await fs2.realpath(projectA)
+    const realB = await fs2.realpath(projectB)
+    for (const dir of [realA, realB]) {
+      await fs2.writeFile(
+        path2.join(dir, 'package.json'),
+        JSON.stringify({ name: path2.basename(dir), version: '0.0.0' }),
+      )
+    }
+    const prevHome = process.env.NEAT_HOME
+    const prevLog = console.log
+    const prevErr = console.error
+    process.env.NEAT_HOME = home
+    console.log = () => {}
+    console.error = () => {}
+    try {
+      const { runInit } = await import('../../src/cli.js')
+      const r1 = await runInit({
+        scanPath: realA,
+        outPath: path2.join(realA, 'neat-out', 'graph.json'),
+        project: 'collide',
+        projectExplicit: true,
+        apply: false,
+        dryRun: false,
+        noInstall: false,
+      })
+      expect(r1.exitCode).toBe(0)
+      const r2 = await runInit({
+        scanPath: realB,
+        outPath: path2.join(realB, 'neat-out', 'graph.json'),
+        project: 'collide',
+        projectExplicit: true,
+        apply: false,
+        dryRun: false,
+        noInstall: false,
+      })
+      expect(r2.exitCode).not.toBe(0)
+    } finally {
+      console.log = prevLog
+      console.error = prevErr
+      if (prevHome === undefined) delete process.env.NEAT_HOME
+      else process.env.NEAT_HOME = prevHome
+      await fs2.rm(home, { recursive: true, force: true })
+      await fs2.rm(projectA, { recursive: true, force: true })
+      await fs2.rm(projectB, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('SDK install contract (ADR-047)', () => {
