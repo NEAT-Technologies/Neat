@@ -2451,7 +2451,51 @@ describe('SDK install contract (ADR-047)', () => {
     }
   })
 
-  it.todo('Python installer plan adds opentelemetry-distro and prefixes entrypoint (ADR-047 #2)')
+  it('Python installer plan adds opentelemetry-distro and prefixes entrypoint (ADR-047 #2)', async () => {
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const dir = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-installer-py-'))
+    const real = await fs2.realpath(dir)
+    try {
+      await fs2.writeFile(path2.join(real, 'requirements.txt'), 'flask==3.0.0\n')
+      await fs2.writeFile(path2.join(real, 'Procfile'), 'web: python app.py\n')
+      const { pythonInstaller, isEmptyPlan } = await import(
+        '../../src/installers/index.js'
+      )
+      expect(await pythonInstaller.detect(real)).toBe(true)
+      const plan = await pythonInstaller.plan(real)
+      expect(plan.language).toBe('python')
+      expect(isEmptyPlan(plan)).toBe(false)
+
+      const depNames = plan.dependencyEdits.map((d) => d.name)
+      expect(depNames).toContain('opentelemetry-distro')
+      expect(depNames).toContain('opentelemetry-exporter-otlp')
+      for (const dep of plan.dependencyEdits) {
+        expect(dep.kind).toBe('add')
+        expect(dep.file).toBe(path2.join(real, 'requirements.txt'))
+      }
+
+      expect(plan.entrypointEdits.length).toBeGreaterThan(0)
+      const ep = plan.entrypointEdits[0]!
+      expect(ep.file).toBe(path2.join(real, 'Procfile'))
+      expect(ep.after).toContain('opentelemetry-instrument')
+      expect(ep.after.startsWith('web:')).toBe(true)
+      expect(plan.envEdits.some((e) => e.key === 'OTEL_EXPORTER_OTLP_ENDPOINT')).toBe(true)
+
+      // Apply lands real edits and is idempotent — second plan empty.
+      await pythonInstaller.apply(plan)
+      const reqs = await fs2.readFile(path2.join(real, 'requirements.txt'), 'utf8')
+      expect(reqs).toMatch(/opentelemetry-distro/)
+      expect(reqs).toMatch(/opentelemetry-exporter-otlp/)
+      const proc = await fs2.readFile(path2.join(real, 'Procfile'), 'utf8')
+      expect(proc).toContain('opentelemetry-instrument python app.py')
+      const second = await pythonInstaller.plan(real)
+      expect(isEmptyPlan(second)).toBe(true)
+    } finally {
+      await fs2.rm(dir, { recursive: true, force: true })
+    }
+  })
 
   it('no installer plan output references package-lock.json/poetry.lock/Gemfile.lock (ADR-047 #4)', async () => {
     const fs2 = await import('node:fs/promises')

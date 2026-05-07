@@ -5,8 +5,10 @@
 
 import type { Installer, InstallPlan } from './shared.js'
 import { javascriptInstaller } from './javascript.js'
+import { pythonInstaller } from './python.js'
 export { isEmptyPlan } from './shared.js'
 export { javascriptInstaller } from './javascript.js'
+export { pythonInstaller } from './python.js'
 export type {
   DependencyEdit,
   EntrypointEdit,
@@ -29,8 +31,8 @@ export const FORBIDDEN_LOCKFILES: ReadonlySet<string> = new Set([
 ])
 
 // Order is priority — first match wins per service. JavaScript leads because
-// it's the most common shape in the projects NEAT targets.
-export const INSTALLERS: Installer[] = [javascriptInstaller]
+// it's the most common shape in the projects NEAT targets; Python follows.
+export const INSTALLERS: Installer[] = [javascriptInstaller, pythonInstaller]
 
 /**
  * Resolve the first installer that claims a given service directory. Returns
