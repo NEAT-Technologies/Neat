@@ -1,34 +1,34 @@
 # NEAT
 
-> **⚠️ Work in progress.** This repository is an MVP under active development. Many architectural decisions were intentionally optimised for development speed.
+> **⚠️ Work in progress.** This is an MVP under active development. A handful of architectural choices were made for shipping speed, not for permanence.
 
 [![CI](https://github.com/NEAT-Technologies/Neat/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/NEAT-Technologies/Neat/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/NEAT-Technologies/Neat)](BSL)
 [![Release](https://img.shields.io/github/v/release/NEAT-Technologies/Neat)](https://github.com/NEAT-Technologies/Neat/releases)
 [![Website](https://img.shields.io/badge/website-neat.is-black)](https://neat.is)
 
-A unified runtime that maintains a live semantic graph of your codebase, infrastructure, and production. Query it. Assert policies against it. Run agents against it.
+A unified runtime that holds a live semantic graph of your code, your infrastructure, and what's happening in production. Query it. Assert policies against it. Point agents at it.
 
-Read my story here: https://neat.is/blog/architecture-is-all-you-need
+The story behind it: https://neat.is/blog/architecture-is-all-you-need
 
 ---
 
 ## What it does
 
-NEAT continuously builds a dynamic model of your system from two sources:
+NEAT keeps a working model of your system up to date from two streams at once:
 
 - **Static analysis** of source files, `package.json`, and yaml/env config.
 - **Runtime telemetry** from OpenTelemetry spans.
 
-Every edge carries a `provenance` (EXTRACTED, INFERRED, OBSERVED, STALE) so consumers know how much weight to put on each claim. See [`PROVENANCE.md`](./PROVENANCE.md) for the full model.
+Every edge is tagged with a `provenance` (EXTRACTED, INFERRED, OBSERVED, STALE, FRONTIER) so a consumer reading the graph knows exactly how much weight an individual claim deserves. The full model is documented in [`PROVENANCE.md`](./PROVENANCE.md).
 
-Six MCP tools expose the graph to AI agents: `get_root_cause`, `get_blast_radius`, `get_dependencies`, `get_observed_dependencies`, `get_incident_history`, `semantic_search`.
+The graph is exposed to AI agents through nine MCP tools: `get_root_cause`, `get_blast_radius`, `get_dependencies`, `get_observed_dependencies`, `get_incident_history`, `semantic_search`, `get_graph_diff`, `get_recent_stale_edges`, `check_policies`.
 
 ---
 
 ## Quickstart — reproduce the demo locally in under ten minutes
 
-The demo runs two Node services against a Postgres 15 database. `service-b` is pinned to `pg` 7.4.0 — too old for SCRAM auth, so every call fails. The demo proves NEAT can trace that failure back to the version mismatch two graph hops away.
+The demo wires up two Node services in front of a Postgres 15 database. `service-b` is locked to `pg` 7.4.0, which is too old to negotiate SCRAM auth — every call fails at runtime. NEAT's job is to follow that failure back through the graph and pin the cause two hops upstream.
 
 ### 1. Clone and install
 
@@ -39,7 +39,7 @@ npm install
 npm run build
 ```
 
-Requires Node 20.x. `nvm use` honours `.nvmrc`.
+Node 20.x is required. If you use nvm, `nvm use` will pick up `.nvmrc`.
 
 ### 2. Start the stack
 
@@ -47,7 +47,7 @@ Requires Node 20.x. `nvm use` honours `.nvmrc`.
 docker compose up --build
 ```
 
-Boots five containers: `payments-db` (Postgres 15), `service-a`, `service-b`, `otel-collector`, and `neat-core`. The collector streams spans into core on `:4318`. Core's REST API is on `:8080`.
+Five containers come up: `payments-db` (Postgres 15), `service-a`, `service-b`, `otel-collector`, and `neat-core`. Spans flow from the collector into core on `:4318`. Core's REST API listens on `:8080`.
 
 ### 3. Generate traffic
 
@@ -55,7 +55,7 @@ Boots five containers: `payments-db` (Postgres 15), `service-a`, `service-b`, `o
 for i in {1..10}; do curl -s localhost:3000/data; done
 ```
 
-Every request 500s — that's expected. The errors are what populate the graph.
+Every one of those requests will 500. That's the point — the failures are what feed the graph.
 
 ### 4. Confirm the graph saw it
 
@@ -64,7 +64,7 @@ curl -s localhost:8080/graph | jq '.edges[] | select(.id | contains("OBSERVED"))
 curl -s localhost:8080/incidents | jq '.[0]'
 ```
 
-You should see an `OBSERVED` `CALLS` edge from `service:service-a` to `service:service-b`, an `INFERRED` `CONNECTS_TO` edge from `service:service-b` to `database:payments-db` (the trace stitcher fills the auto-instrumentation gap — see `docs/decisions.md` ADR-014), and an incident attributed to `database:payments-db`.
+You should find an `OBSERVED` `CALLS` edge from `service:service-a` to `service:service-b`, an `INFERRED` `CONNECTS_TO` edge from `service:service-b` to `database:payments-db` (the trace stitcher backfills the gap left by the missing pg auto-instrumentation — `docs/decisions.md` ADR-014 has the reasoning), and an incident attributed to `database:payments-db`.
 
 ### 5. Wire NEAT into Claude Code
 
@@ -72,7 +72,7 @@ You should see an `OBSERVED` `CALLS` edge from `service:service-a` to `service:s
 claude mcp add neat -- node "$(pwd)/packages/mcp/dist/index.cjs"
 ```
 
-Or add it manually to `~/.claude/settings.json`:
+Or, if you'd rather edit `~/.claude/settings.json` by hand:
 
 ```json
 {
@@ -92,7 +92,7 @@ In any Claude Code session:
 
 > **Why is payments-db failing?**
 
-Expected:
+What you'll see back:
 
 ```
 Root cause identified: service:service-b.
@@ -105,19 +105,19 @@ Confidence: 0.70
 Recommended fix: Upgrade service-b pg driver to >= 8.0.0
 ```
 
-The confidence is 0.7 because the `CONNECTS_TO` hop is INFERRED (pg 7.4.0 is too old for OTel's pg auto-instrumenter, so the trace stitcher fills it in from the static graph). With a modern driver every edge would be OBSERVED and confidence would be 1.0.
+Confidence lands at 0.7 because one hop on the path (`CONNECTS_TO`) is INFERRED — pg 7.4.0 is too old for OTel's pg instrumenter, so the stitcher reaches into the static graph to fill the gap. Run the same demo with a modern driver and every edge is OBSERVED, confidence 1.0.
 
 ---
 
 ## CLI
 
-`neat init <path>` builds the static graph from a directory and writes a snapshot:
+`neat init <path>` walks a directory, builds the static graph, and writes a snapshot:
 
 ```bash
 node packages/core/dist/cli.cjs init ./demo
 ```
 
-Prints node and edge counts by type plus any incompatibilities the compat matrix found. Snapshot goes to `<path>/neat-out/graph.json` unless `NEAT_OUT_PATH` overrides.
+Output is a per-type breakdown of nodes and edges plus anything the compat matrix flagged as incompatible. The snapshot lands at `<path>/neat-out/graph.json` unless `NEAT_OUT_PATH` says otherwise.
 
 ---
 
@@ -127,7 +127,7 @@ Prints node and edge counts by type plus any incompatibilities the compat matrix
 packages/
   types/   shared Zod schemas — node, edge, event, result types
   core/    graph engine, tree-sitter extraction, OTel ingest, REST API, neat CLI
-  mcp/     stdio MCP server exposing six tools to AI agents
+  mcp/     stdio MCP server exposing nine tools to AI agents
   web/     Next.js shell — wordmark + /api/health (dashboard is post-MVP)
 
 demo/
@@ -140,13 +140,13 @@ demo/
 
 ## Documentation
 
-- [`PROVENANCE.md`](./PROVENANCE.md) — the four edge states and how confidence cascades.
-- [`CLAUDE.md`](./CLAUDE.md) — agent + contributor guide for this repo.
-- [`docs/architecture.md`](./docs/architecture.md) — pocket reference to package boundaries and data flow.
+- [`PROVENANCE.md`](./PROVENANCE.md) — the five edge states and how confidence travels along a path.
+- [`CLAUDE.md`](./CLAUDE.md) — guide for agents and contributors working in this repo.
+- [`docs/architecture.md`](./docs/architecture.md) — short reference to package boundaries and data flow.
 - [`docs/decisions.md`](./docs/decisions.md) — ADR log.
-- [`docs/milestones.md`](./docs/milestones.md) — sprint status, source of truth for what's done.
-- [`docs/runbook.md`](./docs/runbook.md) — common commands and recovery recipes.
-- [`docs/railway.md`](./docs/railway.md) — deploy the demo to Railway.
+- [`docs/milestones.md`](./docs/milestones.md) — sprint status; the canonical record of what's done.
+- [`docs/runbook.md`](./docs/runbook.md) — day-to-day commands and recovery recipes.
+- [`docs/railway.md`](./docs/railway.md) — deploying the demo to Railway.
 - [`packages/mcp/skill.md`](./packages/mcp/skill.md) — Claude Code skill metadata for the MCP tools.
 
 ---
