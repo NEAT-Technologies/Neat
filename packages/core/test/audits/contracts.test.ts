@@ -2140,11 +2140,126 @@ describe('SDK install contract (ADR-047)', () => {
 })
 
 describe('Machine-level project registry contract (ADR-048)', () => {
-  it.todo('registry.ts is the only module reading/writing ~/.neat/projects.json (ADR-048 #8)')
-  it.todo('writes go through writeAtomically (tmp + rename) (ADR-048 #3)')
-  it.todo('writes acquire flock on ~/.neat/projects.json.lock (ADR-048 #4)')
-  it.todo('paths are stored as resolved absolute (no duplicate entries from relative paths) (ADR-048 #7)')
-  it.todo('removal does not delete neat-out/ or policy.json or user files (ADR-048 #6)')
+  it('registry.ts is the only module reading/writing ~/.neat/projects.json (ADR-048 #8)', () => {
+    // Authority is locked to packages/core/src/registry.ts. Nothing else in
+    // core, mcp, or types may name `projects.json` directly. Allowed mentions:
+    // the registry module itself, the contract markdown (referenced via
+    // string literals in tests), and this assertion.
+    const offenders: string[] = []
+    for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC)]) {
+      if (file.endsWith('registry.ts')) continue
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        if (line.includes('projects.json')) {
+          offenders.push(`${file}:${i + 1}: ${line.trim()}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('writes go through writeAtomically (tmp + rename) (ADR-048 #3)', () => {
+    const registry = readFileSync(join(CORE_SRC, 'registry.ts'), 'utf8')
+    // The helper must exist, must do tmp + fsync + rename.
+    expect(registry).toMatch(/export\s+async\s+function\s+writeAtomically\s*\(/)
+    expect(registry).toMatch(/\.tmp/)
+    expect(registry).toMatch(/fd\.sync\(\)/)
+    expect(registry).toMatch(/fs\.rename\(/)
+    // Every write helper that mutates the registry routes through it; no raw
+    // `fs.writeFile(registryPath()` slipping past the atomic write.
+    expect(registry).not.toMatch(/fs\.writeFile\([^)]*registryPath/)
+  })
+
+  it('writes acquire flock on ~/.neat/projects.json.lock (ADR-048 #4)', () => {
+    const registry = readFileSync(join(CORE_SRC, 'registry.ts'), 'utf8')
+    expect(registry).toMatch(/registryLockPath/)
+    expect(registry).toMatch(/projects\.json\.lock/)
+    // Exclusive create is the cross-platform equivalent of flock(LOCK_EX).
+    expect(registry).toMatch(/fs\.open\([^,]+,\s*['"]wx['"]\)/)
+    // 5s timeout per the contract.
+    expect(registry).toMatch(/LOCK_TIMEOUT_MS\s*=\s*5_?000/)
+    // Mutating helpers wrap their work in withLock.
+    expect(registry).toMatch(/addProject[\s\S]*?withLock\(/)
+    expect(registry).toMatch(/removeProject[\s\S]*?withLock\(/)
+    expect(registry).toMatch(/setStatus[\s\S]*?withLock\(/)
+  })
+
+  it('paths are stored as resolved absolute (no duplicate entries from relative paths) (ADR-048 #7)', async () => {
+    const tmp = await import('node:os').then((m) => m.tmpdir())
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const home = await fs2.mkdtemp(path2.join(tmp, 'neat-registry-resolve-'))
+    const project = await fs2.mkdtemp(path2.join(tmp, 'neat-registry-project-'))
+    const projectReal = await fs2.realpath(project)
+    const cwd = process.cwd()
+    const prevHome = process.env.NEAT_HOME
+    process.env.NEAT_HOME = home
+    try {
+      process.chdir(path2.dirname(projectReal))
+      const { addProject, listProjects } = await import('../../src/registry.js')
+      const relative = path2.basename(projectReal)
+      // Register once with an absolute path, once with a relative path; the
+      // contract says they must collapse to a single entry keyed on the
+      // resolved absolute path.
+      await addProject({ name: 'p', path: projectReal })
+      await addProject({ name: 'p', path: relative })
+      const projects = await listProjects()
+      expect(projects).toHaveLength(1)
+      expect(projects[0]?.path).toBe(projectReal)
+      expect(path2.isAbsolute(projects[0]?.path ?? '')).toBe(true)
+    } finally {
+      process.chdir(cwd)
+      if (prevHome === undefined) delete process.env.NEAT_HOME
+      else process.env.NEAT_HOME = prevHome
+      await fs2.rm(home, { recursive: true, force: true })
+      await fs2.rm(project, { recursive: true, force: true })
+    }
+  })
+
+  it('removal does not delete neat-out/ or policy.json or user files (ADR-048 #6)', async () => {
+    const tmp = await import('node:os').then((m) => m.tmpdir())
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const home = await fs2.mkdtemp(path2.join(tmp, 'neat-registry-rm-home-'))
+    const project = await fs2.mkdtemp(path2.join(tmp, 'neat-registry-rm-project-'))
+    const projectReal = await fs2.realpath(project)
+    const neatOut = path2.join(projectReal, 'neat-out')
+    const policy = path2.join(projectReal, 'policy.json')
+    const userFile = path2.join(projectReal, 'src', 'index.ts')
+    await fs2.mkdir(neatOut, { recursive: true })
+    await fs2.writeFile(path2.join(neatOut, 'graph.json'), '{}')
+    await fs2.writeFile(policy, '{"version":1,"rules":[]}')
+    await fs2.mkdir(path2.dirname(userFile), { recursive: true })
+    await fs2.writeFile(userFile, 'export const x = 1\n')
+    const prevHome = process.env.NEAT_HOME
+    process.env.NEAT_HOME = home
+    try {
+      const { addProject, removeProject } = await import('../../src/registry.js')
+      await addProject({ name: 'rm-test', path: projectReal })
+      const removed = await removeProject('rm-test')
+      expect(removed?.name).toBe('rm-test')
+
+      // Source assertion: the removal helper has no `fs.rm`, `fs.unlink`,
+      // `rmdir`, or `rmSync` call against any project artifact. The scan is
+      // narrow on purpose — the only `fs.unlink` allowed is the lockfile
+      // release in `releaseLock`.
+      const registrySrc = readFileSync(join(CORE_SRC, 'registry.ts'), 'utf8')
+      const removeBlock = registrySrc.match(/removeProject[\s\S]*?\n\}\n/)?.[0] ?? ''
+      expect(removeBlock).not.toMatch(/fs\.rm\(/)
+      expect(removeBlock).not.toMatch(/fs\.unlink\(/)
+      expect(removeBlock).not.toMatch(/rmdir/)
+
+      // End-to-end: every artifact created above survives the removal.
+      await expect(fs2.access(path2.join(neatOut, 'graph.json'))).resolves.toBeUndefined()
+      await expect(fs2.access(policy)).resolves.toBeUndefined()
+      await expect(fs2.access(userFile)).resolves.toBeUndefined()
+    } finally {
+      if (prevHome === undefined) delete process.env.NEAT_HOME
+      else process.env.NEAT_HOME = prevHome
+      await fs2.rm(home, { recursive: true, force: true })
+      await fs2.rm(project, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('Daemon contract (ADR-049)', () => {

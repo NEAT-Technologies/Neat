@@ -8,6 +8,7 @@ import { extractFromDirectory } from './extract.js'
 import { saveGraphToDisk } from './persist.js'
 import { startWatch, type WatchHandle } from './watch.js'
 import { pathsForProject } from './projects.js'
+import { listProjects, removeProject, setStatus } from './registry.js'
 
 interface InitOptions {
   scanPath: string
@@ -25,6 +26,12 @@ function usage(): void {
   console.log('  watch <path>   Start neat-core, watch <path>, re-extract on changes.')
   console.log('                 PORT (default 8080), OTEL_PORT (4318), HOST (0.0.0.0)')
   console.log('                 control listeners. NEAT_OTLP_GRPC=true also opens 4317.')
+  console.log('  list           List every project registered in the machine-level registry.')
+  console.log('  pause <name>   Mark a project paused — daemon stops watching until resumed.')
+  console.log('  resume <name>  Mark a project active again.')
+  console.log('  uninstall <name>')
+  console.log('                 Remove a project from the registry. Does not touch')
+  console.log('                 neat-out/, policy.json, or any user file.')
   console.log('')
   console.log('flags:')
   console.log('  --project <name>   Name the project this command targets. Default: "default".')
@@ -217,6 +224,71 @@ async function main(): Promise<void> {
     }
     process.on('SIGTERM', shutdown)
     process.on('SIGINT', shutdown)
+    return
+  }
+
+  if (cmd === 'list') {
+    const projects = await listProjects()
+    if (projects.length === 0) {
+      console.log('no projects registered. run `neat init <path>` to register one.')
+      return
+    }
+    for (const p of projects) {
+      const seen = p.lastSeenAt ? p.lastSeenAt : 'never'
+      const langs = p.languages.length > 0 ? p.languages.join(',') : '-'
+      console.log(`${p.name}\t${p.status}\t${langs}\t${p.path}\tlast-seen=${seen}`)
+    }
+    return
+  }
+
+  if (cmd === 'pause') {
+    const name = positional[0]
+    if (!name) {
+      console.error('neat pause: missing <name>')
+      usage()
+      process.exit(2)
+    }
+    try {
+      const entry = await setStatus(name, 'paused')
+      console.log(`paused: ${entry.name} (${entry.path})`)
+    } catch (err) {
+      console.error((err as Error).message)
+      process.exit(1)
+    }
+    return
+  }
+
+  if (cmd === 'resume') {
+    const name = positional[0]
+    if (!name) {
+      console.error('neat resume: missing <name>')
+      usage()
+      process.exit(2)
+    }
+    try {
+      const entry = await setStatus(name, 'active')
+      console.log(`resumed: ${entry.name} (${entry.path})`)
+    } catch (err) {
+      console.error((err as Error).message)
+      process.exit(1)
+    }
+    return
+  }
+
+  if (cmd === 'uninstall') {
+    const name = positional[0]
+    if (!name) {
+      console.error('neat uninstall: missing <name>')
+      usage()
+      process.exit(2)
+    }
+    const removed = await removeProject(name)
+    if (!removed) {
+      console.error(`neat uninstall: no project named "${name}"`)
+      process.exit(1)
+    }
+    console.log(`unregistered: ${removed.name} (${removed.path})`)
+    console.log('note: neat-out/, policy.json, and other files at the project path were left in place.')
     return
   }
 
