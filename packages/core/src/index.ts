@@ -44,6 +44,13 @@ export {
   type PersistedSnapshot,
 } from './diff.js'
 export {
+  routeSpanToProject,
+  startDaemon,
+  type DaemonHandle,
+  type DaemonOptions,
+  type ProjectSlot,
+} from './daemon.js'
+export {
   addProject,
   getProject,
   listProjects,
