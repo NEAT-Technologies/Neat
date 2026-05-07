@@ -1,5 +1,5 @@
 import { promises as fs } from 'node:fs'
-import type { GraphEdge, GraphNode } from '@neat/types'
+import type { GraphEdge, GraphNode } from '@neat.is/types'
 import type { NeatGraph } from './graph.js'
 
 // Diff a snapshot on disk (or fetched over HTTP) against the live in-memory

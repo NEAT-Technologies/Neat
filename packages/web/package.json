@@ -1,5 +1,5 @@
 {
-  "name": "@neat/web",
+  "name": "@neat.is/web",
   "version": "0.2.0",
   "private": true,
   "description": "NEAT web shell — minimal Next.js app fronting the core API",
@@ -12,7 +12,7 @@
     "clean": "rm -rf .next .turbo"
   },
   "dependencies": {
-    "@neat/types": "*",
+    "@neat.is/types": "*",
     "cytoscape": "^3.33.3",
     "next": "14.2.35",
     "react": "^18",

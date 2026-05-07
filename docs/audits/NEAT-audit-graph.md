@@ -49,7 +49,7 @@ The MVP graph must support these node types:
 `[v1.0]` UserNode, PolicyNode, AgentNode are not MVP scope.
 
 **Verify:**
-- Are all node types validated against a shared enum or Zod schema from `@neat/types` on insertion?
+- Are all node types validated against a shared enum or Zod schema from `@neat.is/types` on insertion?
 - Is `pgDriverVersion` still present on ServiceNode and still being read by traversal code? It was marked deprecated. If traversal or root cause logic still special-cases it, that is debt.
 - Are there any node types in the codebase not in this list?
 
@@ -86,7 +86,7 @@ EXTRACTED | INFERRED | OBSERVED | STALE | FRONTIER
 **FRONTIER** — MVP: acceptable as a provenance value on edges. `[v1.0]` Full FrontierNode type is Rust v1.0.
 
 **Verify:**
-- Is `Provenance` a shared const or enum in `@neat/types` or are raw strings used?
+- Is `Provenance` a shared const or enum in `@neat.is/types` or are raw strings used?
 - Is there any code path that creates an edge without a `provenance` field?
 - Does every INFERRED edge have a `confidence` field?
 - Does every OBSERVED edge have `lastObserved` and `callCount`?
@@ -145,7 +145,7 @@ Edge id pattern: EXTRACTED edges use `${type}:${source}->${target}`; OBSERVED ed
 
 - `new DirectedGraph()` called anywhere except singleton init in `graph.ts`
 - `readFileSync('graph.json')` anywhere except startup load
-- Raw strings like `'OBSERVED'` instead of `Provenance.OBSERVED` from `@neat/types`
+- Raw strings like `'OBSERVED'` instead of `Provenance.OBSERVED` from `@neat.is/types`
 - Edge creation without a `provenance` field
 - INFERRED edges without `confidence`
 - OBSERVED edges without `lastObserved` or `callCount`

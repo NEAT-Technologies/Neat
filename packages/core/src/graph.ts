@@ -1,6 +1,6 @@
 import GraphDefault from 'graphology'
 import type { MultiDirectedGraph as MDGType } from 'graphology'
-import type { GraphEdge, GraphNode } from '@neat/types'
+import type { GraphEdge, GraphNode } from '@neat.is/types'
 
 // graphology ships as a CJS bundle that does `module.exports = Graph` with
 // the other constructors attached as properties (`Graph.MultiDirectedGraph =

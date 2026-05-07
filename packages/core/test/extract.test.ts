@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resetGraph, getGraph } from '../src/graph.js'
 import { extractFromDirectory } from '../src/extract.js'
-import type { ConfigNode, DatabaseNode, ServiceNode } from '@neat/types'
+import type { ConfigNode, DatabaseNode, ServiceNode } from '@neat.is/types'
 
 // repoRoot/demo
 const __dirname = path.dirname(fileURLToPath(import.meta.url))

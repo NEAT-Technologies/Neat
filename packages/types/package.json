@@ -1,8 +1,17 @@
 {
-  "name": "@neat/types",
-  "version": "0.2.0",
-  "private": true,
+  "name": "@neat.is/types",
+  "version": "0.2.5",
   "description": "Shared Zod schemas, types, and runtime constants for NEAT",
+  "license": "BUSL-1.1",
+  "homepage": "https://neat.is",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NEAT-Technologies/Neat.git",
+    "directory": "packages/types"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -17,6 +26,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsup",
+    "prepublishOnly": "npm run build",
     "test": "vitest run",
     "lint": "eslint src",
     "clean": "rm -rf dist .turbo"

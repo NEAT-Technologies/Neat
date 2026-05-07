@@ -1,5 +1,5 @@
-import type { GraphEdge } from '@neat/types'
-import { Provenance } from '@neat/types'
+import type { GraphEdge } from '@neat.is/types'
+import { Provenance } from '@neat.is/types'
 import type { NeatGraph } from '../graph.js'
 
 // Drop every EXTRACTED edge whose evidence.file matches the given path.

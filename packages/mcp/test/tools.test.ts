@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EdgeType, NodeType, Provenance } from '@neat/types'
+import { EdgeType, NodeType, Provenance } from '@neat.is/types'
 import { HttpError, type HttpClient } from '../src/client.js'
 import {
   getBlastRadius,

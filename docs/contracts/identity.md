@@ -1,6 +1,6 @@
 ---
 name: identity
-description: Node ids are constructed via @neat/types/identity helpers, never literals.
+description: Node ids are constructed via @neat.is/types/identity helpers, never literals.
 governs:
   - "packages/core/src/extract/**"
   - "packages/core/src/ingest.ts"
@@ -16,7 +16,7 @@ Every node id in NEAT is constructed via the helpers in `packages/types/src/iden
 ## Helpers
 
 ```ts
-import { serviceId, databaseId, configId, infraId, frontierId } from '@neat/types'
+import { serviceId, databaseId, configId, infraId, frontierId } from '@neat.is/types'
 
 serviceId('checkout')                  // 'service:checkout'
 databaseId('db.example.com')           // 'database:db.example.com'

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ConfigNode, GraphEdge } from '@neat/types'
-import { EdgeType, NodeType, Provenance, configId } from '@neat/types'
+import type { ConfigNode, GraphEdge } from '@neat.is/types'
+import { EdgeType, NodeType, Provenance, configId } from '@neat.is/types'
 import type { NeatGraph } from '../graph.js'
 import { IGNORED_DIRS, isConfigFile, makeEdgeId, type DiscoveredService } from './shared.js'
 

@@ -26,7 +26,7 @@ Reason: extraction runs in Node only, so the WASM loader and async init `web-tre
 
 ---
 
-## ADR-003 — Dual ESM/CJS via tsup for every `@neat/*` package
+## ADR-003 — Dual ESM/CJS via tsup for every `@neat.is/*` package
 
 **Date:** 2026-04-30  
 **Status:** Active.
@@ -239,7 +239,7 @@ ADR-015 made `pgDriverVersion` non-load-bearing — `getRootCause` now reads `de
 
 **What changes.**
 
-- `pgDriverVersion` is gone from `ServiceNodeSchema` in `@neat/types`.
+- `pgDriverVersion` is gone from `ServiceNodeSchema` in `@neat.is/types`.
 - Phase 1 of `extractFromDirectory` no longer sets it — `dependencies` carries the raw `package.json` map and that's the only declaration we ship.
 - Snapshot `schemaVersion` bumps from `1` to `2`. `loadGraphFromDisk` migrates v1 snapshots in place by stripping `pgDriverVersion` from every node's attributes; the rest of the v1 payload flows through unchanged.
 - Tests that previously asserted `serviceB.pgDriverVersion === '7.4.0'` now read `serviceB.dependencies?.pg`.
@@ -318,7 +318,7 @@ v0.1.2-γ #75 added a fifth member to `GraphNodeSchema`: `FrontierNode`. A front
 
 **Why a top-level type rather than a flag on `ServiceNode`.** A frontier doesn't have a language, dependencies, or a repo path — none of `ServiceNode`'s required fields apply. We considered making `ServiceNodeSchema` looser, but the schema's job is to fail loudly when something pretending to be a service isn't one. Promotion *converts* a frontier into the matching real service by re-linking edges and dropping the placeholder; the two never coexist as the same node.
 
-**Why provenance `FRONTIER` already existed but the node type didn't.** The provenance enum has carried `FRONTIER` since M0 (it shipped in `@neat/types`'s constants). The original intent was always "we observed something but can't fully attribute it." γ #75 finally wired up the producer (ingest) and the consumer (extract's promotion phase). The provenance is set on the edge between the source service and the placeholder; once promoted, those edges flip to `OBSERVED` because the call certainty is real — only the target identity was the unknown.
+**Why provenance `FRONTIER` already existed but the node type didn't.** The provenance enum has carried `FRONTIER` since M0 (it shipped in `@neat.is/types`'s constants). The original intent was always "we observed something but can't fully attribute it." γ #75 finally wired up the producer (ingest) and the consumer (extract's promotion phase). The provenance is set on the edge between the source service and the placeholder; once promoted, those edges flip to `OBSERVED` because the call certainty is real — only the target identity was the unknown.
 
 **Aliases live on `ServiceNode`, not as a new edge type.** The alternative was an explicit `ALIASED_AS` edge from a service to each hostname. That would have grown the edge count linearly with cluster-DNS variants (`<name>`, `<name>.<ns>`, `<name>.<ns>.svc`, `<name>.<ns>.svc.cluster.local`) for every service every k8s manifest mentions. Storing them as a `string[]` on the service keeps the resolve path one map lookup and keeps the graph topology focused on real relationships.
 
@@ -458,15 +458,15 @@ Today identity is scattered across 12 hand-rolled sites in 9 files (services.ts,
 
 6. **Database id is host-only, not host:port.** Two databases on the same host with different ports collide. Defer the fix; document the limitation.
 
-**Why the identity helpers are in `@neat/types`, not `@neat/core`.**
+**Why the identity helpers are in `@neat.is/types`, not `@neat.is/core`.**
 
-Both producers and consumers need them. Producers (extract/, ingest.ts) construct ids; consumers (traverse.ts, MCP tools, REST handlers) sometimes parse them (api.ts:202 strips a `service:` prefix today). Putting helpers in `@neat/types` keeps the module that owns the schemas as the single source of truth for the wire format, and avoids a circular dependency between core and any producer-only id module.
+Both producers and consumers need them. Producers (extract/, ingest.ts) construct ids; consumers (traverse.ts, MCP tools, REST handlers) sometimes parse them (api.ts:202 strips a `service:` prefix today). Putting helpers in `@neat.is/types` keeps the module that owns the schemas as the single source of truth for the wire format, and avoids a circular dependency between core and any producer-only id module.
 
 **Enforcement.**
 
-`packages/core/test/audits/contracts.test.ts` gains a regression test: scan `packages/core/src/` and `packages/mcp/src/` for hand-rolled id patterns (`service:`, `database:`, `config:`, `infra:`, `frontier:` inside template literals). The only allowed sites are inside `@neat/types/identity.ts` itself, and inside test fixtures. CI fails any future session that drifts.
+`packages/core/test/audits/contracts.test.ts` gains a regression test: scan `packages/core/src/` and `packages/mcp/src/` for hand-rolled id patterns (`service:`, `database:`, `config:`, `infra:`, `frontier:` inside template literals). The only allowed sites are inside `@neat.is/types/identity.ts` itself, and inside test fixtures. CI fails any future session that drifts.
 
-`docs/contracts.md` Rule 16 records the binding form: "Node ids are constructed via the helpers in `@neat/types/identity.ts`. Hand-rolled template literals constructing node ids are a contract violation."
+`docs/contracts.md` Rule 16 records the binding form: "Node ids are constructed via the helpers in `@neat.is/types/identity.ts`. Hand-rolled template literals constructing node ids are a contract violation."
 
 **What this ADR is not deciding.**
 
@@ -494,11 +494,11 @@ Three patterns have helpers, one is inline. The helpers themselves are scattered
 
 **Decision.**
 
-1. **Edge id helpers move into `@neat/types/identity.ts`.** Five exports: `extractedEdgeId`, `observedEdgeId`, `inferredEdgeId`, `frontierEdgeId`, plus `parseEdgeId(id)` returning `{ type, provenance, source, target }` or `null`. Producers call the helpers; nobody constructs an edge id by template literal.
+1. **Edge id helpers move into `@neat.is/types/identity.ts`.** Five exports: `extractedEdgeId`, `observedEdgeId`, `inferredEdgeId`, `frontierEdgeId`, plus `parseEdgeId(id)` returning `{ type, provenance, source, target }` or `null`. Producers call the helpers; nobody constructs an edge id by template literal.
 
 2. **The wire format stays what it is today.** ADR-029 doesn't change the edge id strings — it gives them a single source of truth. EXTRACTED has no provenance segment; OBSERVED, INFERRED, and FRONTIER carry the provenance segment between type and source. STALE never appears in an edge id because STALE is a transition of an existing OBSERVED edge, not a creation pattern (ADR-024).
 
-3. **`PROV_RANK` moves into `@neat/types`.** The ordering `OBSERVED > INFERRED > EXTRACTED > STALE | FRONTIER` is part of the provenance contract, not traversal-private. Traversal imports it. Future consumers (policies, MCP tools, the daemon's reconciliation layer) import the same constant.
+3. **`PROV_RANK` moves into `@neat.is/types`.** The ordering `OBSERVED > INFERRED > EXTRACTED > STALE | FRONTIER` is part of the provenance contract, not traversal-private. Traversal imports it. Future consumers (policies, MCP tools, the daemon's reconciliation layer) import the same constant.
 
 4. **Coexistence rule reaffirmed.** Multiple edges between the same node pair under distinct provenance ids coexist — they do not collapse. The id pattern is what makes coexistence mechanically possible: the EXTRACTED id and OBSERVED id are different strings, so `graph.hasEdge(...)` doesn't conflate them. This was already true in the code (ingest.ts:15-17 documents intent); ADR-029 ratifies it as the contract.
 
@@ -511,13 +511,13 @@ Three patterns have helpers, one is inline. The helpers themselves are scattered
 
 6. **Round-trip guarantee.** `parseEdgeId(extractedEdgeId('A', 'B', 'CALLS'))` returns `{ type: 'CALLS', provenance: 'EXTRACTED', source: 'A', target: 'B' }`. Same for the other three variants. This lets consumers (traversal, MCP tools, debugging code) walk back from an id to its parts without re-deriving the format inline.
 
-**Why these helpers are in `@neat/types`, not `@neat/core`.**
+**Why these helpers are in `@neat.is/types`, not `@neat.is/core`.**
 
-Same reason as ADR-028: producers and consumers both need them. The traversal layer reads edge ids when walking; the persist layer reads them on snapshot load; the MCP layer reads them when surfacing edges. `@neat/types` already owns the schema for the edge structure; it should own the wire format too.
+Same reason as ADR-028: producers and consumers both need them. The traversal layer reads edge ids when walking; the persist layer reads them on snapshot load; the MCP layer reads them when surfacing edges. `@neat.is/types` already owns the schema for the edge structure; it should own the wire format too.
 
 **Enforcement.**
 
-`packages/core/test/audits/contracts.test.ts` adds a regression test that scans `packages/core/src/` and `packages/mcp/src/` for hand-rolled edge id template literals — patterns like `` `${type}:${source}->...` ``, `` `:OBSERVED:` ``, `` `:INFERRED:` ``, `` `:FRONTIER:` `` outside `@neat/types/identity.ts`. CI fails any future session that drifts.
+`packages/core/test/audits/contracts.test.ts` adds a regression test that scans `packages/core/src/` and `packages/mcp/src/` for hand-rolled edge id template literals — patterns like `` `${type}:${source}->...` ``, `` `:OBSERVED:` ``, `` `:INFERRED:` ``, `` `:FRONTIER:` `` outside `@neat.is/types/identity.ts`. CI fails any future session that drifts.
 
 `docs/contracts/provenance.md` records the binding rules in short form, governs `packages/core/src/{ingest,traverse,persist}.ts` and `packages/core/src/extract/**` (anywhere edges are constructed or compared).
 
@@ -544,7 +544,7 @@ Today the lifecycle is implemented across `packages/core/src/ingest.ts`, `packag
 
 ### 1. Node creation
 
-- **Static creation** lives in `packages/core/src/extract/`. `services.ts`, `databases/index.ts`, `configs.ts`, and `infra/*` are the only sites that produce typed nodes (Service, Database, Config, Infra). Each producer constructs the id via `@neat/types/identity` helpers (ADR-028). Each producer is idempotent — `graph.hasNode(id)` guards every `addNode` call, so a re-extract does not duplicate.
+- **Static creation** lives in `packages/core/src/extract/`. `services.ts`, `databases/index.ts`, `configs.ts`, and `infra/*` are the only sites that produce typed nodes (Service, Database, Config, Infra). Each producer constructs the id via `@neat.is/types/identity` helpers (ADR-028). Each producer is idempotent — `graph.hasNode(id)` guards every `addNode` call, so a re-extract does not duplicate.
 
 - **Auto-creation from OTel** is queued under issue #134. When an OTel span arrives for a `service.name` not present in the graph, `ingest.ts` will create a minimal `ServiceNode` at `serviceId(span.service)`. Static extraction that later finds the same service merges into the auto-created node by id; static fields (language, version, dependencies) override; OTel-derived fields (`lastObserved` on associated edges) survive untouched. **The id is the merge key.** This is the reconciliation rule from ADR-028 §3 applied at the lifecycle layer.
 
@@ -636,7 +636,7 @@ When ghost cleanup ships (#140) or auto-creation ships (#134) — both will refi
 **Date:** 2026-05-05
 **Status:** Active.
 
-The fourth and final data-layer contract. ADR-028, ADR-029, and ADR-030 locked node identity, edge identity + provenance, and lifecycle. Each one expects the underlying schemas in `@neat/types` to remain stable in shape while still being allowed to grow. This ADR pins down the difference.
+The fourth and final data-layer contract. ADR-028, ADR-029, and ADR-030 locked node identity, edge identity + provenance, and lifecycle. Each one expects the underlying schemas in `@neat.is/types` to remain stable in shape while still being allowed to grow. This ADR pins down the difference.
 
 **The distinction.**
 
@@ -668,7 +668,7 @@ The two have different costs and different processes. Growth is cheap and freque
 
 4. **Enforcement is mechanical via a schema snapshot.**
 
-   `packages/core/test/audits/schema-snapshot.test.ts` introspects every binding schema in `@neat/types` (`GraphNodeSchema`, `GraphEdgeSchema`, `ProvenanceSchema`, `EdgeTypeSchema`, `ErrorEventSchema`, `RootCauseResultSchema`, `BlastRadiusResultSchema`, plus the FrontierNode / individual node schemas) and produces a normalized JSON tree describing fields, types, enum values, discriminator keys.
+   `packages/core/test/audits/schema-snapshot.test.ts` introspects every binding schema in `@neat.is/types` (`GraphNodeSchema`, `GraphEdgeSchema`, `ProvenanceSchema`, `EdgeTypeSchema`, `ErrorEventSchema`, `RootCauseResultSchema`, `BlastRadiusResultSchema`, plus the FrontierNode / individual node schemas) and produces a normalized JSON tree describing fields, types, enum values, discriminator keys.
 
    The tree is compared against `packages/core/test/audits/schemas.snapshot.json`. If they differ, the test fails with a message instructing the developer to either:
    - Run the snapshot updater (a small script), commit the diff in the same PR if the change is growth.
@@ -678,7 +678,7 @@ The two have different costs and different processes. Growth is cheap and freque
 
 5. **What counts as "binding" for the snapshot.**
 
-   Anything in `@neat/types` that consumers depend on:
+   Anything in `@neat.is/types` that consumers depend on:
    - `GraphNodeSchema` and the five node variants.
    - `GraphEdgeSchema`.
    - `ProvenanceSchema` (enum values).
@@ -782,7 +782,7 @@ The first of three v0.2.2 producer-layer contracts. Governs the OTel ingest path
 
 7. **`db.system` is data, not a switch.** Engine identification is read from the span attribute as a string and never compared against a hardcoded list (no `if (db.system === 'postgresql')` branches). Engine-specific behavior lives in `compat.json` and is consulted via `compat.ts` per the demo-name-freedom contract (Rule 8 in `docs/contracts.md`).
 
-8. **Error events are ndjson-appended, never lost on receiver shutdown.** `appendErrorEvent` writes to `errors.ndjson` synchronously after the graph mutation but before the receiver replies — this is the one explicit ordering point. If the file write fails, the receiver returns 500 so the OTel SDK retries. ErrorEvent shape stays as defined in `@neat/types` per the schema-growth contract; new fields land via the snapshot guard.
+8. **Error events are ndjson-appended, never lost on receiver shutdown.** `appendErrorEvent` writes to `errors.ndjson` synchronously after the graph mutation but before the receiver replies — this is the one explicit ordering point. If the file write fails, the receiver returns 500 so the OTel SDK retries. ErrorEvent shape stays as defined in `@neat.is/types` per the schema-growth contract; new fields land via the snapshot guard.
 
 **Authority.**
 
@@ -877,7 +877,7 @@ Sibling contracts: ADR-033 (OTel ingest), ADR-034 (trace stitcher).
 
 5. **Provenance upgrade rule: FRONTIER → OBSERVED.** When `rebuildEdge` is rewriting an edge whose provenance was `FRONTIER`, the new edge's provenance is `OBSERVED`. The reasoning: the call certainty was always there (the OTel span was observed), only the target identity was unknown. Now it's known, so the edge graduates from placeholder to direct measurement. Other provenance values (EXTRACTED, INFERRED) pass through unchanged.
 
-6. **Edge id construction MUST use the canonical helpers.** `rebuildEdge` constructs the new edge id via `observedEdgeId`, `inferredEdgeId`, etc. from `@neat/types/identity` (ADR-029). Hand-rolling a template literal like `` `${edge.type}:${promotedProvenance}:${newSource}->${newTarget}` `` is a contract violation. **Today's `rebuildEdge` at `ingest.ts:463` does hand-roll this id** — a v0.2.2 cleanup task: replace the literal with a dispatch on `promotedProvenance` to the appropriate canonical helper. The contracts.test.ts scan (#2) didn't catch it because the literal interpolates the provenance variable rather than embedding `:OBSERVED:` directly. The scan is extended in this batch.
+6. **Edge id construction MUST use the canonical helpers.** `rebuildEdge` constructs the new edge id via `observedEdgeId`, `inferredEdgeId`, etc. from `@neat.is/types/identity` (ADR-029). Hand-rolling a template literal like `` `${edge.type}:${promotedProvenance}:${newSource}->${newTarget}` `` is a contract violation. **Today's `rebuildEdge` at `ingest.ts:463` does hand-roll this id** — a v0.2.2 cleanup task: replace the literal with a dispatch on `promotedProvenance` to the appropriate canonical helper. The contracts.test.ts scan (#2) didn't catch it because the literal interpolates the provenance variable rather than embedding `:OBSERVED:` directly. The scan is extended in this batch.
 
 7. **Edge merge on collision.** If the rewritten edge id already exists (because an OBSERVED edge between the typed source and target was previously created independently), the rebuilt edge merges into the existing one: `callCount` sums, `lastObserved` takes the later timestamp via `pickLater`. No duplicate edge is created.
 
@@ -913,7 +913,7 @@ The first of three v0.2.3 consumer-layer contracts. Governs `packages/core/src/t
 
 **Decision.**
 
-1. **Edge priority is `PROV_RANK` at every hop.** When multiple edges connect the same node pair under different provenances (the coexistence case from contract #2), traversal picks the highest-priority edge via `PROV_RANK` from `@neat/types/identity`. `bestEdgeBySource` and `bestEdgeByTarget` apply this rule per neighbour. Selection happens at every step of the walk, not just the starting node.
+1. **Edge priority is `PROV_RANK` at every hop.** When multiple edges connect the same node pair under different provenances (the coexistence case from contract #2), traversal picks the highest-priority edge via `PROV_RANK` from `@neat.is/types/identity`. `bestEdgeBySource` and `bestEdgeByTarget` apply this rule per neighbour. Selection happens at every step of the walk, not just the starting node.
 
 2. **FRONTIER edges are excluded, not deprioritized (issue #136).** Today FRONTIER ranks 0 alongside STALE in `PROV_RANK`. That makes it pickable when no other edge exists between a pair — wrong per Rule 3 of `docs/contracts.md`. The contract: `bestEdgeBySource` / `bestEdgeByTarget` skip every edge with `provenance === FRONTIER` before ranking. If a node's only edges are FRONTIER, traversal halts at that node — `getRootCause` returns null, `getBlastRadius` does not enqueue past it.
 
@@ -925,7 +925,7 @@ The first of three v0.2.3 consumer-layer contracts. Governs `packages/core/src/t
 
 6. **Origin must exist.** Both functions handle `!graph.hasNode(originId)` gracefully — `getRootCause` returns `null`, `getBlastRadius` returns `{ origin, affectedNodes: [], totalAffected: 0 }`. Neither throws.
 
-7. **Helpers from `@neat/types/identity` for any id construction or parsing.** Traversal occasionally synthesizes ids (e.g. checking for an OBSERVED twin during stitcher work — see contract #7) or parses ids back to their parts. Both operations route through `parseEdgeId` / `observedEdgeId` / etc. Hand-rolled template literals are a contract violation.
+7. **Helpers from `@neat.is/types/identity` for any id construction or parsing.** Traversal occasionally synthesizes ids (e.g. checking for an OBSERVED twin during stitcher work — see contract #7) or parses ids back to their parts. Both operations route through `parseEdgeId` / `observedEdgeId` / etc. Hand-rolled template literals are a contract violation.
 
 **Authority.**
 
@@ -1112,7 +1112,7 @@ Governs `packages/core/src/api.ts`. Sibling contracts: ADR-039, ADR-041.
 
 4. **JSON errors.** `{ error, status, details? }`. 400 / 404 / 500. No HTML pages.
 
-5. **Schema validation on inbound bodies** via Zod from `@neat/types`.
+5. **Schema validation on inbound bodies** via Zod from `@neat.is/types`.
 
 6. **Project param defaults to `'default'`.**
 

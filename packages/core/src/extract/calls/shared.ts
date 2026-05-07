@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { EdgeEvidence } from '@neat/types'
+import type { EdgeEvidence } from '@neat.is/types'
 import { IGNORED_DIRS, SERVICE_FILE_EXTENSIONS } from '../shared.js'
 
 export interface SourceFile {

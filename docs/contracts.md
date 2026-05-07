@@ -10,7 +10,7 @@ This file is the index. Each rule has a short summary and a link to its full per
 
 | # | Contract | File | Governs | Status |
 |---|----------|------|---------|--------|
-| 1 | Node identity | [`contracts/identity.md`](./contracts/identity.md) | Node ids constructed via `@neat/types/identity` helpers, never literals (ADR-028) | ✅ landed |
+| 1 | Node identity | [`contracts/identity.md`](./contracts/identity.md) | Node ids constructed via `@neat.is/types/identity` helpers, never literals (ADR-028) | ✅ landed |
 | 2 | Edge identity + provenance | [`contracts/provenance.md`](./contracts/provenance.md) | Edge id wire format per provenance, `PROV_RANK` ordering, coexistence, confidence semantics (ADR-029) | ✅ landed |
 | 3 | Node + edge lifecycle | [`contracts/lifecycle.md`](./contracts/lifecycle.md) | Creation, transition, retirement. Mutation authority locked to `ingest.ts` and `extract/*` (ADR-030) | ✅ landed |
 | 4 | Schema growth vs shape | [`contracts/schema.md`](./contracts/schema.md) | Growth = commit-and-go (snapshot diff). Shape change = ADR + `persist.ts` migration (ADR-031) | ✅ landed |
@@ -48,7 +48,7 @@ These still live inline pending split into per-topic files. Treat them as bindin
 
 ### 1. Provenance is the load-bearing semantic contract
 
-Every edge carries a `provenance` field from `@neat/types`. Valid values:
+Every edge carries a `provenance` field from `@neat.is/types`. Valid values:
 
 ```
 OBSERVED | INFERRED | EXTRACTED | STALE | FRONTIER
@@ -60,7 +60,7 @@ OBSERVED | INFERRED | EXTRACTED | STALE | FRONTIER
 - **STALE** — transitioned from OBSERVED only. Never created directly. Preserves the original `lastObserved`. Confidence drops to ≤ 0.3.
 - **FRONTIER** — unresolved span peer (host:port not yet matched). Promoted to a typed node once an alias matches. See ADR-023.
 
-Raw provenance strings (`'OBSERVED'`, `'EXTRACTED'`, etc.) outside `@neat/types` are a contract violation. Use `Provenance.X` constants.
+Raw provenance strings (`'OBSERVED'`, `'EXTRACTED'`, etc.) outside `@neat.is/types` are a contract violation. Use `Provenance.X` constants.
 
 ### 2. OBSERVED and EXTRACTED edges coexist by design
 
@@ -88,11 +88,11 @@ If a node's only edges in/out are FRONTIER, traversal stops at that node. Return
 
 Override via `NEAT_STALE_THRESHOLDS` env. Transitions appended to `stale-events.ndjson`. Background `setInterval` loop (default 60s tick), never read-time.
 
-### 5. The graph is loaded from `@neat/types` schemas
+### 5. The graph is loaded from `@neat.is/types` schemas
 
 All node and edge schemas live in `packages/types/src/`. Code in `packages/core/src/` and `packages/mcp/src/` must:
 
-- Import types from `@neat/types`. No local `interface Service { ... }` redefinitions.
+- Import types from `@neat.is/types`. No local `interface Service { ... }` redefinitions.
 - Import `Provenance.X` and `EdgeType.X` constants. No raw string literals.
 - For traversal results: validate against `RootCauseResultSchema` / `BlastRadiusResultSchema` before returning.
 
@@ -138,12 +138,12 @@ Tests can mock. Runtime cannot. `compat.ts` reads `compat.json`; never inline a 
 
 Python *extraction* (reading Python service code) is supported via `tree-sitter-python`. NEAT's runtime stays Node-only. Don't add Python (or Rust, or Go) to the toolchain. Rust v1.0 is the next-language move and is its own milestone.
 
-## 16. Node ids come from `@neat/types/identity` helpers, never literals (ADR-028)
+## 16. Node ids come from `@neat.is/types/identity` helpers, never literals (ADR-028)
 
 Every node id in NEAT is constructed via the helpers in `packages/types/src/identity.ts`:
 
 ```ts
-import { serviceId, databaseId, configId, infraId, frontierId } from '@neat/types'
+import { serviceId, databaseId, configId, infraId, frontierId } from '@neat.is/types'
 
 serviceId('checkout')       // 'service:checkout'
 databaseId('db.example.com') // 'database:db.example.com'

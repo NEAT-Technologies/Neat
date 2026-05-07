@@ -22,7 +22,7 @@ import {
   loadPolicyFile,
   PolicyViolationsLog,
 } from './policy.js'
-import type { Policy } from '@neat/types'
+import type { Policy } from '@neat.is/types'
 import { buildOtelReceiver } from './otel.js'
 import { startOtelGrpcReceiver } from './otel-grpc.js'
 import { loadGraphFromDisk, startPersistLoop } from './persist.js'

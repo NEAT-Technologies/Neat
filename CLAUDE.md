@@ -96,7 +96,7 @@ The Railway gates from M6 are still informational. AWS is the more likely produc
 
 - pnpm → npm (ADR-007)
 - `tree-sitter` native bindings, not `web-tree-sitter` (ADR-002)
-- Dual ESM/CJS via `tsup` for every `@neat/*` package (ADR-003)
+- Dual ESM/CJS via `tsup` for every `@neat.is/*` package (ADR-003)
 - No dashboard in this release — `packages/web/` is a shell (ADR-004)
 - Branch-per-issue, manual issue close after verifying (ADR-005)
 - ConfigNodes record file existence, not contents (ADR-016)
@@ -111,10 +111,10 @@ The Railway gates from M6 are still informational. AWS is the more likely produc
 - `semantic_search` uses an Ollama → Transformers.js → substring fallback chain; flat in-memory cosine, sidecar `embeddings.json` cache (ADR-025)
 - Multi-project lives behind `Map<string, NeatGraph>`; routes dual-mount at `/X` and `/projects/:project/X`; default project keeps the legacy filenames; OTel ingest stays single-project (ADR-026)
 - MVP success is closing a real PR on an unfamiliar open-source codebase, not running the pg demo; OBSERVED layer must be load-bearing (ADR-027)
-- Node ids come from `@neat/types/identity` helpers (`serviceId`, `databaseId`, `configId`, `infraId`, `frontierId`); hand-rolled template literals are a contract violation (ADR-028)
-- Edge ids per provenance variant come from `@neat/types/identity` helpers (`extractedEdgeId`, `observedEdgeId`, `inferredEdgeId`, `frontierEdgeId`, `parseEdgeId`); `PROV_RANK` lives there too (ADR-029)
+- Node ids come from `@neat.is/types/identity` helpers (`serviceId`, `databaseId`, `configId`, `infraId`, `frontierId`); hand-rolled template literals are a contract violation (ADR-028)
+- Edge ids per provenance variant come from `@neat.is/types/identity` helpers (`extractedEdgeId`, `observedEdgeId`, `inferredEdgeId`, `frontierEdgeId`, `parseEdgeId`); `PROV_RANK` lives there too (ADR-029)
 - Mutation authority on the graph is locked to `ingest.ts` and `extract/*`; OBSERVED↔STALE and FRONTIER→OBSERVED transitions are owned by `ingest.ts` (ADR-030)
-- Schema additions in `@neat/types` are growth (snapshot diff is the audit trail); renames/removals/type-changes are shape changes (require ADR + `persist.ts` migration); enforced via `packages/core/test/audits/schema-snapshot.test.ts` (ADR-031)
+- Schema additions in `@neat.is/types` are growth (snapshot diff is the audit trail); renames/removals/type-changes are shape changes (require ADR + `persist.ts` migration); enforced via `packages/core/test/audits/schema-snapshot.test.ts` (ADR-031)
 
 ## Conventions
 
@@ -139,9 +139,9 @@ npm install                              # one-shot for the whole workspace
 npx turbo build                          # build everything
 npx turbo test                           # run vitest across packages
 npx turbo lint                           # eslint
-npm run build --workspace @neat/core     # one package
+npm run build --workspace @neat.is/core     # one package
 NEAT_SCAN_PATH=./demo \
-  npm run dev --workspace @neat/core     # core dev server
+  npm run dev --workspace @neat.is/core     # core dev server
 node packages/core/dist/cli.cjs init ./demo   # neat init CLI
 node packages/mcp/dist/index.cjs         # MCP stdio server (after build)
 ```

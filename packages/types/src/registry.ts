@@ -3,7 +3,7 @@ import { z } from 'zod'
 // Machine-level project registry (ADR-048). Single file at
 // `~/.neat/projects.json`, per-user, machine-local. The wire shape lives here
 // so the registry module and the daemon agree on it without a circular
-// dependency through @neat/core.
+// dependency through @neat.is/core.
 
 export const RegistryStatusSchema = z.enum(['active', 'paused', 'broken'])
 export type RegistryStatus = z.infer<typeof RegistryStatusSchema>

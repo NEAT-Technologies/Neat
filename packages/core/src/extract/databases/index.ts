@@ -5,8 +5,8 @@ import type {
   GraphEdge,
   GraphNode,
   ServiceNode,
-} from '@neat/types'
-import { EdgeType, NodeType, Provenance, databaseId } from '@neat/types'
+} from '@neat.is/types'
+import { EdgeType, NodeType, Provenance, databaseId } from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
 import {
   checkCompatibility,

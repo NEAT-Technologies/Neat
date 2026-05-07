@@ -21,7 +21,7 @@ exporters:
     # Railway exposes services to siblings on PRIVATE_NETWORK. Set NEAT_CORE_HOST
     # in the collector service to the neat-core service's private hostname (e.g.
     # neat-core.railway.internal). The 4318 port is fixed by the receiver in
-    # @neat/core.
+    # @neat.is/core.
     endpoint: http://${env:NEAT_CORE_HOST}:4318
     encoding: json
     compression: none

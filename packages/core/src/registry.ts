@@ -25,7 +25,7 @@ import {
   type RegistryEntry,
   type RegistryFile,
   type RegistryStatus,
-} from '@neat/types'
+} from '@neat.is/types'
 
 const LOCK_TIMEOUT_MS = 5_000
 const LOCK_RETRY_MS = 50

@@ -1,8 +1,17 @@
 {
-  "name": "@neat/claude-skill",
+  "name": "@neat.is/claude-skill",
   "version": "0.2.5",
-  "private": true,
-  "description": "Claude Code skill drop-in for NEAT — wires the @neat/mcp server into Claude's MCP config",
+  "description": "Claude Code skill drop-in for NEAT — wires the @neat.is/mcp server into Claude's MCP config",
+  "license": "BUSL-1.1",
+  "homepage": "https://neat.is",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NEAT-Technologies/Neat.git",
+    "directory": "packages/claude-skill"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": ["README.md", "SKILL.md", "claude_code_config.json"],
   "scripts": {
     "test": "vitest run --passWithNoTests",

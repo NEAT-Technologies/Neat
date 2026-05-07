@@ -4,7 +4,7 @@ This skill exposes NEAT's live semantic graph to Claude Code over MCP. Once inst
 
 ## What you get
 
-Nine MCP tools, served by `@neat/mcp` over stdio:
+Nine MCP tools, served by `@neat.is/mcp` over stdio:
 
 | Tool | What it does |
 |------|--------------|
@@ -28,7 +28,7 @@ The simplest path: add the snippet from `claude_code_config.json` to your Claude
 
 ```bash
 # Print the snippet
-cat node_modules/@neat/claude-skill/claude_code_config.json
+cat node_modules/@neat.is/claude-skill/claude_code_config.json
 
 # Or, with the neat CLI:
 neat skill --print-config
@@ -47,7 +47,7 @@ This merges the `neat` server into `~/.claude.json` without touching other entri
 ## Prerequisites
 
 - `neat init <repo>` has registered at least one project.
-- `neatd start` is running (or you're OK with `npx -y @neat/mcp` spawning per request — slower, but works).
+- `neatd start` is running (or you're OK with `npx -y @neat.is/mcp` spawning per request — slower, but works).
 - The `NEAT_API_URL` env var points at the running daemon's REST endpoint. Default is `http://localhost:8080`, which matches the daemon's default port.
 
 ## What's not in MVP

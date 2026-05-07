@@ -7,7 +7,7 @@ A pocket reference. The seed design doc has the full version; this file captures
 ```
 neat/
   packages/
-    types/   shared Zod schemas + runtime constants. Zero @neat/* deps.
+    types/   shared Zod schemas + runtime constants. Zero @neat.is/* deps.
     core/    graph engine, tree-sitter extraction, OTel ingest, REST API.
     mcp/     stdio MCP server. Six tools mapped to core's traversal endpoints.
     web/     Next.js shell. Wordmark + /api/health. Dashboard is post-MVP.
@@ -24,11 +24,11 @@ neat/
 ## Package boundaries
 
 ```
-@neat/types  ← @neat/core  ← @neat/mcp
-@neat/web                   (independent — talks to core over HTTP)
+@neat.is/types  ← @neat.is/core  ← @neat.is/mcp
+@neat.is/web                   (independent — talks to core over HTTP)
 ```
 
-Direction matters. `@neat/types` never imports anything from `@neat/*`. `@neat/core` is the only place that depends on `graphology`, `tree-sitter`, `fastify`. `@neat/mcp` only knows about `@neat/types` plus the MCP SDK; it talks to core over HTTP, not by importing.
+Direction matters. `@neat.is/types` never imports anything from `@neat.is/*`. `@neat.is/core` is the only place that depends on `graphology`, `tree-sitter`, `fastify`. `@neat.is/mcp` only knows about `@neat.is/types` plus the MCP SDK; it talks to core over HTTP, not by importing.
 
 ## Data flow
 
@@ -43,7 +43,7 @@ packages/core/src/graph.ts  (in-memory MultiDirectedGraph)
        ↓ (Fastify routes)
 packages/core/src/api.ts → GET /graph, /graph/node/:id, /search, etc.
        ↓ (HTTP)
-@neat/web /api/graph proxy   |   @neat/mcp tools (M3+)
+@neat.is/web /api/graph proxy   |   @neat.is/mcp tools (M3+)
 ```
 
 Live (M2+):
@@ -95,7 +95,7 @@ Things that aren't load-bearing decisions but are non-obvious from reading the c
 
 - **Node ids**: `service:<package.name>` for ServiceNodes, `database:<host>` for DatabaseNodes (host comes from `db-config.yaml`). Edge ids: `${type}:${source}->${target}`. The id format is the contract everything else (traversal in M3, MCP tools in M4) keys off, so don't change it casually.
 
-- **Extract is four phases, one module each.** Under `packages/core/src/extract/`: (1) `services.ts` discovers services from `package.json` files. (2) `databases.ts` parses `db-config.yaml` if present → emits DatabaseNode + `CONNECTS_TO` edge + runs compat checks. (3) `configs.ts` walks yaml/env files into `ConfigNode`s + `CONFIGURED_BY` edges. (4) `calls.ts` tree-sitter-parses every JS/TS file, collects string literals, looks for URLs containing a known service hostname → emits `CALLS` edges (deduped per source). `extract/index.ts` orchestrates the phases; `extract.ts` at the package root is a thin re-export so `import { extractFromDirectory } from '@neat/core'` keeps working. The function is idempotent — running it twice on the same path adds 0 nodes/edges.
+- **Extract is four phases, one module each.** Under `packages/core/src/extract/`: (1) `services.ts` discovers services from `package.json` files. (2) `databases.ts` parses `db-config.yaml` if present → emits DatabaseNode + `CONNECTS_TO` edge + runs compat checks. (3) `configs.ts` walks yaml/env files into `ConfigNode`s + `CONFIGURED_BY` edges. (4) `calls.ts` tree-sitter-parses every JS/TS file, collects string literals, looks for URLs containing a known service hostname → emits `CALLS` edges (deduped per source). `extract/index.ts` orchestrates the phases; `extract.ts` at the package root is a thin re-export so `import { extractFromDirectory } from '@neat.is/core'` keeps working. The function is idempotent — running it twice on the same path adds 0 nodes/edges.
 
 - **tree-sitter scope is intentionally tiny.** It's a string-literal scan for URL substrings matching known hostnames, not a full import-graph analysis. Good enough to pick up `axios.get('http://service-b:3001/...')` and similar; doesn't catch dynamically constructed URLs or network calls hidden behind a config object. Worth revisiting only if a real demo case needs more.
 

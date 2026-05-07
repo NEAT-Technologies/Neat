@@ -10,7 +10,7 @@ import {
   NodeType,
   Provenance,
   type ServiceNode,
-} from '@neat/types'
+} from '@neat.is/types'
 import type { NeatGraph } from '../src/graph.js'
 import { extractFromDirectory } from '../src/extract.js'
 import { handleSpan, type IngestContext } from '../src/ingest.js'

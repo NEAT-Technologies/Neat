@@ -14,8 +14,8 @@ import type {
   PolicyViolation,
   RootCauseResult,
   TransitiveDependenciesResult,
-} from '@neat/types'
-import { Provenance } from '@neat/types'
+} from '@neat.is/types'
+import { Provenance } from '@neat.is/types'
 import { HttpError, type HttpClient } from './client.js'
 import {
   formatEmptyResponse,

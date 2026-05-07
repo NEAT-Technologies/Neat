@@ -10,7 +10,7 @@ import {
   type GraphNode,
   NodeType,
   Provenance,
-} from '@neat/types'
+} from '@neat.is/types'
 import {
   handleSpan,
   markStaleEdges,

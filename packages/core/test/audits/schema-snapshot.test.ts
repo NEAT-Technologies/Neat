@@ -1,7 +1,7 @@
 /**
  * Schema-snapshot regression test (ADR-031, contract #4).
  *
- * Introspects every binding schema in @neat/types, produces a normalized JSON
+ * Introspects every binding schema in @neat.is/types, produces a normalized JSON
  * tree, and compares against packages/core/test/audits/schemas.snapshot.json.
  *
  * If this test fails:
@@ -32,7 +32,7 @@ import {
   ProvenanceSchema,
   RootCauseResultSchema,
   TransitiveDependenciesResultSchema,
-} from '@neat/types'
+} from '@neat.is/types'
 
 const SNAPSHOT_PATH = join(__dirname, 'schemas.snapshot.json')
 
@@ -158,7 +158,7 @@ describe('Schema snapshot (ADR-031)', () => {
     // (rename, removal, type change).
     expect.fail(
       [
-        'Schema drift detected — the @neat/types schemas have changed since the snapshot was taken.',
+        'Schema drift detected — the @neat.is/types schemas have changed since the snapshot was taken.',
         '',
         'If the change is GROWTH (new optional field, new enum value, additive only):',
         '  Re-run with UPDATE_SNAPSHOT=1 to regenerate, commit the updated snapshot.',

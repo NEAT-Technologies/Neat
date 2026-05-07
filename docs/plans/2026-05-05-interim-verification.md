@@ -72,7 +72,7 @@ Decisions still pending, blocking v0.2.4+:
 
 ## Test totals (at this verification point)
 
-`@neat/core`: 248+ passing, 23 todo, 0 failing across 65 contract tests.
+`@neat.is/core`: 248+ passing, 23 todo, 0 failing across 65 contract tests.
 
 The remaining todos correspond to:
 - v0.2.2 unfinished work (#131, #133, #134)

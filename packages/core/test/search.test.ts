@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { EdgeType, NodeType, Provenance } from '@neat/types'
+import { EdgeType, NodeType, Provenance } from '@neat.is/types'
 import { resetGraph, getGraph } from '../src/graph.js'
 import { buildSearchIndex, cosine, embedText } from '../src/search.js'
 

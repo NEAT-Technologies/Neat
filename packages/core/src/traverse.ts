@@ -9,7 +9,7 @@ import type {
   ServiceNode,
   TransitiveDependenciesResult,
   TransitiveDependency,
-} from '@neat/types'
+} from '@neat.is/types'
 import {
   BlastRadiusResultSchema,
   NodeType,
@@ -17,7 +17,7 @@ import {
   Provenance,
   RootCauseResultSchema,
   TransitiveDependenciesResultSchema,
-} from '@neat/types'
+} from '@neat.is/types'
 import type { NeatGraph } from './graph.js'
 import {
   checkCompatibility,
@@ -37,7 +37,7 @@ import {
 //   * Rule 8 — No demo-name hardcoding: driver/engine identifiers come from
 //     node properties + compatPairs(), never literals.
 //   * ADR-029 — PROV_RANK is the canonical provenance ranking, imported
-//     from @neat/types so consumers (traversal, MCP, policies) all agree.
+//     from @neat.is/types so consumers (traversal, MCP, policies) all agree.
 
 const ROOT_CAUSE_MAX_DEPTH = 5
 const BLAST_RADIUS_DEFAULT_DEPTH = 10

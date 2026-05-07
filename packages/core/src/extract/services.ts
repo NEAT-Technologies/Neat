@@ -2,8 +2,8 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import ignore, { type Ignore } from 'ignore'
 import { minimatch } from 'minimatch'
-import type { ServiceNode } from '@neat/types'
-import { NodeType, serviceId } from '@neat/types'
+import type { ServiceNode } from '@neat.is/types'
+import { NodeType, serviceId } from '@neat.is/types'
 import type { NeatGraph } from '../graph.js'
 import {
   IGNORED_DIRS,

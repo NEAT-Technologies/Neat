@@ -3,7 +3,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { CheckPoliciesScopeSchema, HypotheticalActionSchema } from '@neat/types'
+import { CheckPoliciesScopeSchema, HypotheticalActionSchema } from '@neat.is/types'
 import { createHttpClient } from './client.js'
 import { registerResources } from './resources.js'
 import {

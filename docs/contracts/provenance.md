@@ -1,6 +1,6 @@
 ---
 name: provenance
-description: Edge ids and provenance ranking are constructed via @neat/types/identity helpers. Coexistence of OBSERVED and EXTRACTED edges is structural, not policy.
+description: Edge ids and provenance ranking are constructed via @neat.is/types/identity helpers. Coexistence of OBSERVED and EXTRACTED edges is structural, not policy.
 governs:
   - "packages/core/src/ingest.ts"
   - "packages/core/src/traverse.ts"
@@ -24,7 +24,7 @@ Every edge in NEAT carries a `provenance` field. The provenance value (`OBSERVED
 ## Edge id helpers
 
 ```ts
-import { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierEdgeId, parseEdgeId } from '@neat/types'
+import { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierEdgeId, parseEdgeId } from '@neat.is/types'
 
 extractedEdgeId('service:a', 'service:b', 'CALLS')
 // 'CALLS:service:a->service:b'
@@ -67,7 +67,7 @@ This is intentional. The gap between declared intent (EXTRACTED) and observed re
 The canonical priority used by traversal and any consumer that needs to pick a single edge between two nodes when multiple provenance variants exist:
 
 ```ts
-import { PROV_RANK } from '@neat/types'
+import { PROV_RANK } from '@neat.is/types'
 
 PROV_RANK.OBSERVED   // 3
 PROV_RANK.INFERRED   // 2
