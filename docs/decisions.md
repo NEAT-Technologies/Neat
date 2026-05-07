@@ -1236,3 +1236,99 @@ Sibling contracts: ADR-039, ADR-040, ADR-042-044.
 4. **Three-part response format** from ADR-039. Confidence `1.00` for confirmed violations; lower for hypothetical-action results.
 
 5. **Routes dual-mount per ADR-026.**
+
+---
+
+## ADR-046 — `neat init` contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+The first of four v0.2.5 distribution-layer contracts. Governs `packages/core/src/cli.ts`'s `init` command and the codemod path it triggers. Sibling contracts: ADR-047 (SDK install), ADR-048 (machine registry), ADR-049 (daemon).
+
+**Decision.**
+
+1. **`neat init <path>` is a one-time registration moment.** Like `brew install` followed by `claude init`. Re-running is idempotent.
+2. **What `init` does, in order.** Discover (with report before mutation), build initial graph, register in `~/.neat/projects.json`, generate SDK install patch, apply or hold (patch-by-default; `--apply` opt-in), reload daemon if running.
+3. **Patch-by-default; `--apply` opt-in.** Init never modifies user code without explicit consent. `--dry-run` prints without writing.
+4. **What `init` doesn't touch by default.** Manifests only under `--apply`. Lockfiles never modified directly. `.env` and config files never modified. Running processes never instrumented.
+5. **Discovery report is honest.** Lists what `init` will / won't do, what it found, what it skipped.
+6. **Idempotency.** Re-running on already-initialized: re-runs discovery, overwrites registry entry, re-generates patch (skips applied changes), re-builds snapshot. No double-install, no duplicate registry entries.
+7. **Project naming.** `--project <name>` overrides; default basename. Names unique within `~/.neat/projects.json`; collisions fail loudly.
+8. **`init` and `install` are one command.** Audit's split rejected — one command with `--apply` flag handles both.
+
+**Authority.** `packages/core/src/cli.ts`. Composes extract/, persist.ts, installers/, registry.ts. Does **not** start the daemon (`neatd start` is separate).
+
+**Enforcement.** `it.todo` for v0.2.5 #119. Discovery-report-before-mutation gets a CLI test (`init --dry-run` → no files changed).
+
+---
+
+## ADR-047 — SDK install contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+Governs per-language installer modules under `packages/core/src/installers/` (new directory). Sibling contracts: ADR-046, ADR-048, ADR-049.
+
+**Decision.**
+
+1. **Installer module interface.** Every language exports `{ language, detect(serviceDir), plan(serviceDir): InstallPlan, apply(serviceDir, plan): ApplyResult }`. Plan and apply decoupled — patch can be saved, reviewed, re-applied later.
+2. **Two languages in MVP: Node and Python.** Node adds `@opentelemetry/api`, `sdk-node`, `auto-instrumentations-node`; modifies `scripts.start` (or Procfile/Dockerfile CMD). Python adds `opentelemetry-distro`, `opentelemetry-exporter-otlp`; prefixes entrypoint with `opentelemetry-instrument`. Both set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`. Java/Ruby/.NET/Go/Rust out of MVP.
+3. **Patch shape.** Serializable: `{ language, dependencyEdits, entrypointEdits, envEdits }`. The plan is what `init` writes to `neat.patch` for review.
+4. **Lockfiles never touched.** Manifests only. After `--apply`, init prints `Run "npm install"` so user owns the lockfile commit.
+5. **Idempotency.** `plan(dir)` returns empty plan when SDK is already installed. Re-running `init --apply` produces no diff.
+6. **Patch is deterministic.** Same input → same patch. Reviewable byte-for-byte.
+7. **Apply failure is recoverable.** Partial success → emits `neat-rollback.patch`. NEAT does not silently leave broken state.
+8. **Composability.** `neat init --no-install` for graph + registry only. `neat install <path>` alias for `init --skip-discovery --skip-registry`.
+
+**Authority.** `packages/core/src/installers/`. One file per language. Common patch-application in `installers/shared.ts`.
+
+**Enforcement.** `it.todo` for v0.2.5 #119. "Lockfiles never touched" lands as regression scan.
+
+---
+
+## ADR-048 — Machine-level project registry contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+Governs `~/.neat/projects.json` and `packages/core/src/registry.ts`. Sibling contracts: ADR-046, ADR-047, ADR-049.
+
+**Decision.**
+
+1. **Single source of truth: `~/.neat/projects.json`.** Per-user, machine-local. Not synced. Not version-controlled.
+2. **Shape.** `{ version: 1, projects: [{ name, path, registeredAt, lastSeenAt?, languages, status: 'active' | 'paused' | 'broken' }] }`. `version: z.literal(1)`.
+3. **Atomicity.** `writeAtomically(path, contents)` — tmp + fsync + rename. No torn writes.
+4. **Lock file.** Exclusive flock on `~/.neat/projects.json.lock` for writes. 5s timeout; failure is loud.
+5. **Status semantics.** `active` (daemon watching), `paused` (user-paused), `broken` (path missing or last op failed).
+6. **Removal.** `neat uninstall <name>` removes entry. Does **not** delete `neat-out/`, `policy.json`, or user files. Reverses SDK-install patch via `neat-rollback.patch` if user opts in.
+7. **Path normalization.** Stored as resolved absolute path. Two `init` calls from different relative paths to the same dir don't create two entries.
+8. **Multi-machine sync deferred.** Per-machine for MVP.
+
+**Authority.** `packages/core/src/registry.ts`. CLI commands and daemon call into it. Daemon reads on boot and on `SIGHUP`.
+
+**Enforcement.** `it.todo` for v0.2.5 #119. Regression test asserts registry path is `~/.neat/projects.json` and no other module reads/writes it.
+
+---
+
+## ADR-049 — Daemon contract
+
+**Date:** 2026-05-06
+**Status:** Active.
+
+Governs the long-lived `neatd` process. Sibling contracts: ADR-046, ADR-047, ADR-048.
+
+**Decision.**
+
+1. **Single long-lived process.** `neatd start` boots one daemon watching every project in `~/.neat/projects.json`. Per-project graphs in `Map<string, NeatGraph>` per ADR-026. No clustering in MVP.
+2. **Lifecycle commands.** `neatd start [--foreground]`, `neatd stop`, `neatd reload`, `neatd status`.
+3. **Continuous extraction triggers.** Source mtimes (chokidar → re-extract phase per ADR-032), `policy.json` mtime (reload per ADR-042), `compat.json` mtime (reload matrix), OTel HTTP/gRPC (`:4318`/`:4317` → `handleSpan` per ADR-033), staleness loop (60s per ADR-024).
+4. **Per-project isolation.** Each project's graph is its own `MultiDirectedGraph`. File watching, OTel ingest, policy evaluation scoped to project. Failure in one project doesn't affect others.
+5. **OTel routing.** Spans route to a project by `service.name` lookup across registered projects. Unknowns route to `'default'` for FrontierNode auto-creation.
+6. **Graceful degradation.** Missing registry → boot refuses. Missing path → mark `status: 'broken'`. OTel overwhelmed → backpressure via queue (ADR-033 #1); spans drop, never block.
+7. **No automatic restart on crash.** PID at `~/.neat/neatd.pid` for external supervisors (systemd / launchd).
+8. **Self-hosting gate stays closed during v0.2.5.** Per ADR-027 + the v0.2.x sequencing: self-hosting NEAT on the NEAT codebase only flips on after the MVP-success PR closes.
+
+**Authority.** `packages/core/src/daemon.ts`. Composes registry.ts, extract/, ingest.ts, policy.ts, persist.ts.
+
+**Enforcement.** `it.todo` for v0.2.5 #119. Regression test asserts daemon writes `graph.json` only via persist.ts loop and shutdown handlers.
