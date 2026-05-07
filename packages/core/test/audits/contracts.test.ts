@@ -3000,6 +3000,78 @@ describe('Daemon contract (ADR-049)', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// Claude Code skill (v0.2.5 step 6 — packaging, not under a locked contract)
+// ──────────────────────────────────────────────────────────────────────────
+describe('Claude Code skill packaging', () => {
+  it('CLI snippet matches packages/claude-skill/claude_code_config.json byte-for-byte', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { CLAUDE_SKILL_CONFIG } = await import('../../src/cli.js')
+    const skillPath = path2.join(
+      __dirname,
+      '../../../claude-skill/claude_code_config.json',
+    )
+    const fileRaw = await fs2.readFile(skillPath, 'utf8')
+    const fileParsed = JSON.parse(fileRaw)
+    // The CLI is the source of truth at runtime; the file is the
+    // documentation copy. They must agree.
+    expect(fileParsed).toEqual(CLAUDE_SKILL_CONFIG)
+  })
+
+  it('snippet wires @neat/mcp over stdio with NEAT_API_URL', async () => {
+    const { CLAUDE_SKILL_CONFIG } = await import('../../src/cli.js')
+    const neat = CLAUDE_SKILL_CONFIG.mcpServers.neat
+    expect(neat.type).toBe('stdio')
+    expect(neat.command).toBe('npx')
+    expect(neat.args).toContain('@neat/mcp')
+    expect(neat.env.NEAT_API_URL).toMatch(/^https?:\/\//)
+  })
+
+  it('runSkill --apply merges into ~/.claude.json without disturbing other entries', async () => {
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const home = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-skill-home-'))
+    const target = path2.join(home, '.claude.json')
+    // Pre-existing config the user might have wired by hand.
+    await fs2.writeFile(
+      target,
+      JSON.stringify(
+        {
+          mcpServers: {
+            other: { type: 'stdio', command: 'something', args: [] },
+          },
+          someUnrelatedSetting: true,
+        },
+        null,
+        2,
+      ),
+    )
+    const prev = process.env.NEAT_CLAUDE_CONFIG
+    process.env.NEAT_CLAUDE_CONFIG = target
+    const prevLog = console.log
+    console.log = () => {}
+    try {
+      const { runSkill } = await import('../../src/cli.js')
+      const r = await runSkill({ apply: true, printConfig: false })
+      expect(r.exitCode).toBe(0)
+      const after = JSON.parse(await fs2.readFile(target, 'utf8'))
+      // Existing entries survive the merge.
+      expect(after.someUnrelatedSetting).toBe(true)
+      expect(after.mcpServers.other.command).toBe('something')
+      // The neat entry is in place.
+      expect(after.mcpServers.neat.type).toBe('stdio')
+      expect(after.mcpServers.neat.args).toContain('@neat/mcp')
+    } finally {
+      console.log = prevLog
+      if (prev === undefined) delete process.env.NEAT_CLAUDE_CONFIG
+      else process.env.NEAT_CLAUDE_CONFIG = prev
+      await fs2.rm(home, { recursive: true, force: true })
+    }
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // Queued — flipped from todo to live as cleanup issues land
 // ──────────────────────────────────────────────────────────────────────────
 describe('Queued contracts (v0.2.1 leftovers — #141, #142, #145)', () => {

@@ -1,0 +1,11 @@
+{
+  "name": "@neat/claude-skill",
+  "version": "0.2.5",
+  "private": true,
+  "description": "Claude Code skill drop-in for NEAT — wires the @neat/mcp server into Claude's MCP config",
+  "files": ["README.md", "SKILL.md", "claude_code_config.json"],
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint . --no-error-on-unmatched-pattern || true"
+  }
+}
