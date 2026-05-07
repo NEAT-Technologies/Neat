@@ -15,7 +15,8 @@
     }
   },
   "bin": {
-    "neat": "./dist/cli.cjs"
+    "neat": "./dist/cli.cjs",
+    "neatd": "./dist/neatd.cjs"
   },
   "files": [
     "dist",

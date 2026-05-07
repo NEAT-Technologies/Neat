@@ -2761,12 +2761,242 @@ describe('Machine-level project registry contract (ADR-048)', () => {
 })
 
 describe('Daemon contract (ADR-049)', () => {
-  it.todo('daemon writes only via persist.ts loop and shutdown handlers (ADR-049 — mutation authority)')
-  it.todo('per-project graph isolation: failure in one project does not affect others (ADR-049 #4)')
-  it.todo('OTel span routing matches by service.name across registered projects (ADR-049 #5)')
-  it.todo('graceful degradation: missing registry → boot refuses with clear error (ADR-049 #6)')
-  it.todo('daemon writes PID to ~/.neat/neatd.pid (ADR-049 #7)')
-  it.todo('SIGHUP triggers registry re-read (ADR-049 #2)')
+  // Sandbox helper: tmp NEAT_HOME with a registry pre-seeded by addProject,
+  // optionally with one or more registered projects. Returns a cleanup that
+  // unwinds env mutations + tmp dirs.
+  async function setupDaemonSandbox(opts: {
+    projects?: Array<{ name: string; missingPath?: boolean }>
+  } = {}): Promise<{
+    home: string
+    cleanup: () => Promise<void>
+    addedPaths: Map<string, string>
+  }> {
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const home = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neatd-home-'))
+    const addedPaths = new Map<string, string>()
+    const cleanups: Array<() => Promise<void>> = []
+    const prevHome = process.env.NEAT_HOME
+    process.env.NEAT_HOME = home
+
+    const { addProject, setStatus } = await import('../../src/registry.js')
+    for (const p of opts.projects ?? []) {
+      const dir = await fs2.mkdtemp(path2.join(os2.tmpdir(), `neatd-project-${p.name}-`))
+      const real = await fs2.realpath(dir)
+      await fs2.writeFile(
+        path2.join(real, 'package.json'),
+        JSON.stringify({ name: p.name, version: '0.0.0' }),
+      )
+      await addProject({ name: p.name, path: real, languages: ['javascript'] })
+      addedPaths.set(p.name, real)
+      cleanups.push(() => fs2.rm(dir, { recursive: true, force: true }))
+      if (p.missingPath) {
+        // Yank the dir after registration so the daemon sees a registered
+        // project whose disk has vanished — the broken-path graceful path.
+        await fs2.rm(real, { recursive: true, force: true })
+      }
+      // setStatus call is implicit here — addProject defaults to 'active'.
+      void setStatus
+    }
+
+    return {
+      home,
+      addedPaths,
+      cleanup: async () => {
+        if (prevHome === undefined) delete process.env.NEAT_HOME
+        else process.env.NEAT_HOME = prevHome
+        for (const c of cleanups) await c().catch(() => {})
+        await fs2.rm(home, { recursive: true, force: true })
+      },
+    }
+  }
+
+  it('daemon writes only via persist.ts loop and shutdown handlers (ADR-049 — mutation authority)', () => {
+    // Source-grep: daemon.ts has no direct fs writes against project graph
+    // files. Persistence flows through startPersistLoop (which lives in
+    // persist.ts), and the only fs.unlink/writeAtomically calls are for
+    // the PID file at ~/.neat/neatd.pid.
+    const daemon = readFileSync(join(CORE_SRC, 'daemon.ts'), 'utf8')
+    expect(daemon).toMatch(/startPersistLoop\(/)
+    // No raw fs.writeFile or fs.write to a graph snapshot. The two allowed
+    // writes are writeAtomically for the PID file (registry-helper) and
+    // fs.unlink for cleanup of that same PID file.
+    const offenders: string[] = []
+    daemon.split('\n').forEach((line, i) => {
+      if (/fs\.writeFile\(/.test(line)) offenders.push(`${i + 1}: ${line.trim()}`)
+      if (/fs\.appendFile\(/.test(line)) offenders.push(`${i + 1}: ${line.trim()}`)
+    })
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('per-project graph isolation: failure in one project does not affect others (ADR-049 #4)', async () => {
+    const { home, cleanup } = await setupDaemonSandbox({
+      projects: [
+        { name: 'good', missingPath: false },
+        { name: 'broken', missingPath: true },
+      ],
+    })
+    const prevWarn = console.warn
+    const prevLog = console.log
+    console.warn = () => {}
+    console.log = () => {}
+    try {
+      const { startDaemon } = await import('../../src/daemon.js')
+      const handle = await startDaemon()
+      try {
+        // Both projects appear in slots; the missing-path one is marked
+        // broken, the surviving one is active and producing a snapshot.
+        const good = handle.slots.get('good')
+        const broken = handle.slots.get('broken')
+        expect(good, 'good slot present').toBeDefined()
+        expect(broken, 'broken slot present').toBeDefined()
+        expect(good!.status).toBe('active')
+        expect(broken!.status).toBe('broken')
+      } finally {
+        await handle.stop()
+      }
+      // Confirm setStatus on the registry actually ran for the broken one.
+      const { listProjects } = await import('../../src/registry.js')
+      const projects = await listProjects()
+      const brokenEntry = projects.find((p) => p.name === 'broken')
+      expect(brokenEntry?.status).toBe('broken')
+      void home
+    } finally {
+      console.warn = prevWarn
+      console.log = prevLog
+      await cleanup()
+    }
+  })
+
+  it('OTel span routing matches by service.name across registered projects (ADR-049 #5)', async () => {
+    const { routeSpanToProject } = await import('../../src/daemon.js')
+    const { DEFAULT_PROJECT } = await import('../../src/graph.js')
+    const projects = [
+      {
+        name: 'checkout',
+        path: '/tmp/checkout',
+        registeredAt: '2026-05-07T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'active' as const,
+      },
+      {
+        name: 'inventory',
+        path: '/tmp/inventory',
+        registeredAt: '2026-05-07T00:00:00.000Z',
+        languages: ['python'],
+        status: 'active' as const,
+      },
+      {
+        name: 'paused-svc',
+        path: '/tmp/paused-svc',
+        registeredAt: '2026-05-07T00:00:00.000Z',
+        languages: [],
+        status: 'paused' as const,
+      },
+    ]
+    expect(routeSpanToProject('checkout', projects)).toBe('checkout')
+    expect(routeSpanToProject('inventory', projects)).toBe('inventory')
+    // Paused entries are not active routing targets.
+    expect(routeSpanToProject('paused-svc', projects)).toBe(DEFAULT_PROJECT)
+    // Unknown service.name falls back per ADR-033's FrontierNode flow.
+    expect(routeSpanToProject('unknown-mystery-service', projects)).toBe(DEFAULT_PROJECT)
+    expect(routeSpanToProject(undefined, projects)).toBe(DEFAULT_PROJECT)
+  })
+
+  it('graceful degradation: missing registry → boot refuses with clear error (ADR-049 #6)', async () => {
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const home = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neatd-empty-home-'))
+    const prevHome = process.env.NEAT_HOME
+    process.env.NEAT_HOME = home
+    try {
+      const { startDaemon } = await import('../../src/daemon.js')
+      await expect(startDaemon()).rejects.toThrow(/registry not found/)
+    } finally {
+      if (prevHome === undefined) delete process.env.NEAT_HOME
+      else process.env.NEAT_HOME = prevHome
+      await fs2.rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('daemon writes PID to ~/.neat/neatd.pid (ADR-049 #7)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { home, cleanup } = await setupDaemonSandbox({
+      projects: [{ name: 'pid-test' }],
+    })
+    const prevWarn = console.warn
+    const prevLog = console.log
+    console.warn = () => {}
+    console.log = () => {}
+    try {
+      const { startDaemon } = await import('../../src/daemon.js')
+      const handle = await startDaemon()
+      try {
+        expect(handle.pidPath).toBe(path2.join(home, 'neatd.pid'))
+        const pidRaw = await fs2.readFile(handle.pidPath, 'utf8')
+        expect(Number.parseInt(pidRaw.trim(), 10)).toBe(process.pid)
+      } finally {
+        await handle.stop()
+      }
+      // Stop removes the PID file.
+      await expect(fs2.access(handle.pidPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      console.warn = prevWarn
+      console.log = prevLog
+      await cleanup()
+    }
+  })
+
+  it('SIGHUP triggers registry re-read (ADR-049 #2)', async () => {
+    const { home, cleanup } = await setupDaemonSandbox({
+      projects: [{ name: 'first' }],
+    })
+    const prevWarn = console.warn
+    const prevLog = console.log
+    console.warn = () => {}
+    console.log = () => {}
+    try {
+      const { startDaemon } = await import('../../src/daemon.js')
+      const handle = await startDaemon()
+      try {
+        expect(handle.slots.has('first')).toBe(true)
+        expect(handle.slots.has('second')).toBe(false)
+
+        // Add a second project to the registry while the daemon is running.
+        const os2 = await import('node:os')
+        const fs2 = await import('node:fs/promises')
+        const path2 = await import('node:path')
+        const dir = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neatd-second-'))
+        const real = await fs2.realpath(dir)
+        await fs2.writeFile(
+          path2.join(real, 'package.json'),
+          JSON.stringify({ name: 'second', version: '0.0.0' }),
+        )
+        const { addProject } = await import('../../src/registry.js')
+        await addProject({ name: 'second', path: real, languages: ['javascript'] })
+
+        // Send SIGHUP and wait for the reload to settle. The handler is
+        // fire-and-forget so we poll the slots map briefly.
+        process.kill(process.pid, 'SIGHUP')
+        const deadline = Date.now() + 2000
+        while (Date.now() < deadline && !handle.slots.has('second')) {
+          await new Promise((r) => setTimeout(r, 25))
+        }
+        expect(handle.slots.has('second')).toBe(true)
+        await fs2.rm(dir, { recursive: true, force: true })
+      } finally {
+        await handle.stop()
+      }
+      void home
+    } finally {
+      console.warn = prevWarn
+      console.log = prevLog
+      await cleanup()
+    }
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
