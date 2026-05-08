@@ -1332,3 +1332,97 @@ Governs the long-lived `neatd` process. Sibling contracts: ADR-046, ADR-047, ADR
 **Authority.** `packages/core/src/daemon.ts`. Composes registry.ts, extract/, ingest.ts, policy.ts, persist.ts.
 
 **Enforcement.** `it.todo` for v0.2.5 #119. Regression test asserts daemon writes `graph.json` only via persist.ts loop and shutdown handlers.
+
+## ADR-050 — CLI surface contract
+
+**Date:** 2026-05-08
+**Status:** Active.
+
+Opens v0.2.6. First of two milestone contracts. Sibling: ADR-051.
+
+**Context.** Today every reach into the graph goes through MCP — fine for Claude Code, awkward for a human at a terminal who wants to ask "what does `get_root_cause` return for `service:checkout`?" The terminal-vs-agent gap is real: an engineer debugging needs the same nine tools the agent has, without the Claude wrapper. The existing `neat` CLI handles lifecycle (`init`, `watch`, `list`, `pause`, `resume`, `uninstall`, `skill`) but exposes no graph queries.
+
+**Decision.**
+
+1. **Nine `neat <verb>` commands, one per MCP tool.** The verb set mirrors the locked allowlist from ADR-039:
+
+   | MCP tool | CLI verb |
+   |---|---|
+   | `get_root_cause` | `neat root-cause <node-id>` |
+   | `get_blast_radius` | `neat blast-radius <node-id>` |
+   | `get_dependencies` | `neat dependencies <node-id> [--depth N]` |
+   | `get_observed_dependencies` | `neat observed-dependencies <node-id>` |
+   | `get_incident_history` | `neat incidents [--limit N]` |
+   | `semantic_search` | `neat search <query>` |
+   | `get_graph_diff` | `neat diff [--since <date>]` |
+   | `get_recent_stale_edges` | `neat stale-edges` |
+   | `check_policies` | `neat policies [--node <id>] [--hypothetical-action <action>]` |
+
+   Naming drops the `get_` prefix and uses kebab-case per UNIX convention. Verbs are nouns where natural (`incidents`, `policies`), action-flavored only when the noun would be ambiguous (`search`, `diff`).
+
+2. **REST-only data path.** Verbs hit `NEAT_API_URL` (default `http://localhost:8080`) via the same client logic the MCP server uses. Never read `graph.json` at request time. Same multi-project routing as MCP — `--project <name>` flag, defaulting to `NEAT_PROJECT` env, defaulting to `'default'`.
+
+3. **Two output modes.** Default human-readable: prose summary + plain-text table + `confidence: X.XX · provenance: ...` footer (mirrors the three-part MCP response per ADR-039). With `--json`: machine-readable JSON with the same three sections as named fields (`{ summary, block, confidence, provenance }`). Stdout for results; stderr for diagnostics.
+
+4. **Exit code conventions.**
+
+   - `0` — success.
+   - `1` — server error (4xx / 5xx response from REST; the body's error message goes to stderr).
+   - `2` — misuse (missing required arg, malformed flag — handled before any network call).
+   - `3` — daemon not reachable (connection refused / timeout). Distinct from `1` so scripts can branch on "is the daemon up?"
+
+5. **No mutation verbs in MVP.** Every MCP tool is read-only and so is every CLI verb. Lifecycle commands (`init`, `watch`, etc.) keep their existing semantics; mutation never lands behind a query verb.
+
+6. **No demo-name hardcoding.** Same rule as MCP (per cross-cutting rule 8). Examples in `--help` text reference real-shape ids (`service:<name>`, `database:<host>`) without committing to specific demo names.
+
+7. **`--help` output is binding documentation.** Each verb's `--help` lists the args, flags, exit codes, and an example invocation. `neat --help` lists every verb (lifecycle + query) in one block.
+
+**Authority.** `packages/core/src/cli.ts` (extends existing parser) or a new `packages/core/src/cli-verbs.ts` if the surface gets large. Implementation choice left to the implementing agent. The REST client lives at `packages/core/src/cli-client.ts` (or similar) and is shared with `packages/mcp/src/client.ts`.
+
+**Enforcement.** `it.todo` block in `contracts.test.ts` for v0.2.6 #23. Regression tests cover: nine verbs registered, REST-only data path (no `graph.json` reads from CLI), exit-code branching, `--json` shape, `--project` propagation.
+
+## ADR-051 — Frontend-facing API contract
+
+**Date:** 2026-05-08
+**Status:** Active. Speculative — sections marked **(deferred)** wait for v0.3.0 to surface concrete asks.
+
+Opens v0.2.6. Second of two milestone contracts. Sibling: ADR-050.
+
+**Context.** Jed's v0.3.0 frontend track builds against the v0.1.2-stable API. The existing REST surface (`/graph`, `/graph/node/:id`, etc., all dual-mounted per ADR-026) is request-response — fine for initial render, insufficient for live views. Two gaps known today: live update streaming, multi-project enumeration. WebSocket-style symmetric subscription is plausibly needed but not surfaced yet.
+
+The `(if needed)` qualifier in the kickoff applies. We draft what's clear and explicitly defer what isn't.
+
+**Decision.**
+
+1. **Server-Sent Events stream at `/events`.** Dual-mounted per ADR-026: `GET /events` (default project) and `GET /projects/:project/events` (scoped). Content-type `text/event-stream`. One JSON-encoded payload per event line, prefixed by `event: <type>` so the EventSource API routes by type.
+
+2. **Event taxonomy (locked).** Eight event types, all derived from existing graph mutations:
+
+   | Event | Payload | Trigger |
+   |---|---|---|
+   | `node-added` | `{ node: GraphNode }` | extract or auto-create in ingest |
+   | `node-updated` | `{ id: string, changes: Partial<GraphNode> }` | property change in extract / ingest |
+   | `node-removed` | `{ id: string }` | retire path in extract |
+   | `edge-added` | `{ edge: GraphEdge }` | any provenance |
+   | `edge-removed` | `{ id: string }` | retire / promotion rewire |
+   | `extraction-complete` | `{ project, fileCount, nodesAdded, edgesAdded }` | watch.ts re-extract finishes |
+   | `policy-violation` | `{ violation: PolicyViolation }` | evaluator emits a new violation |
+   | `stale-transition` | `{ edgeId, from: 'OBSERVED', to: 'STALE' }` | staleness loop tick |
+
+   New event types require a successor ADR. The event taxonomy is locked the same way the nine MCP tools are locked — no quiet additions.
+
+3. **Heartbeat.** Every 30 seconds the server emits a comment line (`:heartbeat\n\n`) to keep proxies / load balancers from idle-timing out the connection. EventSource clients ignore comments.
+
+4. **Multi-project switcher endpoint.** `GET /projects` returns `Array<{ name, path, status, registeredAt, lastSeenAt?, languages }>` — direct passthrough of `listProjects()` from `registry.ts` (ADR-048). Distinct from the dual-mount routing in ADR-026: that exposes per-project endpoints; this exposes the registry itself for a project picker UI.
+
+5. **JSON error shape unchanged.** Same `{ error, status, details? }` envelope from ADR-040. SSE errors land as a final `event: error` payload before the connection closes; non-SSE errors keep the existing JSON-body convention.
+
+6. **WebSocket transport (deferred).** Symmetric subscription (client subscribes to specific node ids, sends ping/pong, etc.) waits for a successor ADR. Triggered when v0.3.0 frontend work surfaces a concrete need SSE can't cover. SSE is sufficient for one-way streaming and is the MVP transport.
+
+7. **Per-event filtering inside SSE (deferred).** The default-project mount streams every event for the default graph; the `/projects/:project/events` mount streams events for that project. Filtering by node id or edge type within a stream is a successor concern.
+
+8. **Backpressure.** SSE writes are non-blocking — if a client's socket is slow, events queue up to a per-connection cap (default 1000 messages) before the connection is dropped with `event: error` payload `{ reason: 'backpressure' }`. Spans dropping at the OTel layer (per ADR-033) is unrelated; this is a separate per-connection guard.
+
+**Authority.** `packages/core/src/api.ts` (extend) for `/projects`. SSE endpoint in `packages/core/src/api.ts` or a new `packages/core/src/streaming.ts` if the surface grows. Event emission threaded through `ingest.ts`, `extract/index.ts`, `watch.ts`, `policy.ts` via a small `EventEmitter` singleton in `packages/core/src/events.ts`.
+
+**Enforcement.** `it.todo` block in `contracts.test.ts` for v0.2.6 #24. Regression tests cover: `/events` endpoint exists with `text/event-stream` content-type, dual-mount per ADR-026, event-type taxonomy locked (eight types, no quiet additions), `/projects` endpoint exists and returns the registry shape, heartbeat interval set, backpressure cap honored.

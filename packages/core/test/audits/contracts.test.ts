@@ -3141,3 +3141,46 @@ describe('Queued contracts (v0.2.1 leftovers — #141, #142, #145)', () => {
   it.todo('ServiceNode.framework populated from package.json (issue #142)')
   it.todo('Drop unused graphology-traversal/-shortest-path deps (issue #145)')
 })
+
+describe('CLI surface contract (ADR-050)', () => {
+  // v0.2.6 #23. Nine `neat <verb>` commands mirroring the MCP allowlist.
+  // Implementation lands the verbs; these todos flip as each verb ships.
+  it.todo('every MCP tool from ADR-039 has a corresponding `neat <verb>` registered (ADR-050 #1)')
+  it.todo('verb names are kebab-case and drop the `get_` prefix (ADR-050 #1 — naming)')
+  it.todo('CLI verbs hit NEAT_API_URL via the shared REST client; no graph.json reads from cli-verbs (ADR-050 #2)')
+  it.todo('`--project <name>` resolution chain matches MCP: flag → NEAT_PROJECT env → `default` (ADR-050 #2)')
+  it.todo('default output is human-readable with NL summary + table + provenance footer (ADR-050 #3)')
+  it.todo('`--json` output schema is `{ summary, block, confidence, provenance }` (ADR-050 #3)')
+  it.todo('stderr carries diagnostics; stdout carries results — no mixing (ADR-050 #3)')
+  it.todo('exit code 0 on success (ADR-050 #4)')
+  it.todo('exit code 1 on server 4xx/5xx with body error message on stderr (ADR-050 #4)')
+  it.todo('exit code 2 on misuse before any network call (ADR-050 #4)')
+  it.todo('exit code 3 distinct from 1 when daemon connection refused / times out (ADR-050 #4)')
+  it.todo('no mutation verbs registered behind the query verb surface (ADR-050 #5)')
+  it.todo('no demo-name hardcoding in `--help` text outside of generic shape examples (ADR-050 #6)')
+  it.todo('every verb has a `--help` block listing args, flags, exit codes, example invocation (ADR-050 #7)')
+  it.todo('`neat --help` lists every verb (lifecycle + query) in one block (ADR-050 #7)')
+})
+
+describe('Frontend-facing API contract (ADR-051)', () => {
+  // v0.2.6 #24. SSE stream + multi-project switcher endpoint. Speculative —
+  // WebSocket transport and per-event filtering deferred to successor ADRs.
+  it.todo('GET /events responds with content-type text/event-stream (ADR-051 #1)')
+  it.todo('GET /events and GET /projects/:project/events are both registered (dual-mount per ADR-026) (ADR-051 #1)')
+  it.todo('SSE event-type taxonomy is exactly the eight locked types — no more, no fewer (ADR-051 #2)')
+  it.todo('node-added event payload matches `{ node: GraphNode }` (ADR-051 #2)')
+  it.todo('node-updated event payload matches `{ id, changes }` (ADR-051 #2)')
+  it.todo('node-removed / edge-removed event payloads carry only `{ id }` (ADR-051 #2)')
+  it.todo('edge-added event payload matches `{ edge: GraphEdge }` (ADR-051 #2)')
+  it.todo('extraction-complete event payload matches `{ project, fileCount, nodesAdded, edgesAdded }` (ADR-051 #2)')
+  it.todo('policy-violation event payload matches `{ violation: PolicyViolation }` (ADR-051 #2)')
+  it.todo('stale-transition event payload matches `{ edgeId, from: "OBSERVED", to: "STALE" }` (ADR-051 #2)')
+  it.todo('SSE heartbeat comment line emitted at most every 30 seconds (ADR-051 #3)')
+  it.todo('GET /projects returns the listProjects() shape from registry.ts (ADR-051 #4)')
+  it.todo('GET /projects shape is Array<{ name, path, status, registeredAt, lastSeenAt?, languages }> (ADR-051 #4)')
+  it.todo('SSE error responses use `event: error` payload before connection close (ADR-051 #5)')
+  it.todo('non-SSE error responses keep the ADR-040 `{ error, status, details? }` envelope (ADR-051 #5)')
+  it.todo('SSE backpressure cap drops connection at 1000 queued messages with `event: error` `{ reason: "backpressure" }` (ADR-051 #8)')
+  it.todo('event bus is a single EventEmitter singleton in packages/core/src/events.ts (ADR-051 — authority)')
+  it.todo('event producers in ingest.ts / extract/ / watch.ts / policy.ts emit through the bus, not directly to handlers (ADR-051 — authority)')
+})
