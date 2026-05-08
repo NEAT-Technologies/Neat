@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+// Bin shim — `npm install -g neat.is` puts this on PATH as `neatd`.
+// argv[1] ends in `/neatd`, which @neat.is/core/dist/neatd.cjs's existing
+// entry detection already matches; requiring the file is enough to fire main().
+require('@neat.is/core/dist/neatd.cjs')
