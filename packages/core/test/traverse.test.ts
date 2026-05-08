@@ -7,7 +7,7 @@ import {
   type ErrorEvent,
   type GraphEdge,
   type GraphNode,
-} from '@neat/types'
+} from '@neat.is/types'
 import type { NeatGraph } from '../src/graph.js'
 import { getBlastRadius, getRootCause } from '../src/traverse.js'
 

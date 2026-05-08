@@ -1,6 +1,6 @@
 ---
 name: schema
-description: Schema additions in @neat/types are growth (commit-and-go). Renames, removals, and type changes are shape changes (require ADR + persist.ts migration).
+description: Schema additions in @neat.is/types are growth (commit-and-go). Renames, removals, and type changes are shape changes (require ADR + persist.ts migration).
 governs:
   - "packages/types/src/**"
 adr: [ADR-031, ADR-019]
@@ -8,7 +8,7 @@ adr: [ADR-031, ADR-019]
 
 # Schema growth vs schema shape
 
-`@neat/types` schemas have two kinds of changes. The contract treats them very differently because they have very different costs.
+`@neat.is/types` schemas have two kinds of changes. The contract treats them very differently because they have very different costs.
 
 ## Growth — additive change. Allowed in any commit.
 
@@ -25,7 +25,7 @@ Code that consumes the previous schema continues to work. Data persisted under t
 2. The schema-snapshot test (`packages/core/test/audits/schema-snapshot.test.ts`) fails on next run.
 3. Re-run with `UPDATE_SNAPSHOT=1`:
    ```bash
-   UPDATE_SNAPSHOT=1 npm run test --workspace @neat/core -- test/audits/schema-snapshot.test.ts
+   UPDATE_SNAPSHOT=1 npm run test --workspace @neat.is/core -- test/audits/schema-snapshot.test.ts
    ```
 4. Commit the regenerated `packages/core/test/audits/schemas.snapshot.json` in the **same PR** as the schema change. The diff is the audit trail.
 
@@ -58,7 +58,7 @@ Existing precedent: [ADR-019](../decisions.md#adr-019--remove-pgdriverversion-fr
 
 ## What's snapshotted
 
-The binding schemas in `@neat/types`:
+The binding schemas in `@neat.is/types`:
 
 - `GraphNodeSchema` (and the five node variants: Service, Database, Config, Infra, Frontier)
 - `GraphEdgeSchema`
@@ -74,7 +74,7 @@ Internal Zod refinements (`.min`, `.max`, `.int`) are recorded when load-bearing
 
 ## What's *not* snapshotted
 
-- Schemas internal to `@neat/core` and `@neat/mcp` (those are implementation, not contract).
+- Schemas internal to `@neat.is/core` and `@neat.is/mcp` (those are implementation, not contract).
 - Test-only schemas in `packages/*/test/`.
 - Frontmatter fields on per-contract markdown files.
 
@@ -83,7 +83,7 @@ Internal Zod refinements (`.min`, `.max`, `.int`) are recorded when load-bearing
 The schema-snapshot test produces a normalized JSON tree of every binding schema and compares to the committed `schemas.snapshot.json`. On any difference:
 
 ```
-Schema drift detected — the @neat/types schemas have changed since the snapshot was taken.
+Schema drift detected — the @neat.is/types schemas have changed since the snapshot was taken.
 
 If the change is GROWTH (new optional field, new enum value, additive only):
   Re-run with UPDATE_SNAPSHOT=1 to regenerate, commit the updated snapshot.

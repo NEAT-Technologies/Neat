@@ -1,8 +1,8 @@
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { parseAllDocuments } from 'yaml'
-import type { ServiceNode } from '@neat/types'
-import { NodeType } from '@neat/types'
+import type { ServiceNode } from '@neat.is/types'
+import { NodeType } from '@neat.is/types'
 import type { NeatGraph } from '../graph.js'
 import {
   CONFIG_FILE_EXTENSIONS,

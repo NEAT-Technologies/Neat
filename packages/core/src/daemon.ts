@@ -39,7 +39,7 @@ import {
   touchLastSeen,
   writeAtomically,
 } from './registry.js'
-import type { RegistryEntry } from '@neat/types'
+import type { RegistryEntry } from '@neat.is/types'
 
 export interface DaemonOptions {
   // Defaults to `~/.neat/`. Honors NEAT_HOME the same way registry.ts does.

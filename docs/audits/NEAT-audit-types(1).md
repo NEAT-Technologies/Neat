@@ -1,11 +1,11 @@
 # NEAT Types Package Audit — MVP (TypeScript v0.1.x)
-## Load this before touching @neat/types or any code that imports from it.
+## Load this before touching @neat.is/types or any code that imports from it.
 
 **Scope:** This audit covers `packages/types` in the TypeScript MVP monorepo at `github.com/NEAT-Technologies/Neat`. It covers Zod schemas, TypeScript type exports, shared constants, and whether the package is actually used by the other packages or shadowed by local ad-hoc definitions.
 
-**Stack:** Zod for runtime validation and TypeScript type inference. No runtime dependencies on other `@neat/*` packages — types is the root of the dependency tree.
+**Stack:** Zod for runtime validation and TypeScript type inference. No runtime dependencies on other `@neat.is/*` packages — types is the root of the dependency tree.
 
-**The goal this audit serves:** `@neat/types` is the contract between all packages. If it drifts — if `packages/core` defines its own local GraphEdge type, if `packages/mcp` has its own ad-hoc ErrorEvent schema, if the Zod schemas do not match what the code actually produces — the entire system breaks silently. Type errors at compile time. Wrong data at runtime. Mismatched responses between tools and the graph.
+**The goal this audit serves:** `@neat.is/types` is the contract between all packages. If it drifts — if `packages/core` defines its own local GraphEdge type, if `packages/mcp` has its own ad-hoc ErrorEvent schema, if the Zod schemas do not match what the code actually produces — the entire system breaks silently. Type errors at compile time. Wrong data at runtime. Mismatched responses between tools and the graph.
 
 **What is not in scope:**
 - NeatScript type system — v1.0 only
@@ -14,7 +14,7 @@
 
 ---
 
-## What @neat/types must be — MVP
+## What @neat.is/types must be — MVP
 
 A single source of truth. Every schema, every type, every shared constant that crosses a package boundary must live here and only here. If a type is defined in more than one place in the monorepo, that is a critical gap.
 
@@ -43,7 +43,7 @@ packages/types/
 **Verify:**
 - Does this structure exist or is everything in one flat file?
 - Is `index.ts` a clean re-export of all schemas and types?
-- Does the package build cleanly with `pnpm --filter @neat/types build`?
+- Does the package build cleanly with `pnpm --filter @neat.is/types build`?
 - Is the package listed as a workspace dependency in `packages/core/package.json`, `packages/mcp/package.json`, and `packages/web/package.json`?
 
 ### 2. Provenance — MVP
@@ -214,7 +214,7 @@ export const ErrorEventSchema = z.object({
 ```
 
 **Verify:**
-- Is this schema in `@neat/types` and not redefined locally in packages/core?
+- Is this schema in `@neat.is/types` and not redefined locally in packages/core?
 - Is `id` validated as a UUID?
 - Is `timestamp` validated as an ISO8601 datetime?
 - Is the schema used when writing to `errors.ndjson`? Is it used when reading incidents via the REST API?
@@ -266,7 +266,7 @@ export const BlastRadiusResultSchema = z.object({
 ```
 
 **Verify:**
-- Are these schemas in `@neat/types` and not defined locally in packages/core/traverse.ts?
+- Are these schemas in `@neat.is/types` and not defined locally in packages/core/traverse.ts?
 - Is `edgeProvenances` an array matching the length of `traversalPath`? Each edge in the path has a provenance.
 - Is `confidence` on the root cause result a cascade of the individual edge confidences — not just the final edge's confidence?
 - Is `distance` an integer starting from 1 — not 0?
@@ -314,7 +314,7 @@ export const PolicyFileSchema = z.object({
 
 ### 10. Import audit — the most revealing check
 
-The purpose of `@neat/types` is that nothing else defines these types. If any package defines its own version of a type that should be in `@neat/types`, the contract is broken.
+The purpose of `@neat.is/types` is that nothing else defines these types. If any package defines its own version of a type that should be in `@neat.is/types`, the contract is broken.
 
 **Run these checks:**
 
@@ -329,11 +329,11 @@ grep -r "type Provenance" packages/core packages/mcp
 grep -r "z.object" packages/core/src packages/mcp/src
 ```
 
-Any `z.object` call in packages/core or packages/mcp that defines a type that should be in `@neat/types` is a gap. The only `z.object` calls permitted in packages/core and packages/mcp are for request/response validation that is specific to that package and not shared.
+Any `z.object` call in packages/core or packages/mcp that defines a type that should be in `@neat.is/types` is a gap. The only `z.object` calls permitted in packages/core and packages/mcp are for request/response validation that is specific to that package and not shared.
 
 **Verify:**
-- Are there any locally defined schemas in packages/core or packages/mcp that duplicate types from `@neat/types`?
-- Does every import of a shared type come from `@neat/types` — not from a relative path within the same package?
+- Are there any locally defined schemas in packages/core or packages/mcp that duplicate types from `@neat.is/types`?
+- Does every import of a shared type come from `@neat.is/types` — not from a relative path within the same package?
 
 ---
 
@@ -342,9 +342,9 @@ Any `z.object` call in packages/core or packages/mcp that defines a type that sh
 - `pgDriverVersion` still present on ServiceNodeSchema
 - Raw provenance strings (`'OBSERVED'`, `'EXTRACTED'`) used outside packages/types
 - Raw edge type strings (`'CALLS'`, `'CONNECTS_TO'`) used outside packages/types
-- Local type definitions in packages/core or packages/mcp that duplicate @neat/types schemas
+- Local type definitions in packages/core or packages/mcp that duplicate @neat.is/types schemas
 - `z.object` calls in packages/core or packages/mcp defining types that cross package boundaries
-- `ErrorEventSchema` defined locally in packages/core instead of imported from @neat/types
+- `ErrorEventSchema` defined locally in packages/core instead of imported from @neat.is/types
 - `PolicyViolationEventSchema` missing — must exist before policy layer is built
 - `lastObserved` typed as a number (Unix timestamp) instead of ISO8601 string
 - `confidence` typed as an integer instead of a float between 0.0 and 1.0
@@ -358,9 +358,9 @@ Any `z.object` call in packages/core or packages/mcp that defines a type that sh
 
 1. Is `pgDriverVersion` absent from ServiceNodeSchema and replaced by a general `drivers` map?
 2. Are raw provenance and edge type strings used anywhere outside packages/types?
-3. Does PolicyViolationEventSchema exist in @neat/types?
+3. Does PolicyViolationEventSchema exist in @neat.is/types?
 4. Is `sourceFile` present on GraphEdgeSchema for ghost edge cleanup?
-5. Does every shared type import come from `@neat/types` — with no local duplicates in other packages?
+5. Does every shared type import come from `@neat.is/types` — with no local duplicates in other packages?
 
 ---
 

@@ -1,8 +1,17 @@
 {
-  "name": "@neat/core",
-  "version": "0.2.0",
-  "private": true,
+  "name": "@neat.is/core",
+  "version": "0.2.5",
   "description": "NEAT graph engine: tree-sitter extraction, OTel ingest, REST API",
+  "license": "BUSL-1.1",
+  "homepage": "https://neat.is",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NEAT-Technologies/Neat.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -25,6 +34,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "prepublishOnly": "npm run build",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.cjs",
     "test": "vitest run",
@@ -35,7 +45,7 @@
     "@fastify/cors": "^10.0.0",
     "@grpc/grpc-js": "^1.14.3",
     "@grpc/proto-loader": "^0.8.0",
-    "@neat/types": "*",
+    "@neat.is/types": "^0.2.5",
     "chokidar": "^4.0.3",
     "fastify": "^5.0.0",
     "graphology": "^0.25.4",

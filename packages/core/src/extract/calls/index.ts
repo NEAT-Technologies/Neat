@@ -1,5 +1,5 @@
-import type { GraphEdge, InfraNode } from '@neat/types'
-import { EdgeType, NodeType, Provenance } from '@neat/types'
+import type { GraphEdge, InfraNode } from '@neat.is/types'
+import { EdgeType, NodeType, Provenance } from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
 import { makeEdgeId, type DiscoveredService } from '../shared.js'
 import { addHttpCallEdges } from './http.js'

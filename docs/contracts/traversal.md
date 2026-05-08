@@ -16,7 +16,7 @@ The shared mechanics under both `getRootCause` and `getBlastRadius`. Sibling con
 When multiple edges connect the same node pair under different provenances (the coexistence case from the [provenance contract](./provenance.md)), traversal picks the highest-priority edge:
 
 ```ts
-import { PROV_RANK } from '@neat/types'
+import { PROV_RANK } from '@neat.is/types'
 
 PROV_RANK.OBSERVED   // 3
 PROV_RANK.INFERRED   // 2
@@ -71,7 +71,7 @@ Neither throws.
 
 ## Identity helpers
 
-Any id construction or parsing routes through `@neat/types/identity`:
+Any id construction or parsing routes through `@neat.is/types/identity`:
 
 - `parseEdgeId(id)` for walking back from an edge id to its parts.
 - `observedEdgeId(...)` / `inferredEdgeId(...)` etc. when synthesizing an id (e.g. checking for an OBSERVED twin during the trace stitcher's [twin-skip rule](./trace-stitcher.md)).

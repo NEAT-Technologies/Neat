@@ -64,12 +64,12 @@ Every edge in the graph — and every result that comes out of these tools — c
 
 ## Configuration
 
-Set `NEAT_CORE_URL` if `@neat/core` is not running on `http://localhost:8080`.
+Set `NEAT_CORE_URL` if `@neat.is/core` is not running on `http://localhost:8080`.
 
 ## Install
 
 ```bash
-npm install -g @neat/mcp
+npm install -g @neat.is/mcp
 neat install
 ```
 

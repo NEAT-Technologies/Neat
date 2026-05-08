@@ -41,7 +41,7 @@
 - [PARTIAL] File naming differs from contract — no `provenance.ts` (in `constants.ts`), no `traversal.ts` (in `results.ts`), no `policy.ts` (deferred).
 - [PASS] `index.ts` re-exports all schemas — packages/types/src/index.ts:1-5.
 - [N/A] pnpm build — repo uses npm (ADR-007); tsup wired at packages/types/package.json:21.
-- [PASS] Workspace dep wired into core/mcp/web — `"@neat/types": "*"` in all three.
+- [PASS] Workspace dep wired into core/mcp/web — `"@neat.is/types": "*"` in all three.
 
 ### 2. Provenance
 - [PASS] Const + Zod enum — packages/types/src/constants.ts:1-7; edges.ts:4-10.
@@ -73,7 +73,7 @@
 - [PARTIAL] Extras `evidence`/`signal` — additions for γ #76, not contract violations.
 
 ### 6. ErrorEvent schema
-- [PASS] In `@neat/types`, not redefined locally — events.ts:3-12; api.ts:7 + ingest.ts:3 import from there.
+- [PASS] In `@neat.is/types`, not redefined locally — events.ts:3-12; api.ts:7 + ingest.ts:3 import from there.
 - [FAIL] `id` validated as UUID — events.ts:4 is `z.string()`; ingest.ts:366 generates `${traceId}:${spanId}` which would fail UUID validation.
 - [PASS] `timestamp` ISO8601 — events.ts:5.
 - [FAIL] `affectedEdge` field — absent; only `affectedNode` (events.ts:11).
@@ -83,7 +83,7 @@
 - [NOT-BUILT] Deferred to v0.2.1 (#115/#116).
 
 ### 8. Traversal result schemas
-- [PASS] In `@neat/types` — results.ts:4-26; traverse.ts imports from there.
+- [PASS] In `@neat.is/types` — results.ts:4-26; traverse.ts imports from there.
 - [PASS] `edgeProvenances` array of provenance — results.ts:8; populated 1-per-edge at traverse.ts:234.
 - [PASS] `confidence` cascaded, not just final edge — traverse.ts:127-131.
 - [FAIL] `BlastRadiusAffectedNode` missing `path` and `confidence` per node — results.ts:14-18 only has `nodeId`/`distance`/`edgeProvenance`. Audit's contract requires both.
@@ -95,19 +95,19 @@
 ### 10. Import audit
 - [PASS] No locally-defined duplicate schemas in core/mcp.
 - [PASS] No `z.object`/`z.enum` in core/mcp src.
-- [PASS] All shared types imported from `@neat/types`.
+- [PASS] All shared types imported from `@neat.is/types`.
 
 ### Five questions
 1. [PASS] `pgDriverVersion` absent — replaced by `dependencies` map (nodes.ts:18); name mismatch with contract's `drivers`.
 2. [PASS] No raw provenance strings; 4 raw `'CALLS'` literals in extract/calls/* (named in §3).
 3. [NOT-BUILT] `PolicyViolationEventSchema` — v0.2.1 #115/#116.
 4. [FAIL] `sourceFile` not present on GraphEdgeSchema (edges.ts:39-50).
-5. [PASS] Every shared import comes from `@neat/types`.
+5. [PASS] Every shared import comes from `@neat.is/types`.
 
 ### Severity summary
 - **FAIL (high) — 6:** ServiceNode missing `framework`/`owner`/`compatibilityWarnings`; `dependencies` named differently from contract's `drivers`; GraphEdge missing `sourceFile`; ErrorEvent `id` not `.uuid()`; ErrorEvent missing `affectedEdge`; `BlastRadiusAffectedNode` missing `path`/`confidence`; `distance` allows 0.
 - **PARTIAL — 7:** package file naming, raw `'CALLS'` literals, EdgeType enum extended, DatabaseNode/InfraNode shape diffs, GraphEdge extras `evidence`/`signal`, ErrorEvent never `.parse()`'d at runtime.
-- **PASS — 14:** workspace deps, Provenance const+enum, FRONTIER present, EdgeType const+enum, no raw provenance strings, `z.literal` discriminator, `GraphNodeSchema` union, GraphEdge optionality/range, ErrorEvent location, RootCause schema location, edgeProvenances per edge, confidence cascade, no duplicate schemas in core/mcp, all imports from `@neat/types`.
+- **PASS — 14:** workspace deps, Provenance const+enum, FRONTIER present, EdgeType const+enum, no raw provenance strings, `z.literal` discriminator, `GraphNodeSchema` union, GraphEdge optionality/range, ErrorEvent location, RootCause schema location, edgeProvenances per edge, confidence cascade, no duplicate schemas in core/mcp, all imports from `@neat.is/types`.
 - **NOT-BUILT — 6:** PolicyViolationEventSchema and Policy*/PolicyFile family.
 
 ---
@@ -128,7 +128,7 @@
 
 ### 3. Edge types
 - [PARTIAL] `EdgeTypeSchema` (edges.ts:11-19) not validated at `addEdgeWithKey` call sites.
-- [PASS] All edges go through `EdgeType.X` constants from `@neat/types`.
+- [PASS] All edges go through `EdgeType.X` constants from `@neat.is/types`.
 - [PASS] No edges created without `type` field.
 - [INFO] Audit §3 list is stale — `EdgeType` (constants.ts:11-19) also defines `PUBLISHES_TO`/`CONSUMES_FROM`/`RUNS_ON`.
 
@@ -301,7 +301,7 @@
 - [PASS] ErrorEvent → ndjson — `appendErrorEvent` (ingest.ts:306-309).
 - [PARTIAL] `affectedEdge` populated — schema has `affectedNode` (events.ts:11), not `affectedEdge`. Implementation sets `affectedNode`.
 - [FAIL] Exception data from span events — `OtlpSpan` (otel.ts:66-76) does not parse `events`. Error message from `span.status.message` only.
-- [PASS] ErrorEvent typed via `@neat/types`.
+- [PASS] ErrorEvent typed via `@neat.is/types`.
 
 ### 7. Trace stitcher
 - [PASS] Only on ERROR spans — ingest.ts:363-364.
@@ -449,7 +449,7 @@
 
 ## Policies audit (NEAT-audit-policies.md)
 
-**Source:** None — feature deferred to v0.2.1 (#115-#118). No `policy.json`, no `packages/core/src/policy.ts`, no `Policy*Schema` in `@neat/types`. This pass confirms scope; the audit is a build contract, not a drift check.
+**Source:** None — feature deferred to v0.2.1 (#115-#118). No `policy.json`, no `packages/core/src/policy.ts`, no `Policy*Schema` in `@neat.is/types`. This pass confirms scope; the audit is a build contract, not a drift check.
 
 All 47 checkboxes graded **NOT-BUILT** with the issue number that covers each one (#115 schema, #116 evaluation engine, #117 REST+MCP surface, #118 real-world policy library).
 

@@ -9,7 +9,7 @@ import {
   type GraphNode,
   NodeType,
   Provenance,
-} from '@neat/types'
+} from '@neat.is/types'
 import { computeGraphDiff, loadSnapshotForDiff } from '../src/diff.js'
 import { saveGraphToDisk } from '../src/persist.js'
 import type { NeatGraph } from '../src/graph.js'

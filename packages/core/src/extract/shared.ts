@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
-import type { ServiceNode } from '@neat/types'
+import type { ServiceNode } from '@neat.is/types'
 
 export interface PackageJson {
   name: string
@@ -65,6 +65,6 @@ export async function exists(p: string): Promise<boolean> {
 }
 
 // Thin re-export so existing callers (calls/, configs.ts, databases/, infra/)
-// keep their import path. Wire format lives in @neat/types/identity.ts per
+// keep their import path. Wire format lives in @neat.is/types/identity.ts per
 // ADR-029.
-export { extractedEdgeId as makeEdgeId } from '@neat/types'
+export { extractedEdgeId as makeEdgeId } from '@neat.is/types'

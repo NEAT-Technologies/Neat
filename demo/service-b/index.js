@@ -21,7 +21,7 @@ app.get('/query', async (_req, res) => {
     // pg 7.4.0 + Postgres 15 → scram-sha-256 auth failure surfaces here.
     // No span carries db.system: postgresql for this query (pg 7.4.0 is too
     // old for @opentelemetry/instrumentation-pg). Instead, the trace
-    // stitcher in @neat/core sees the erroring service-a → service-b span,
+    // stitcher in @neat.is/core sees the erroring service-a → service-b span,
     // walks the static graph, and writes an INFERRED CONNECTS_TO edge to
     // payments-db. See ADR-014.
     res.status(500).json({ ok: false, error: err.message })

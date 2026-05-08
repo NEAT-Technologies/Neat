@@ -16,7 +16,7 @@ If `npm install` fails with a tsup-not-found error, you've got leftover `package
 
 ```bash
 NEAT_SCAN_PATH=./demo \
-  npm run dev --workspace @neat/core
+  npm run dev --workspace @neat.is/core
 # → http://localhost:8080
 ```
 
@@ -26,7 +26,7 @@ Defaults: `PORT=8080`, `HOST=0.0.0.0`, snapshot path `./neat-out/graph.json`. Ov
 
 ```bash
 # in one terminal
-NEAT_SCAN_PATH=./demo npm run dev --workspace @neat/core
+NEAT_SCAN_PATH=./demo npm run dev --workspace @neat.is/core
 
 # in another
 curl -s localhost:8080/health | jq
@@ -57,16 +57,16 @@ No code change needed. The lookup is data-driven by design.
 
 ```bash
 npx turbo test                         # all packages
-npm test --workspace @neat/types       # one package
-npm run build --workspace @neat/core   # build only one
+npm test --workspace @neat.is/types       # one package
+npm run build --workspace @neat.is/core   # build only one
 ```
 
-`@neat/mcp` and `@neat/web` use `vitest run --passWithNoTests` until real test files land.
+`@neat.is/mcp` and `@neat.is/web` use `vitest run --passWithNoTests` until real test files land.
 
 ## Smoke-test the MCP server
 
 ```bash
-npm run build --workspace @neat/mcp
+npm run build --workspace @neat.is/mcp
 
 (printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
@@ -84,7 +84,7 @@ Most NEAT installs land OTLP traffic over HTTP/JSON on `:4318`. If your collecto
 ```bash
 NEAT_SCAN_PATH=./demo \
   NEAT_OTLP_GRPC=true \
-  npm run dev --workspace @neat/core
+  npm run dev --workspace @neat.is/core
 # → http://localhost:8080  (REST API)
 # → http://localhost:4318  (OTLP/HTTP)
 # → 0.0.0.0:4317           (OTLP/gRPC)

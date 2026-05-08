@@ -24,7 +24,7 @@ import {
   BlastRadiusResultSchema,
   type GraphEdge,
   type GraphNode,
-} from '@neat/types'
+} from '@neat.is/types'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { NeatGraph } from '../../src/graph.js'
@@ -45,7 +45,7 @@ function walkSrc(dir: string, files: string[] = []): string[] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Rule 1 — Provenance is a shared const; no raw string literals outside @neat/types
+// Rule 1 — Provenance is a shared const; no raw string literals outside @neat.is/types
 // ──────────────────────────────────────────────────────────────────────────
 describe('Rule 1 — Provenance contract', () => {
   it('Provenance enum includes the five MVP values', () => {
@@ -117,7 +117,7 @@ describe('Rule 2 — OBSERVED/EXTRACTED coexistence', () => {
 // ──────────────────────────────────────────────────────────────────────────
 describe('Rule 3 — FRONTIER exclusion from traversal', () => {
   it('getRootCause returns null when the only path to a candidate root cause is via FRONTIER (issue #136)', async () => {
-    const { frontierId, frontierEdgeId, extractedEdgeId, databaseId } = await import('@neat/types')
+    const { frontierId, frontierEdgeId, extractedEdgeId, databaseId } = await import('@neat.is/types')
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
     // Origin is a DatabaseNode (the only origin getRootCause currently handles).
     // The would-be culprit ServiceNode sits behind a FRONTIER edge — if FRONTIER
@@ -147,7 +147,7 @@ describe('Rule 3 — FRONTIER exclusion from traversal', () => {
   })
 
   it('getBlastRadius does not enqueue past a FRONTIER edge (issue #136)', async () => {
-    const { frontierId, frontierEdgeId } = await import('@neat/types')
+    const { frontierId, frontierEdgeId } = await import('@neat.is/types')
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
     g.addNode('service:origin', { id: 'service:origin', type: NodeType.ServiceNode, name: 'origin', language: 'javascript' })
     const fid = frontierId('unknown:8080')
@@ -183,7 +183,7 @@ describe('Rule 4 — Per-edge-type staleness thresholds', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
-// Rule 5 — Schemas live in @neat/types; consumers don't redefine
+// Rule 5 — Schemas live in @neat.is/types; consumers don't redefine
 // ──────────────────────────────────────────────────────────────────────────
 describe('Rule 5 — Shared schemas, no local redefinitions', () => {
   it('no local interface (Service|Database|Config|Infra|Frontier|Graph)Node in core/mcp', () => {
@@ -198,7 +198,7 @@ describe('Rule 5 — Shared schemas, no local redefinitions', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 
-  it('no z.object or z.enum in core/mcp src (schemas belong in @neat/types)', () => {
+  it('no z.object or z.enum in core/mcp src (schemas belong in @neat.is/types)', () => {
     const offenders: string[] = []
     const re = /\bz\.(object|enum)\s*\(/
     for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC)]) {
@@ -212,7 +212,7 @@ describe('Rule 5 — Shared schemas, no local redefinitions', () => {
     // Property assertion: any non-null result returned by getRootCause must
     // round-trip through the schema. The fixture matches the demo graph the
     // existing traverse.test.ts uses.
-    const { extractedEdgeId } = await import('@neat/types')
+    const { extractedEdgeId } = await import('@neat.is/types')
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
     g.addNode('database:payments-db', {
       id: 'database:payments-db',
@@ -277,7 +277,7 @@ describe('Rule 6 — Live graph reads', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
-// Rule 16 — Node ids come from @neat/types/identity helpers, not literals
+// Rule 16 — Node ids come from @neat.is/types/identity helpers, not literals
 // ──────────────────────────────────────────────────────────────────────────
 describe('Rule 16 — Node identity helpers (ADR-028)', () => {
   it('no hand-rolled `service:`/`database:`/`config:`/`infra:`/`frontier:` template literals in core/mcp src', () => {
@@ -300,7 +300,7 @@ describe('Rule 16 — Node identity helpers (ADR-028)', () => {
   })
 
   it('identity helpers produce stable wire format', async () => {
-    const { serviceId, databaseId, configId, infraId, frontierId } = await import('@neat/types')
+    const { serviceId, databaseId, configId, infraId, frontierId } = await import('@neat.is/types')
     expect(serviceId('checkout')).toBe('service:checkout')
     expect(databaseId('db.example.com')).toBe('database:db.example.com')
     expect(configId('apps/web/.env')).toBe('config:apps/web/.env')
@@ -320,7 +320,7 @@ describe('Rule 16 — Node identity helpers (ADR-028)', () => {
       parseInfraId,
       frontierId,
       parseFrontierId,
-    } = await import('@neat/types')
+    } = await import('@neat.is/types')
     expect(parseServiceId(serviceId('checkout'))).toBe('checkout')
     expect(parseDatabaseId(databaseId('host'))).toBe('host')
     expect(parseConfigId(configId('a/b/.env'))).toBe('a/b/.env')
@@ -388,7 +388,7 @@ describe('Lifecycle contract — mutation authority (ADR-030)', () => {
 
 describe('Lifecycle contract — STALE → OBSERVED resurrection (ADR-030)', () => {
   it('a span on a STALE edge flips provenance back to OBSERVED with confidence 1.0', async () => {
-    const { observedEdgeId } = await import('@neat/types')
+    const { observedEdgeId } = await import('@neat.is/types')
     const { handleSpan } = await import('../../src/ingest.js')
     const { mkdtempSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
@@ -450,7 +450,7 @@ describe('Lifecycle contract — STALE → OBSERVED resurrection (ADR-030)', () 
 
 describe('Lifecycle contract — FRONTIER → OBSERVED on promotion (ADR-030)', () => {
   it('promoteFrontierNodes upgrades a FRONTIER edge to OBSERVED', async () => {
-    const { frontierId, frontierEdgeId } = await import('@neat/types')
+    const { frontierId, frontierEdgeId } = await import('@neat.is/types')
     const { promoteFrontierNodes } = await import('../../src/ingest.js')
 
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
@@ -649,7 +649,7 @@ describe('OTel ingest contract (ADR-033)', () => {
   it('lastObserved derives from span.startTimeUnixNano, not Date.now() (issue #132)', async () => {
     const { handleSpan } = await import('../../src/ingest.js')
     const { isoFromUnixNano } = await import('../../src/otel.js')
-    const { observedEdgeId } = await import('@neat/types')
+    const { observedEdgeId } = await import('@neat.is/types')
     const { mkdtempSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
 
@@ -699,7 +699,7 @@ describe('OTel ingest contract (ADR-033)', () => {
   })
   it('parent-span cache resolves cross-service CALLS when address-based resolution fails (issue #133)', async () => {
     const { handleSpan, resetParentSpanCache } = await import('../../src/ingest.js')
-    const { observedEdgeId, serviceId } = await import('@neat/types')
+    const { observedEdgeId, serviceId } = await import('@neat.is/types')
     const { mkdtempSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
 
@@ -745,7 +745,7 @@ describe('OTel ingest contract (ADR-033)', () => {
   })
   it('handleSpan auto-creates ServiceNode at serviceId(span.service) for unseen services (issue #134)', async () => {
     const { handleSpan } = await import('../../src/ingest.js')
-    const { serviceId } = await import('@neat/types')
+    const { serviceId } = await import('@neat.is/types')
     const { mkdtempSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
 
@@ -780,7 +780,7 @@ describe('OTel ingest contract (ADR-033)', () => {
 
   it('handleSpan auto-creates DatabaseNode at databaseId(host) for unseen db.system+host (issue #134)', async () => {
     const { handleSpan } = await import('../../src/ingest.js')
-    const { databaseId } = await import('@neat/types')
+    const { databaseId } = await import('@neat.is/types')
     const { mkdtempSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
 
@@ -930,7 +930,7 @@ describe('Trace stitcher contract (ADR-034)', () => {
   })
 
   it('stitchTrace skips a hop when an OBSERVED twin already exists for the (source, target, type) triplet', async () => {
-    const { extractedEdgeId, observedEdgeId, inferredEdgeId } = await import('@neat/types')
+    const { extractedEdgeId, observedEdgeId, inferredEdgeId } = await import('@neat.is/types')
     const { stitchTrace } = await import('../../src/ingest.js')
 
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
@@ -982,7 +982,7 @@ describe('FrontierNode promotion contract (ADR-035)', () => {
   // Catches the variable-interpolated provenance pattern that the contract #2
   // scan (line ~570) misses. `${edge.type}:${promotedProvenance}:${...}->${...}`
   // is exactly the violation that lived at ingest.ts:463 before the rebuildEdge
-  // fix routed through the canonical helpers in @neat/types/identity.
+  // fix routed through the canonical helpers in @neat.is/types/identity.
   it('no variable-interpolated provenance segment in edge id template literals — `${X}:${Y}:${Z}->${W}` (FrontierNode rebuild fix)', () => {
     const offenders: string[] = []
     // Four interpolations chained with `:` between the first three and `->`
@@ -1002,7 +1002,7 @@ describe('FrontierNode promotion contract (ADR-035)', () => {
   })
 
   it('rebuildEdge constructs ids via canonical helpers — promoted FRONTIER→OBSERVED edge id matches observedEdgeId()', async () => {
-    const { observedEdgeId, frontierId, frontierEdgeId } = await import('@neat/types')
+    const { observedEdgeId, frontierId, frontierEdgeId } = await import('@neat.is/types')
     const { promoteFrontierNodes } = await import('../../src/ingest.js')
 
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
@@ -1117,7 +1117,7 @@ describe('getRootCause contract (ADR-037)', () => {
   })
 
   it('ServiceNode origin produces a result when an upstream service violates node-engine compat (issue #123 generalization)', async () => {
-    const { extractedEdgeId } = await import('@neat/types')
+    const { extractedEdgeId } = await import('@neat.is/types')
     const { ensureCompatLoaded } = await import('../../src/compat.js')
     await ensureCompatLoaded()
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
@@ -1173,7 +1173,7 @@ describe('getRootCause contract (ADR-037)', () => {
     expect(content).toMatch(/RootCauseResultSchema\.parse\s*\(/)
   })
   it('traversalPath[0] is the origin and last entry is rootCauseNode', async () => {
-    const { extractedEdgeId } = await import('@neat/types')
+    const { extractedEdgeId } = await import('@neat.is/types')
     const { ensureCompatLoaded } = await import('../../src/compat.js')
     await ensureCompatLoaded()
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
@@ -1258,7 +1258,7 @@ describe('getBlastRadius contract (ADR-038)', () => {
     expect(b.confidence).toBeCloseTo(0.5, 5)
   })
   it('BlastRadiusAffectedNode.distance schema rejects 0 (issue #138)', async () => {
-    const { BlastRadiusAffectedNodeSchema } = await import('@neat/types')
+    const { BlastRadiusAffectedNodeSchema } = await import('@neat.is/types')
     // distance must be positive — the origin is never in affectedNodes, so 0
     // has no meaning. Locking this in the schema keeps the BFS at traverse.ts
     // honest mechanically.
@@ -1400,7 +1400,7 @@ describe('Provenance contract — edge identity (ADR-029)', () => {
     const offenders: string[] = []
     // Catches the EXTRACTED pattern: `${anything}:${anything}->${anything}` where the
     // first two interpolations are followed by literal `:` and `->`. Allow the helpers
-    // themselves (in @neat/types) and test fixtures.
+    // themselves (in @neat.is/types) and test fixtures.
     const re = /`\$\{[^}]+\}:\$\{[^}]+\}->\$\{[^}]+\}`/
     for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC)]) {
       const content = readFileSync(file, 'utf8')
@@ -1415,7 +1415,7 @@ describe('Provenance contract — edge identity (ADR-029)', () => {
   })
 
   it('edge id helpers produce stable wire format', async () => {
-    const { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierEdgeId } = await import('@neat/types')
+    const { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierEdgeId } = await import('@neat.is/types')
     expect(extractedEdgeId('service:a', 'service:b', 'CALLS')).toBe('CALLS:service:a->service:b')
     expect(observedEdgeId('service:a', 'service:b', 'CALLS')).toBe('CALLS:OBSERVED:service:a->service:b')
     expect(inferredEdgeId('service:a', 'service:b', 'CALLS')).toBe('CALLS:INFERRED:service:a->service:b')
@@ -1426,7 +1426,7 @@ describe('Provenance contract — edge identity (ADR-029)', () => {
 
   it('parseEdgeId round-trips all four provenance variants', async () => {
     const { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierEdgeId, parseEdgeId } =
-      await import('@neat/types')
+      await import('@neat.is/types')
     const cases = [
       { make: extractedEdgeId, prov: 'EXTRACTED' as const },
       { make: observedEdgeId, prov: 'OBSERVED' as const },
@@ -1447,7 +1447,7 @@ describe('Provenance contract — edge identity (ADR-029)', () => {
   })
 
   it('PROV_RANK ordering is OBSERVED > INFERRED > EXTRACTED > {STALE, FRONTIER}', async () => {
-    const { PROV_RANK } = await import('@neat/types')
+    const { PROV_RANK } = await import('@neat.is/types')
     expect(PROV_RANK.OBSERVED).toBeGreaterThan(PROV_RANK.INFERRED)
     expect(PROV_RANK.INFERRED).toBeGreaterThan(PROV_RANK.EXTRACTED)
     expect(PROV_RANK.EXTRACTED).toBeGreaterThan(PROV_RANK.STALE)
@@ -1456,7 +1456,7 @@ describe('Provenance contract — edge identity (ADR-029)', () => {
   })
 
   it('PROV_RANK is frozen (Object.isFrozen)', async () => {
-    const { PROV_RANK } = await import('@neat/types')
+    const { PROV_RANK } = await import('@neat.is/types')
     expect(Object.isFrozen(PROV_RANK)).toBe(true)
   })
 })
@@ -1673,12 +1673,12 @@ describe('REST API contract (ADR-040)', () => {
     expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH/)
     expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_MAX_DEPTH/)
   })
-  it('POST endpoints validate inbound bodies with Zod schemas from @neat/types', () => {
+  it('POST endpoints validate inbound bodies with Zod schemas from @neat.is/types', () => {
     const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
-    // Every scope.post body is parsed via a Zod schema from @neat/types.
+    // Every scope.post body is parsed via a Zod schema from @neat.is/types.
     // PoliciesCheckBodySchema.safeParse is the v0.2.4 instance; the Rule 5
     // "no z.object in core" scan separately enforces that schemas live in
-    // @neat/types rather than being redefined inline.
+    // @neat.is/types rather than being redefined inline.
     expect(api).toMatch(/PoliciesCheckBodySchema\.safeParse/)
   })
 
@@ -1717,8 +1717,8 @@ describe('Persistence contract (ADR-041)', () => {
 // Policy contracts (ADRs 042-045)
 // ──────────────────────────────────────────────────────────────────────────
 describe('Policy contracts (ADRs 042-045)', () => {
-  it('PolicyFileSchema exists in @neat/types/policy.ts with version: z.literal(1) (ADR-042)', async () => {
-    const { PolicyFileSchema } = await import('@neat/types')
+  it('PolicyFileSchema exists in @neat.is/types/policy.ts with version: z.literal(1) (ADR-042)', async () => {
+    const { PolicyFileSchema } = await import('@neat.is/types')
     // version must be the literal 1; anything else fails parse.
     expect(() =>
       PolicyFileSchema.parse({ version: 1, policies: [] }),
@@ -1733,7 +1733,7 @@ describe('Policy contracts (ADRs 042-045)', () => {
   })
 
   it('Policy is a discriminated union by rule.type with five MVP types (ADR-042)', async () => {
-    const { PolicyRuleSchema } = await import('@neat/types')
+    const { PolicyRuleSchema } = await import('@neat.is/types')
     // All five MVP rule types must round-trip through the discriminator.
     const cases: Array<{ type: string; rule: unknown }> = [
       {
@@ -1766,7 +1766,7 @@ describe('Policy contracts (ADRs 042-045)', () => {
   })
 
   it('PolicyFileSchema.parse fails loudly on malformed policy.json (ADR-042)', async () => {
-    const { PolicyFileSchema } = await import('@neat/types')
+    const { PolicyFileSchema } = await import('@neat.is/types')
     // Missing top-level fields.
     expect(() => PolicyFileSchema.parse({})).toThrow()
     // Wrong version.
@@ -1979,7 +1979,7 @@ describe('Policy contracts (ADRs 042-045)', () => {
 
   it('promoteFrontierNodes honors canPromoteFrontier and skips block-gated frontiers (ADR-044)', async () => {
     const { promoteFrontierNodes } = await import('../../src/ingest.js')
-    const { frontierId, frontierEdgeId } = await import('@neat/types')
+    const { frontierId, frontierEdgeId } = await import('@neat.is/types')
     const fid = frontierId('blocked.host')
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
     g.addNode('service:caller', {
@@ -2035,7 +2035,7 @@ describe('Policy contracts (ADRs 042-045)', () => {
 
   it('block action returns false from canPromoteFrontier when block-policy violates (ADR-044)', async () => {
     const { canPromoteFrontier } = await import('../../src/policy.js')
-    const { frontierId } = await import('@neat/types')
+    const { frontierId } = await import('@neat.is/types')
     const fid = frontierId('blocked.host')
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
     g.addNode(fid, { id: fid, type: NodeType.FrontierNode, name: 'blocked.host', host: 'blocked.host' })
@@ -3018,12 +3018,12 @@ describe('Claude Code skill packaging', () => {
     expect(fileParsed).toEqual(CLAUDE_SKILL_CONFIG)
   })
 
-  it('snippet wires @neat/mcp over stdio with NEAT_API_URL', async () => {
+  it('snippet wires @neat.is/mcp over stdio with NEAT_API_URL', async () => {
     const { CLAUDE_SKILL_CONFIG } = await import('../../src/cli.js')
     const neat = CLAUDE_SKILL_CONFIG.mcpServers.neat
     expect(neat.type).toBe('stdio')
     expect(neat.command).toBe('npx')
-    expect(neat.args).toContain('@neat/mcp')
+    expect(neat.args).toContain('@neat.is/mcp')
     expect(neat.env.NEAT_API_URL).toMatch(/^https?:\/\//)
   })
 
@@ -3061,7 +3061,7 @@ describe('Claude Code skill packaging', () => {
       expect(after.mcpServers.other.command).toBe('something')
       // The neat entry is in place.
       expect(after.mcpServers.neat.type).toBe('stdio')
-      expect(after.mcpServers.neat.args).toContain('@neat/mcp')
+      expect(after.mcpServers.neat.args).toContain('@neat.is/mcp')
     } finally {
       console.log = prevLog
       if (prev === undefined) delete process.env.NEAT_CLAUDE_CONFIG
@@ -3085,7 +3085,7 @@ describe('Queued contracts (v0.2.1 leftovers — #141, #142, #145)', () => {
   // noise. The remaining three (#141, #142, #145) are v0.2.1 leftovers
   // tracked under v0.x rolling cleanup per the v0.2.1 close.
   it('Ghost EXTRACTED edges removed on re-extract (issue #140)', async () => {
-    const { extractedEdgeId } = await import('@neat/types')
+    const { extractedEdgeId } = await import('@neat.is/types')
     const { retireEdgesByFile } = await import('../../src/extract/retire.js')
 
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })

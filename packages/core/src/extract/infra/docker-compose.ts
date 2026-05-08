@@ -1,6 +1,6 @@
 import path from 'node:path'
-import type { GraphEdge } from '@neat/types'
-import { EdgeType, Provenance } from '@neat/types'
+import type { GraphEdge } from '@neat.is/types'
+import { EdgeType, Provenance } from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
 import { exists, makeEdgeId, readYaml, type DiscoveredService } from '../shared.js'
 import { classifyImage, makeInfraNode } from './shared.js'

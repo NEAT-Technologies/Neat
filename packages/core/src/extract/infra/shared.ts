@@ -1,5 +1,5 @@
-import type { InfraNode } from '@neat/types'
-import { NodeType, infraId } from '@neat/types'
+import type { InfraNode } from '@neat.is/types'
+import { NodeType, infraId } from '@neat.is/types'
 
 // ADR-010 reserves the `infra:` prefix; the kind segment lets traversal and
 // MCP tools sub-type without inventing a new top-level NodeType per source.

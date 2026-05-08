@@ -7,7 +7,7 @@ import type {
   GraphEdge,
   Policy,
   ServiceNode,
-} from '@neat/types'
+} from '@neat.is/types'
 import type { EvaluationContext as PolicyEvaluationContext } from './policy.js'
 import { canPromoteFrontier } from './policy.js'
 import {
@@ -22,7 +22,7 @@ import {
   observedEdgeId,
   serviceId,
   type EdgeTypeValue,
-} from '@neat/types'
+} from '@neat.is/types'
 import type { NeatGraph } from './graph.js'
 import type { ParsedSpan } from './otel.js'
 
@@ -33,7 +33,7 @@ import type { ParsedSpan } from './otel.js'
 //   * Span with status.code === 2 → ErrorEvent appended to errors.ndjson.
 //
 // Contract anchors (see /docs/contracts.md):
-//   * Rule 1 — Provenance: every edge here carries Provenance.X from @neat/types.
+//   * Rule 1 — Provenance: every edge here carries Provenance.X from @neat.is/types.
 //   * Rule 2 — Coexistence: OBSERVED edges live alongside EXTRACTED ones with a
 //     distinct id pattern (`${type}:OBSERVED:src->tgt`). Never write OBSERVED
 //     under the EXTRACTED id; that erases the gap NEAT exists to surface.
@@ -135,7 +135,7 @@ function pickAddress(span: ParsedSpan): string | undefined {
   )
 }
 
-// Edge id helpers live in @neat/types/identity.ts (ADR-029). The local
+// Edge id helpers live in @neat.is/types/identity.ts (ADR-029). The local
 // signatures below preserve the (type, source, target) argument order ingest.ts
 // has used historically while delegating to the canonical wire-format helpers.
 function makeObservedEdgeId(type: EdgeTypeValue, source: string, target: string): string {

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import cytoscape, { type Core, type ElementDefinition, type StylesheetStyle } from 'cytoscape'
-import type { GraphEdge, GraphNode } from '@neat/types'
+import type { GraphEdge, GraphNode } from '@neat.is/types'
 
 interface GraphResponse {
   nodes: GraphNode[]

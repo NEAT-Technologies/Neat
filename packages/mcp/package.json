@@ -1,8 +1,17 @@
 {
-  "name": "@neat/mcp",
-  "version": "0.2.0",
-  "private": true,
+  "name": "@neat.is/mcp",
+  "version": "0.2.5",
   "description": "NEAT MCP server: exposes graph queries to AI agents over stdio",
+  "license": "BUSL-1.1",
+  "homepage": "https://neat.is",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NEAT-Technologies/Neat.git",
+    "directory": "packages/mcp"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -20,6 +29,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsup",
+    "prepublishOnly": "npm run build",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.cjs",
     "test": "vitest run --passWithNoTests",
@@ -28,7 +38,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@neat/types": "*",
+    "@neat.is/types": "^0.2.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

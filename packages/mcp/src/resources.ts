@@ -17,7 +17,7 @@ import type {
   ListResourcesResult,
   ReadResourceResult,
 } from '@modelcontextprotocol/sdk/types.js'
-import type { ErrorEvent, GraphEdge, GraphNode, PolicyViolation } from '@neat/types'
+import type { ErrorEvent, GraphEdge, GraphNode, PolicyViolation } from '@neat.is/types'
 import { HttpError, type HttpClient } from './client.js'
 
 interface EdgesResponse {

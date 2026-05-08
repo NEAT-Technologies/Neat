@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { MultiDirectedGraph } from 'graphology'
-import type { GraphEdge, GraphNode, ServiceNode } from '@neat/types'
+import type { GraphEdge, GraphNode, ServiceNode } from '@neat.is/types'
 import type { NeatGraph } from '../src/graph.js'
 import { extractFromDirectory } from '../src/extract.js'
 

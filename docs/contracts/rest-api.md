@@ -49,7 +49,7 @@ JSON shape: `{ error: string, status: number, details?: unknown }`. `400` for ba
 
 ## Schema validation
 
-Every `app.post` body parses via Zod schemas from `@neat/types`. Failure → 400 with the Zod error in `details`.
+Every `app.post` body parses via Zod schemas from `@neat.is/types`. Failure → 400 with the Zod error in `details`.
 
 ## Live graphology, never `graph.json`
 

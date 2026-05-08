@@ -5,7 +5,7 @@ import { resetGraph, getGraph } from '../src/graph.js'
 import { extractFromDirectory } from '../src/extract.js'
 import { discoverPythonService } from '../src/extract/python.js'
 import { getRootCause } from '../src/traverse.js'
-import type { ServiceNode } from '@neat/types'
+import type { ServiceNode } from '@neat.is/types'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PY_FIXTURES = path.resolve(__dirname, 'fixtures', 'python')

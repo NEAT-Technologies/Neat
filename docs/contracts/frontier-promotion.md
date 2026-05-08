@@ -63,7 +63,7 @@ Other provenance values pass through unchanged:
 
 ## Edge id construction (binding — and a current violation)
 
-`rebuildEdge` MUST construct the new edge id via the canonical helpers from `@neat/types/identity` (ADR-029):
+`rebuildEdge` MUST construct the new edge id via the canonical helpers from `@neat.is/types/identity` (ADR-029):
 
 ```ts
 const newId =

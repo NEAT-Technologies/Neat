@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { infraId } from '@neat/types'
+import { infraId } from '@neat.is/types'
 import { lineOf, snippet, type ExternalEndpoint, type SourceFile } from './shared.js'
 
 // AWS SDK v3 calls. We catch S3 (`Bucket: "x"` near a `S3Client`-using

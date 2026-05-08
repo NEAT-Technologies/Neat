@@ -108,7 +108,7 @@ When a span carries `status.code === 2`, an ErrorEvent must be created.
 - Is the ErrorEvent written to `neat-out/errors.ndjson` as a complete JSON object per line?
 - Is `affectedEdge` populated when the error occurred on a known CALLS or CONNECTS_TO edge?
 - Are exception attributes read from span events named `exception` — not from top-level span attributes? OTel records exceptions as span events, not attributes.
-- Is the ErrorEvent schema from `@neat/types` used or is there a local ad-hoc schema?
+- Is the ErrorEvent schema from `@neat.is/types` used or is there a local ad-hoc schema?
 
 ### 7. The trace stitcher — MVP
 

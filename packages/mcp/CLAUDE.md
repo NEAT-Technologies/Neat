@@ -1,6 +1,6 @@
-# @neat/mcp
+# @neat.is/mcp
 
-The NEAT MCP server. Stdio JSON-RPC, eight tools and two resources, talks to a running `@neat/core` instance over HTTP.
+The NEAT MCP server. Stdio JSON-RPC, eight tools and two resources, talks to a running `@neat.is/core` instance over HTTP.
 
 ## When to use these tools
 
@@ -47,7 +47,7 @@ Every tool takes an optional `project` arg. Resources route via the configured p
 ## Smoke-test the handshake
 
 ```bash
-npm run build --workspace @neat/mcp
+npm run build --workspace @neat.is/mcp
 node packages/mcp/dist/index.cjs
 # then send `{"jsonrpc":"2.0","id":1,"method":"initialize",…}` over stdin
 ```

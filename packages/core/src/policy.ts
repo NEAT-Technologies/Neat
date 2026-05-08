@@ -10,13 +10,13 @@ import type {
   PolicySeverity,
   PolicyViolation,
   ServiceNode,
-} from '@neat/types'
+} from '@neat.is/types'
 import {
   EdgeType,
   NodeType,
   PolicyFileSchema,
   Provenance,
-} from '@neat/types'
+} from '@neat.is/types'
 import type { NeatGraph } from './graph.js'
 import {
   checkCompatibility,
@@ -33,7 +33,7 @@ import { getBlastRadius } from './traverse.js'
 // Policy evaluation engine (ADR-043). The entry point evaluateAllPolicies is
 // pure: same graph + same policies → same violations. Per-rule-type dispatch
 // via the policyEvaluators table. Adding a new rule type means one new
-// evaluator entry plus the schema entry in @neat/types/policy.ts.
+// evaluator entry plus the schema entry in @neat.is/types/policy.ts.
 //
 // Deterministic violation ids per ADR-043: ${policy.id}:${context}. The
 // context is shape-specific (nodeId, edgeId, or composite). The

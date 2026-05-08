@@ -48,7 +48,7 @@ The Railway gates from M6 are still informational. AWS is the more likely produc
 ### Gotchas a fresh agent will benefit from
 
 - **The audits are scope-disciplined.** Every audit has an explicit `[v1.0]` not-in-scope list (NeatScript, Memgraph, Salsa, OPA/Rego, eBPF, Firecracker, Qdrant). Don't drift toward those — they belong to the Rust v1.0, not the TypeScript MVP.
-- **The provenance contract is load-bearing.** Five values (`OBSERVED` / `INFERRED` / `EXTRACTED` / `STALE` / `FRONTIER`), one definition in `@neat/types`, propagated everywhere, never duplicated as raw strings. Three audits independently flag this as "the most important contract in the MVP."
+- **The provenance contract is load-bearing.** Five values (`OBSERVED` / `INFERRED` / `EXTRACTED` / `STALE` / `FRONTIER`), one definition in `@neat.is/types`, propagated everywhere, never duplicated as raw strings. Three audits independently flag this as "the most important contract in the MVP."
 - **Hardcoded demo names is the recurring red flag.** Four audits explicitly check for `service-a` / `service-b` / `payments-db` references in non-fixture code. Any hit is critical-severity — the MVP success criterion (real PR on unfamiliar codebase) requires these be absent.
 - **`packages/web/` already has a basic Cytoscape viewer (v0.1.3).** Track 1 (v0.3.0) builds on it incrementally over `packages/web/app/components/GraphView.tsx`.
 - **Core API is project-aware everywhere.** Routes mount at both `/X` (default project) and `/projects/:project/X`. New work uses the prefixed shape from day one — see ADR-026 and `packages/mcp/src/tools.ts`.
@@ -71,7 +71,7 @@ Three stacked PRs close v0.2.0 Sunrise. Merge in order:
 
 ## M0 — Monorepo scaffolded, types defined, packages stubbed
 
-**End state:** `npm install && npx turbo build test lint` green from a clean checkout. CI green on a pushed branch. Every `@neat/*` package builds (ESM + CJS + DTS). `import { ServiceNodeSchema } from '@neat/types'` resolves from any package.
+**End state:** `npm install && npx turbo build test lint` green from a clean checkout. CI green on a pushed branch. Every `@neat.is/*` package builds (ESM + CJS + DTS). `import { ServiceNodeSchema } from '@neat.is/types'` resolves from any package.
 
 **Status:** VERIFIED 2026-05-01.
 
@@ -80,10 +80,10 @@ Three stacked PRs close v0.2.0 Sunrise. Merge in order:
 | Issue | Title                          | PR  | Status |
 |-------|--------------------------------|-----|--------|
 | #1    | Scaffold monorepo              | #33 | merged |
-| #2    | Shared types (`@neat/types`)   | #34 | merged |
-| #3    | Scaffold `@neat/core`          | #43 | merged (replaces closed #36) |
-| #13   | Scaffold `@neat/mcp`           | #38 | merged |
-| #27   | Scaffold `@neat/web`           | #39 | merged |
+| #2    | Shared types (`@neat.is/types`)   | #34 | merged |
+| #3    | Scaffold `@neat.is/core`          | #43 | merged (replaces closed #36) |
+| #13   | Scaffold `@neat.is/mcp`           | #38 | merged |
+| #27   | Scaffold `@neat.is/web`           | #39 | merged |
 | #24   | CI workflow                    | #40 | merged |
 | —     | pnpm → npm migration           | #37 | merged |
 
@@ -93,7 +93,7 @@ Three stacked PRs close v0.2.0 Sunrise. Merge in order:
 - [x] `npx turbo build` exits 0 across all packages
 - [x] `npx turbo test` exits 0
 - [x] `npx turbo lint` exits 0
-- [x] `import { ServiceNodeSchema } from '@neat/types'` resolves from `@neat/core`
+- [x] `import { ServiceNodeSchema } from '@neat.is/types'` resolves from `@neat.is/core`
 - [x] CI green on `main` (#40 merged, badge resolves)
 - [x] All M0 PRs merged
 
@@ -101,7 +101,7 @@ Three stacked PRs close v0.2.0 Sunrise. Merge in order:
 
 ## M1 — Static graph working
 
-**End state:** `NEAT_SCAN_PATH=./demo npm run dev --workspace @neat/core` starts. `curl localhost:8080/graph` returns the right shape: a `ServiceNode` for `service-b` with `dependencies.pg = "7.4.0"`, a `DatabaseNode` for `payments-db` with `engineVersion: "15"`, and a `DEPENDS_ON` edge tying them together. The compat unit test for `pg 7.4.0 / postgresql 15` returns `compatible: false`.
+**End state:** `NEAT_SCAN_PATH=./demo npm run dev --workspace @neat.is/core` starts. `curl localhost:8080/graph` returns the right shape: a `ServiceNode` for `service-b` with `dependencies.pg = "7.4.0"`, a `DatabaseNode` for `payments-db` with `engineVersion: "15"`, and a `DEPENDS_ON` edge tying them together. The compat unit test for `pg 7.4.0 / postgresql 15` returns `compatible: false`.
 
 **Status:** VERIFIED 2026-05-01.
 
@@ -117,7 +117,7 @@ Three stacked PRs close v0.2.0 Sunrise. Merge in order:
 
 ### M1 verification gate
 
-- [x] `npm run dev --workspace @neat/core` starts with `NEAT_SCAN_PATH=./demo`
+- [x] `npm run dev --workspace @neat.is/core` starts with `NEAT_SCAN_PATH=./demo`
 - [x] `curl localhost:8080/health` returns `{ uptime, nodeCount, edgeCount, lastUpdated }`
 - [x] `curl localhost:8080/graph` returns ≥ 3 nodes and ≥ 2 edges (3 nodes, 2 edges on the demo)
 - [x] In `/graph` response: `ServiceNode` for `service-b` has `dependencies.pg = "7.4.0"` and an `incompatibilities[0]` entry naming pg 7.4.0 vs PG 15

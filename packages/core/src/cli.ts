@@ -2,7 +2,7 @@
 
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
-import type { GraphEdge, GraphNode, ServiceNode } from '@neat/types'
+import type { GraphEdge, GraphNode, ServiceNode } from '@neat.is/types'
 import { DEFAULT_PROJECT, getGraph, resetGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
 import { discoverServices } from './extract/services.js'
@@ -177,9 +177,23 @@ function findIncompatibilities(nodes: GraphNode[]): ServiceNode[] {
   )
 }
 
+function printBanner(): void {
+  console.log('███╗   ██╗███████╗ █████╗ ████████╗')
+  console.log('████╗  ██║██╔════╝██╔══██╗╚══██╔══╝')
+  console.log('██╔██╗ ██║█████╗  ███████║   ██║   ')
+  console.log('██║╚██╗██║██╔══╝  ██╔══██║   ██║   ')
+  console.log('██║ ╚████║███████╗██║  ██║   ██║   ')
+  console.log('╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝   ╚═╝   ')
+  console.log('')
+  console.log('  Network Expressive Architecting Tool')
+  console.log('  neat.is  ·  v0.2.5  ·  BSL 1.1')
+  console.log('')
+}
+
 function printDiscoveryReport(opts: InitOptions, services: DiscoveredService[]): void {
   const languages = [...new Set(services.map((s) => s.node.language))].sort()
   const mode = opts.dryRun ? 'dry-run' : opts.apply ? 'apply' : 'patch-only'
+  printBanner()
   console.log('=== neat init: discovery ===')
   console.log(`scan path: ${opts.scanPath}`)
   console.log(`project:   ${opts.project}`)
@@ -322,7 +336,7 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
 // ── Claude Code skill (ADR-049 / v0.2.5 step 6) ────────────────────────
 //
 // The skill is a one-shot MCP-config drop-in. Source of truth for the
-// snippet lives here (the @neat/claude-skill package's
+// snippet lives here (the @neat.is/claude-skill package's
 // claude_code_config.json holds an identical copy for documentation; a
 // contract test keeps the two byte-aligned).
 export const CLAUDE_SKILL_CONFIG = {
@@ -330,7 +344,7 @@ export const CLAUDE_SKILL_CONFIG = {
     neat: {
       type: 'stdio' as const,
       command: 'npx',
-      args: ['-y', '@neat/mcp'],
+      args: ['-y', '@neat.is/mcp'],
       env: {
         NEAT_API_URL: 'http://localhost:8080',
       },
@@ -584,7 +598,7 @@ async function main(): Promise<void> {
 // from tests must not start the parser; otherwise vitest sees a stray
 // `process.exit` from `main()` running with no argv.
 const entry = process.argv[1] ?? ''
-if (/[\\/]cli\.(?:cjs|js)$/.test(entry) || entry.endsWith('/cli')) {
+if (/[\\/]cli\.(?:cjs|js)$/.test(entry) || entry.endsWith('/cli') || entry.endsWith('/neat')) {
   main().catch((err) => {
     console.error(err)
     process.exit(1)

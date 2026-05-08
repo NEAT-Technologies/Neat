@@ -3,7 +3,7 @@
 
 **Scope:** This audit covers `packages/core/src/traverse.ts` in the TypeScript MVP monorepo at `github.com/NEAT-Technologies/Neat`. It covers getRootCause, getBlastRadius, edge priority rules, confidence cascading, depth limits, and whether the algorithms work on unknown graphs.
 
-**Stack:** graphology-traversal, graphology-shortest-path, semver, @neat/types schemas for RootCauseResult and BlastRadiusResult.
+**Stack:** graphology-traversal, graphology-shortest-path, semver, @neat.is/types schemas for RootCauseResult and BlastRadiusResult.
 
 **The goal this audit serves:** Traversal is the intelligence layer. The graph and OTel give you data. Traversal is what turns that data into an answer. If edge priority is wrong, NEAT will prefer a stale guess over a confirmed observation. If confidence cascading is wrong, a high-confidence answer will be reported with a low score or vice versa. If depth limits are wrong, traversal on a large real-world graph will walk indefinitely. These failures are silent — they produce wrong answers, not errors.
 
@@ -87,7 +87,7 @@ Algorithm:
 
 ### 4. getRootCause result — MVP
 
-The result must conform to RootCauseResultSchema from @neat/types:
+The result must conform to RootCauseResultSchema from @neat.is/types:
 
 ```typescript
 {
@@ -125,7 +125,7 @@ Algorithm:
 
 ### 6. getBlastRadius result — MVP
 
-The result must conform to BlastRadiusResultSchema from @neat/types:
+The result must conform to BlastRadiusResultSchema from @neat.is/types:
 
 ```typescript
 {
@@ -214,7 +214,7 @@ STALE edges represent relationships that were observed but have not been confirm
 - `checkCompatibility` reimplemented in traverse.ts rather than imported from compat.ts
 - `checkCompatibility` called with hardcoded `pg` and `postgresql` rather than reading from node properties
 - graphology not used — hand-rolled DFS without proper cycle detection or performance optimisation
-- RootCauseResult or BlastRadiusResult defined locally rather than from @neat/types
+- RootCauseResult or BlastRadiusResult defined locally rather than from @neat.is/types
 - `distance: 0` in BlastRadiusResult — minimum distance must be 1
 - `traversalPath` and `edgeProvenances` arrays of mismatched length
 

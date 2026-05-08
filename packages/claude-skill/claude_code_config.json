@@ -3,7 +3,7 @@
     "neat": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@neat/mcp"],
+      "args": ["-y", "@neat.is/mcp"],
       "env": {
         "NEAT_API_URL": "http://localhost:8080"
       }

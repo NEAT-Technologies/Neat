@@ -10,8 +10,8 @@ import type {
   GraphNode,
   Policy,
   PolicyViolation,
-} from '@neat/types'
-import { PoliciesCheckBodySchema, PolicySeveritySchema } from '@neat/types'
+} from '@neat.is/types'
+import { PoliciesCheckBodySchema, PolicySeveritySchema } from '@neat.is/types'
 import {
   evaluateAllPolicies,
   loadPolicyFile,

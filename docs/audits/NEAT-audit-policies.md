@@ -3,7 +3,7 @@
 
 **Scope:** This audit defines what the policy layer must be in `packages/core` of the TypeScript MVP monorepo at `github.com/NEAT-Technologies/Neat`. The policy layer does not exist yet. This document is a build contract, not a drift check.
 
-**Stack:** policy.json file, Zod schemas in `@neat/types`, evaluation engine in `packages/core/src/policy.ts`, violations.ndjson output, REST API endpoints, MCP tool `get_policy_violations`.
+**Stack:** policy.json file, Zod schemas in `@neat.is/types`, evaluation engine in `packages/core/src/policy.ts`, violations.ndjson output, REST API endpoints, MCP tool `get_policy_violations`.
 
 **The goal this audit serves:** Policies must enforce architectural law continuously against the live graph. They must block autonomous agent actions before they violate declared constraints. They are not scan-time validators. They are not alerting rules. They are enforcement.
 
@@ -33,7 +33,7 @@ The policy layer has three parts:
 
 ### 1. policy.json schema — MVP
 
-The policy definition file lives at the repo root alongside `compat.json`. It must be valid JSON parseable by the Zod schema in `@neat/types`.
+The policy definition file lives at the repo root alongside `compat.json`. It must be valid JSON parseable by the Zod schema in `@neat.is/types`.
 
 Minimum required schema:
 
@@ -55,7 +55,7 @@ Minimum required schema:
 ```
 
 **Verify:**
-- Is `policy.json` validated against a Zod schema from `@neat/types` on startup?
+- Is `policy.json` validated against a Zod schema from `@neat.is/types` on startup?
 - If `policy.json` is malformed, does neat-core fail to start with a clear error or silently ignore the file?
 - Is the schema versioned — does `version: 1` exist so future schema changes can be migrated?
 - Is `id` enforced as unique? Duplicate policy IDs must be a startup error.
@@ -149,7 +149,7 @@ Every one of these events must trigger policy evaluation.
 
 ### 4. PolicyViolationEvent schema — MVP
 
-Every violation must produce a typed event written to `neat-out/violations.ndjson`. The schema must be in `@neat/types`.
+Every violation must produce a typed event written to `neat-out/violations.ndjson`. The schema must be in `@neat.is/types`.
 
 ```typescript
 PolicyViolationEvent {
@@ -166,7 +166,7 @@ PolicyViolationEvent {
 ```
 
 **Verify:**
-- Is the PolicyViolationEvent schema in `@neat/types` as a Zod schema?
+- Is the PolicyViolationEvent schema in `@neat.is/types` as a Zod schema?
 - Is it exported alongside ErrorEvent so both can be imported from the same package?
 - Is `violations.ndjson` append-only — one JSON object per line — matching the pattern of `errors.ndjson`?
 - Is `resolved: false` set on creation? Is there a mechanism to mark violations as resolved when the graph mutation that caused them is reversed?
@@ -331,7 +331,7 @@ This entire sequence must complete within the same event loop cycle as the edge 
 - Policy evaluation reading graph.json instead of the live graphology instance
 - `canPromoteFrontier()` not existing — FRONTIER promotion has no policy gate
 - Compatibility policy using string comparison instead of `semver.lt()`
-- PolicyViolationEvent schema defined locally rather than in `@neat/types`
+- PolicyViolationEvent schema defined locally rather than in `@neat.is/types`
 - violations.ndjson not existing or not being written to
 - `evaluate_policy` MCP tool missing — agents have no way to pre-flight check actions
 - Policy types beyond the five listed being added — scope creep
@@ -344,7 +344,7 @@ This entire sequence must complete within the same event loop cycle as the edge 
 1. Is `evaluateAllPolicies()` called from both `ingest.ts` and `extract.ts` after every graph mutation?
 2. Does `onViolation: block` actually prevent FRONTIER promotion or does it only log?
 3. Does the compatibility policy evaluator use `semver.lt()` for version comparison?
-4. Is PolicyViolationEvent defined in `@neat/types` as a Zod schema?
+4. Is PolicyViolationEvent defined in `@neat.is/types` as a Zod schema?
 5. Is there a `get_policy_violations` MCP tool that surfaces active violations to Claude Code?
 
 ---
