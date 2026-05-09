@@ -1426,3 +1426,27 @@ The `(if needed)` qualifier in the kickoff applies. We draft what's clear and ex
 **Authority.** `packages/core/src/api.ts` (extend) for `/projects`. SSE endpoint in `packages/core/src/api.ts` or a new `packages/core/src/streaming.ts` if the surface grows. Event emission threaded through `ingest.ts`, `extract/index.ts`, `watch.ts`, `policy.ts` via a small `EventEmitter` singleton in `packages/core/src/events.ts`.
 
 **Enforcement.** `it.todo` block in `contracts.test.ts` for v0.2.6 #24. Regression tests cover: `/events` endpoint exists with `text/event-stream` content-type, dual-mount per ADR-026, event-type taxonomy locked (eight types, no quiet additions), `/projects` endpoint exists and returns the registry shape, heartbeat interval set, backpressure cap honored.
+
+## ADR-052 — Publish system contract
+
+**Date:** 2026-05-09
+**Status:** Active.
+
+Documents the load-bearing rules of the npm publish pipeline. The pipeline has been in production since 0.2.5 but had no contract coverage, which is how the 0.2.6 broken-publish bug shipped: the `neat.is` umbrella's bin wrappers `require()`ed subpaths into `@neat.is/core` and `@neat.is/mcp` that those packages didn't expose through their `exports` field, and nothing caught it before the tarballs went live on the registry.
+
+**Context.** Five packages ship to npm: `@neat.is/types`, `@neat.is/core`, `@neat.is/mcp`, `@neat.is/claude-skill`, and the `neat.is` umbrella. The umbrella's whole job is to put `neat`, `neatd`, `neat-mcp` on PATH after `npm install -g neat.is` — it has no code of its own, only three bin wrappers that delegate via `require('@neat.is/core/dist/cli.cjs')` etc. Local monorepo dev uses workspace symlinks where Node bypasses `exports` enforcement; npm-installed tarballs do not. The first release that exercised the wrappers through real tarballs was 0.2.6, and that's when the failure surfaced.
+
+**Decision.**
+
+1. **Bin-wrapper subpath validity.** Every `require('@scope/pkg/subpath')` line in `packages/neat.is/bin/*` must resolve to a path exposed in the target package's `exports` field. Literal-key match for MVP; wildcard pattern matching is a successor concern. Enforced as a contract-test assertion that parses the wrapper files and walks each target package.json.
+2. **Version lockstep.** All five publishable packages (`types`, `core`, `mcp`, `claude-skill`, `neat.is`) carry the same `version` string in their `package.json` at all times on `main`. Cross-package dep ranges (`@neat.is/types: ^X.Y.Z` in core/mcp, three of those in the umbrella) must match the same `X.Y.Z`. Half-bumped state is a contract violation. Enforced both by the publish workflow's verify-versions step and by a contract test on `main`.
+3. **Tarball smoke-test gate.** The publish workflow must run `neat --help` against the just-published umbrella tarball before declaring success. Specifically: install `neat.is@<published-version>` into a tmp dir, invoke the `neat` bin, assert exit code 0. Catches any failure shape that only surfaces under a real tarball install (the 0.2.6 class).
+4. **Dependency order is fixed.** Publish proceeds `types → core → mcp → claude-skill → neat.is`. Out of order means a downstream 404 because npm rejects publishes whose deps aren't on the registry yet. Encoded in both the CI workflow and `scripts/publish.sh`.
+5. **Idempotency per package.** Re-running the publish workflow after a partial failure must skip packages already at the target version (`npm view <pkg>@<version>` check) rather than 409. Already implemented; this contract locks it as a binding rule.
+6. **npm immutability acknowledged.** Once `name@version` is published, that slot is permanently sealed — `npm unpublish` does not free it for re-publish. Therefore: publishing a broken version forces a patch-version bump, never a same-version republish. Documented in `docs/runbook-publish.md`'s troubleshooting section.
+7. **No engineering of an unpublish recovery.** When a broken release ships, the response is a fix-only patch release at the next version (e.g. 0.2.6 broken → 0.2.7 fix). Don't build tooling around `npm unpublish` because npm won't let it work the way that tooling would imply.
+8. **`engines.node: ">=20"`** on every publishable package and the umbrella. Older Node fails at install, not at runtime. Already in place; this contract locks it.
+
+**Authority.** `.github/workflows/publish.yml` (CI publish), `scripts/publish.sh` (local fallback), `docs/runbook-publish.md` (process), `packages/neat.is/bin/{neat,neatd,neat-mcp}` (the wrappers under contract), `packages/core/package.json` and `packages/mcp/package.json` (the `exports` fields the wrappers reach through).
+
+**Enforcement.** New describe block in `contracts.test.ts`. Live assertions for rules 2 (version lockstep), 4 (dependency order encoded in scripts), 8 (engines field). Rule 1 (subpath validity) ships as live but depends on the 0.2.7 exports fix being on `main` first; until then, the assertion would fail because main reflects the broken 0.2.6 state. Rule 3 (tarball smoke-test) is an `it.todo` until the workflow step lands. Rules 5, 6, 7 are documented invariants without test mechanization (5 is exercised by every re-run of the workflow; 6 and 7 are policy, not verifiable in CI).
