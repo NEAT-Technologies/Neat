@@ -3184,3 +3184,123 @@ describe('Frontend-facing API contract (ADR-051)', () => {
   it.todo('event bus is a single EventEmitter singleton in packages/core/src/events.ts (ADR-051 — authority)')
   it.todo('event producers in ingest.ts / extract/ / watch.ts / policy.ts emit through the bus, not directly to handlers (ADR-051 — authority)')
 })
+
+describe('Publish system contract (ADR-052)', () => {
+  // The publish pipeline. Five packages ship in lockstep; bin wrappers in
+  // the umbrella `require()` subpaths into core and mcp that must be
+  // exposed in those packages' `exports` field. The 0.2.6 release shipped
+  // with broken exports — the wrappers worked under monorepo symlinks
+  // (which bypass exports enforcement) but failed for `npm install -g`
+  // users. This block locks the failure shape so it can't recur.
+
+  const REPO_ROOT = join(__dirname, '../../../..')
+  const PUBLISHABLE_PACKAGES = ['types', 'core', 'mcp', 'claude-skill', 'neat.is'] as const
+
+  function readPackageJson(pkgDirName: string): Record<string, unknown> {
+    return JSON.parse(
+      readFileSync(join(REPO_ROOT, 'packages', pkgDirName, 'package.json'), 'utf8'),
+    ) as Record<string, unknown>
+  }
+
+  it('all five publishable packages share the same version (ADR-052 #2 — lockstep)', () => {
+    const versions = PUBLISHABLE_PACKAGES.map((p) => readPackageJson(p).version as string)
+    const unique = [...new Set(versions)]
+    expect(unique).toHaveLength(1)
+  })
+
+  it('cross-package dep ranges match the lockstep version (ADR-052 #2 — lockstep)', () => {
+    const version = readPackageJson('types').version as string
+
+    const core = readPackageJson('core') as { dependencies: Record<string, string> }
+    expect(core.dependencies['@neat.is/types']).toBe(`^${version}`)
+
+    const mcp = readPackageJson('mcp') as { dependencies: Record<string, string> }
+    expect(mcp.dependencies['@neat.is/types']).toBe(`^${version}`)
+
+    const umbrella = readPackageJson('neat.is') as { dependencies: Record<string, string> }
+    expect(umbrella.dependencies['@neat.is/core']).toBe(`^${version}`)
+    expect(umbrella.dependencies['@neat.is/mcp']).toBe(`^${version}`)
+    expect(umbrella.dependencies['@neat.is/claude-skill']).toBe(`^${version}`)
+  })
+
+  it('every publishable package declares engines.node: ">=20" (ADR-052 #8)', () => {
+    for (const pkg of PUBLISHABLE_PACKAGES) {
+      const json = readPackageJson(pkg) as { engines?: { node?: string } }
+      expect(json.engines?.node, `${pkg} missing engines.node`).toBe('>=20')
+    }
+  })
+
+  it('publish workflow encodes the canonical dependency order (ADR-052 #4)', () => {
+    const yml = readFileSync(join(REPO_ROOT, '.github/workflows/publish.yml'), 'utf8')
+    // Workflow lists `publish_one "packages/<name>"` once per package.
+    // The first occurrence of each marks its position; assert they appear
+    // in canonical order.
+    const positions = PUBLISHABLE_PACKAGES.map((pkg) => {
+      const idx = yml.indexOf(`publish_one "packages/${pkg}"`)
+      expect(idx, `${pkg} not referenced in publish.yml`).toBeGreaterThan(-1)
+      return idx
+    })
+    const sorted = [...positions].sort((a, b) => a - b)
+    expect(positions).toEqual(sorted)
+  })
+
+  it('local publish script encodes the canonical dependency order (ADR-052 #4)', () => {
+    const sh = readFileSync(join(REPO_ROOT, 'scripts/publish.sh'), 'utf8')
+    // Same shape as the workflow check — assert positions appear in order.
+    const positions = PUBLISHABLE_PACKAGES.map((pkg) => {
+      const idx = sh.indexOf(`"packages/${pkg}"`)
+      expect(idx, `${pkg} not referenced in scripts/publish.sh`).toBeGreaterThan(-1)
+      return idx
+    })
+    const sorted = [...positions].sort((a, b) => a - b)
+    expect(positions).toEqual(sorted)
+  })
+
+  it('every require() in packages/neat.is/bin/* resolves to a path exposed in the target package exports (ADR-052 #1)', () => {
+    // Parses each wrapper, extracts the `require('@scope/pkg/subpath')`
+    // target, walks the target package's `exports` field, and asserts
+    // the subpath is a literal exports key. Wildcard pattern matching
+    // is a successor concern. Catches the 0.2.6-class failure where
+    // wrappers worked under monorepo symlinks but failed for
+    // `npm install -g neat.is` users because exports enforcement only
+    // kicks in for tarball installs.
+    const binDir = join(REPO_ROOT, 'packages/neat.is/bin')
+    const wrappers = readdirSync(binDir).filter(
+      (f) => !f.startsWith('.') && statSync(join(binDir, f)).isFile(),
+    )
+    expect(wrappers.length, 'no wrapper scripts found').toBeGreaterThan(0)
+
+    const requireRe = /require\(\s*['"]([^'"]+)['"]\s*\)/g
+    const scopedRe = /^(@[^/]+\/[^/]+)\/(.+)$/
+
+    for (const wrapper of wrappers) {
+      const content = readFileSync(join(binDir, wrapper), 'utf8')
+      const matches = [...content.matchAll(requireRe)]
+      expect(matches.length, `${wrapper} has no require() call`).toBeGreaterThan(0)
+
+      for (const m of matches) {
+        const target = m[1] as string
+        const parsed = scopedRe.exec(target)
+        if (!parsed) continue // bare specifier like 'fs' — not what this rule covers
+
+        const [, pkgName, subpath] = parsed as unknown as [string, string, string]
+        const pkgDirName = pkgName.replace('@neat.is/', '')
+        const pkg = readPackageJson(pkgDirName) as { exports?: Record<string, unknown> }
+        const exports = pkg.exports ?? {}
+        const subpathKey = `./${subpath}`
+
+        expect(
+          Object.keys(exports),
+          `${wrapper} requires ${target} but ${pkgName} exports ${subpathKey} not exposed`,
+        ).toContain(subpathKey)
+      }
+    }
+  })
+
+  // The tarball smoke-test step in the publish workflow doesn't exist yet.
+
+  // The tarball smoke-test step in the publish workflow doesn't exist yet.
+  it.todo(
+    'publish workflow installs the just-published umbrella tarball and asserts `neat --help` exits 0 (ADR-052 #3)',
+  )
+})
