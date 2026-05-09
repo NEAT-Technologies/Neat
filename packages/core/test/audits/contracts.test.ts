@@ -3144,22 +3144,405 @@ describe('Queued contracts (v0.2.1 leftovers — #141, #142, #145)', () => {
 
 describe('CLI surface contract (ADR-050)', () => {
   // v0.2.8 #23. Nine `neat <verb>` commands mirroring the MCP allowlist.
-  // Implementation lands the verbs; these todos flip as each verb ships.
-  it.todo('every MCP tool from ADR-039 has a corresponding `neat <verb>` registered (ADR-050 #1)')
-  it.todo('verb names are kebab-case and drop the `get_` prefix (ADR-050 #1 — naming)')
-  it.todo('CLI verbs hit NEAT_API_URL via the shared REST client; no graph.json reads from cli-verbs (ADR-050 #2)')
-  it.todo('`--project <name>` resolution chain matches MCP: flag → NEAT_PROJECT env → `default` (ADR-050 #2)')
-  it.todo('default output is human-readable with NL summary + table + provenance footer (ADR-050 #3)')
-  it.todo('`--json` output schema is `{ summary, block, confidence, provenance }` (ADR-050 #3)')
-  it.todo('stderr carries diagnostics; stdout carries results — no mixing (ADR-050 #3)')
-  it.todo('exit code 0 on success (ADR-050 #4)')
-  it.todo('exit code 1 on server 4xx/5xx with body error message on stderr (ADR-050 #4)')
-  it.todo('exit code 2 on misuse before any network call (ADR-050 #4)')
-  it.todo('exit code 3 distinct from 1 when daemon connection refused / times out (ADR-050 #4)')
-  it.todo('no mutation verbs registered behind the query verb surface (ADR-050 #5)')
-  it.todo('no demo-name hardcoding in `--help` text outside of generic shape examples (ADR-050 #6)')
-  it.todo('every verb has a `--help` block listing args, flags, exit codes, example invocation (ADR-050 #7)')
-  it.todo('`neat --help` lists every verb (lifecycle + query) in one block (ADR-050 #7)')
+  // Implementation lives in packages/core/src/cli.ts (dispatcher) +
+  // packages/core/src/cli-client.ts (REST helper + verb handlers).
+
+  // Spin a tiny stub server for verb tests. Each test passes its own
+  // handler so we can stub success / 4xx / connect-refused.
+  async function withStubServer(
+    handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void,
+    fn: (baseUrl: string) => Promise<void>,
+  ): Promise<void> {
+    const http = await import('node:http')
+    const server = http.createServer(handler)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const addr = server.address()
+    if (!addr || typeof addr === 'string') throw new Error('server.listen() returned no address')
+    const baseUrl = `http://127.0.0.1:${addr.port}`
+    try {
+      await fn(baseUrl)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  }
+
+  // The nine MCP tools, locked at ADR-039. CLI verbs are the kebab-case
+  // de-prefixed mirror.
+  const MCP_TOOLS_TO_VERBS = {
+    get_root_cause: 'root-cause',
+    get_blast_radius: 'blast-radius',
+    get_dependencies: 'dependencies',
+    get_observed_dependencies: 'observed-dependencies',
+    get_incident_history: 'incidents',
+    semantic_search: 'search',
+    get_graph_diff: 'diff',
+    get_recent_stale_edges: 'stale-edges',
+    check_policies: 'policies',
+  } as const
+
+  it('every MCP tool from ADR-039 has a corresponding `neat <verb>` registered (ADR-050 #1)', async () => {
+    const { QUERY_VERBS } = await import('../../src/cli.js')
+    const expected = new Set(Object.values(MCP_TOOLS_TO_VERBS))
+    expect(QUERY_VERBS).toEqual(expected)
+  })
+
+  it('verb names are kebab-case and drop the `get_` prefix (ADR-050 #1 — naming)', async () => {
+    const { QUERY_VERBS } = await import('../../src/cli.js')
+    for (const verb of QUERY_VERBS) {
+      expect(verb, `verb "${verb}" must be kebab-case`).toMatch(/^[a-z]+(-[a-z]+)*$/)
+      expect(verb, `verb "${verb}" must not carry the get_ prefix`).not.toMatch(/^get[-_]/)
+    }
+  })
+
+  it('CLI verbs hit NEAT_API_URL via the shared REST client; no graph.json reads from cli-verbs (ADR-050 #2)', () => {
+    const cli = readFileSync(join(CORE_SRC, 'cli.ts'), 'utf8')
+    const cliClient = readFileSync(join(CORE_SRC, 'cli-client.ts'), 'utf8')
+    // cli.ts dispatches via the shared client.
+    expect(cli).toMatch(/from\s+['"]\.\/cli-client\.js['"]/)
+    expect(cli).toMatch(/createHttpClient\(/)
+    expect(cli).toMatch(/NEAT_API_URL/)
+    // No fs reads or writes to graph.json from the verb code path.
+    // (Lifecycle `init`'s help text mentions graph.json as documentation —
+    // that's a string literal, not a read, so we narrow the check to
+    // fs-call shapes.)
+    for (const src of [cli, cliClient]) {
+      expect(src).not.toMatch(/fs\.\w+\([^)]*graph\.json/)
+      expect(src).not.toMatch(/readFile[^)]*graph\.json/)
+    }
+    // Verb handlers don't call fetch directly — they go through the
+    // HttpClient interface (`client.get` / `client.post`).
+    const cliClientWithoutCreate = cliClient.replace(
+      /export function createHttpClient[\s\S]*?^}/m,
+      '',
+    )
+    expect(cliClientWithoutCreate).not.toMatch(/\bfetch\(/)
+  })
+
+  it('`--project <name>` resolution chain matches MCP: flag → NEAT_PROJECT env → `default` (ADR-050 #2)', async () => {
+    // The dispatcher exports its argv parser; resolveProjectFlag is internal,
+    // but its resolution chain is observable from end-to-end behaviour: each
+    // verb routes to /projects/<name>/... when project is set, /<path> when
+    // it isn't.
+    const { runQueryVerb, parseArgs } = await import('../../src/cli.js')
+
+    type Captured = { url: string }
+    const captures: Captured[] = []
+    const stubHandler = (
+      req: import('node:http').IncomingMessage,
+      res: import('node:http').ServerResponse,
+    ): void => {
+      captures.push({ url: req.url ?? '' })
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ matches: [] }))
+    }
+
+    const prevApi = process.env.NEAT_API_URL
+    const prevProject = process.env.NEAT_PROJECT
+    const prevWrite = process.stdout.write
+    process.stdout.write = (() => true) as typeof process.stdout.write
+    try {
+      await withStubServer(stubHandler, async (baseUrl) => {
+        process.env.NEAT_API_URL = baseUrl
+
+        // 1. Flag wins — even when env is set.
+        delete process.env.NEAT_PROJECT
+        process.env.NEAT_PROJECT = 'env-proj'
+        let parsed = parseArgs(['flag-proj-only', '--project', 'flag-proj'])
+        let code = await runQueryVerb('search', parsed)
+        expect(code).toBe(0)
+        expect(captures[captures.length - 1]!.url).toContain('/projects/flag-proj/search')
+
+        // 2. Env used when no flag.
+        parsed = parseArgs(['somequery'])
+        code = await runQueryVerb('search', parsed)
+        expect(code).toBe(0)
+        expect(captures[captures.length - 1]!.url).toContain('/projects/env-proj/search')
+
+        // 3. Neither set → unprefixed (server resolves to default).
+        delete process.env.NEAT_PROJECT
+        parsed = parseArgs(['stillquery'])
+        code = await runQueryVerb('search', parsed)
+        expect(code).toBe(0)
+        const finalUrl = captures[captures.length - 1]!.url
+        expect(finalUrl).toMatch(/^\/search/)
+        expect(finalUrl).not.toMatch(/\/projects\//)
+      })
+    } finally {
+      process.stdout.write = prevWrite
+      if (prevApi === undefined) delete process.env.NEAT_API_URL
+      else process.env.NEAT_API_URL = prevApi
+      if (prevProject === undefined) delete process.env.NEAT_PROJECT
+      else process.env.NEAT_PROJECT = prevProject
+    }
+  })
+
+  it('default output is human-readable with NL summary + table + provenance footer (ADR-050 #3)', async () => {
+    const { formatHuman } = await import('../../src/cli-client.js')
+    const human = formatHuman({
+      summary: 'A short prose summary.',
+      block: '  • node-1\n  • node-2',
+      confidence: 0.94,
+      provenance: 'OBSERVED',
+    })
+    // Three sections separated by blank lines.
+    const sections = human.split('\n\n')
+    expect(sections).toHaveLength(3)
+    expect(sections[0]).toBe('A short prose summary.')
+    expect(sections[1]).toContain('  • node-1')
+    expect(sections[2]).toBe('confidence: 0.94 · provenance: OBSERVED')
+  })
+
+  it('`--json` output schema is `{ summary, block, confidence, provenance }` (ADR-050 #3)', async () => {
+    const { formatJson } = await import('../../src/cli-client.js')
+    const out = formatJson({
+      summary: 'svc fails',
+      block: '  • node',
+      confidence: 0.84,
+      provenance: 'OBSERVED',
+    })
+    const parsed = JSON.parse(out) as Record<string, unknown>
+    expect(Object.keys(parsed).sort()).toEqual(['block', 'confidence', 'provenance', 'summary'])
+    expect(parsed.summary).toBe('svc fails')
+    expect(parsed.block).toBe('  • node')
+    expect(parsed.confidence).toBe(0.84)
+    expect(parsed.provenance).toBe('OBSERVED')
+    // Empty result shape: confidence/provenance default to null in JSON.
+    const empty = JSON.parse(formatJson({ summary: 'no matches' })) as Record<string, unknown>
+    expect(empty.confidence).toBeNull()
+    expect(empty.provenance).toBeNull()
+    expect(empty.block).toBe('')
+  })
+
+  it('stderr carries diagnostics; stdout carries results — no mixing (ADR-050 #3)', async () => {
+    // End-to-end: stub a 500 response and watch stdout/stderr buffers
+    // separately. Diagnostics land on stderr; stdout stays empty.
+    const { runQueryVerb, parseArgs } = await import('../../src/cli.js')
+    const stubHandler = (
+      _req: import('node:http').IncomingMessage,
+      res: import('node:http').ServerResponse,
+    ): void => {
+      res.statusCode = 500
+      res.end('boom')
+    }
+    let stdoutBuf = ''
+    let stderrBuf = ''
+    const prevApi = process.env.NEAT_API_URL
+    const prevWrite = process.stdout.write
+    const prevErr = console.error
+    process.stdout.write = ((chunk: string) => {
+      stdoutBuf += chunk
+      return true
+    }) as typeof process.stdout.write
+    console.error = (...args: unknown[]) => {
+      stderrBuf += args.join(' ') + '\n'
+    }
+    try {
+      await withStubServer(stubHandler, async (baseUrl) => {
+        process.env.NEAT_API_URL = baseUrl
+        const code = await runQueryVerb('search', parseArgs(['anything']))
+        expect(code).toBe(1)
+      })
+    } finally {
+      process.stdout.write = prevWrite
+      console.error = prevErr
+      if (prevApi === undefined) delete process.env.NEAT_API_URL
+      else process.env.NEAT_API_URL = prevApi
+    }
+    expect(stdoutBuf).toBe('')
+    expect(stderrBuf).toMatch(/boom/)
+
+    // Source-grep — result emitters reach stdout, never console.log.
+    const cli = readFileSync(join(CORE_SRC, 'cli.ts'), 'utf8')
+    expect(cli).toMatch(/process\.stdout\.write\(formatHuman/)
+    expect(cli).toMatch(/process\.stdout\.write\(formatJson/)
+  })
+
+  it('exit code 0 on success (ADR-050 #4)', async () => {
+    const { runQueryVerb, parseArgs } = await import('../../src/cli.js')
+    const stubHandler = (
+      _req: import('node:http').IncomingMessage,
+      res: import('node:http').ServerResponse,
+    ): void => {
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ matches: [] }))
+    }
+    const prevApi = process.env.NEAT_API_URL
+    const prevWrite = process.stdout.write
+    process.stdout.write = (() => true) as typeof process.stdout.write
+    try {
+      await withStubServer(stubHandler, async (baseUrl) => {
+        process.env.NEAT_API_URL = baseUrl
+        const parsed = parseArgs(['anything'])
+        const code = await runQueryVerb('search', parsed)
+        expect(code).toBe(0)
+      })
+    } finally {
+      process.stdout.write = prevWrite
+      if (prevApi === undefined) delete process.env.NEAT_API_URL
+      else process.env.NEAT_API_URL = prevApi
+    }
+  })
+
+  it('exit code 1 on server 4xx/5xx with body error message on stderr (ADR-050 #4)', async () => {
+    const { runQueryVerb, parseArgs } = await import('../../src/cli.js')
+    const stubHandler = (
+      _req: import('node:http').IncomingMessage,
+      res: import('node:http').ServerResponse,
+    ): void => {
+      res.statusCode = 500
+      res.setHeader('content-type', 'application/json')
+      res.end('upstream blew up: db unreachable')
+    }
+    const prevApi = process.env.NEAT_API_URL
+    const prevWrite = process.stdout.write
+    const prevErr = console.error
+    let stderrBuf = ''
+    console.error = (...args: unknown[]) => {
+      stderrBuf += args.join(' ') + '\n'
+    }
+    process.stdout.write = (() => true) as typeof process.stdout.write
+    try {
+      await withStubServer(stubHandler, async (baseUrl) => {
+        process.env.NEAT_API_URL = baseUrl
+        const parsed = parseArgs(['anything'])
+        const code = await runQueryVerb('search', parsed)
+        expect(code).toBe(1)
+        expect(stderrBuf).toMatch(/upstream blew up/)
+      })
+    } finally {
+      console.error = prevErr
+      process.stdout.write = prevWrite
+      if (prevApi === undefined) delete process.env.NEAT_API_URL
+      else process.env.NEAT_API_URL = prevApi
+    }
+  })
+
+  it('exit code 2 on misuse before any network call (ADR-050 #4)', async () => {
+    const { runQueryVerb, parseArgs } = await import('../../src/cli.js')
+    let networkCalls = 0
+    const stubHandler = (
+      _req: import('node:http').IncomingMessage,
+      res: import('node:http').ServerResponse,
+    ): void => {
+      networkCalls++
+      res.end('{}')
+    }
+    const prevApi = process.env.NEAT_API_URL
+    const prevErr = console.error
+    console.error = () => {}
+    try {
+      await withStubServer(stubHandler, async (baseUrl) => {
+        process.env.NEAT_API_URL = baseUrl
+        // root-cause needs a positional <node-id>; bare invocation is misuse.
+        const parsed = parseArgs([])
+        const code = await runQueryVerb('root-cause', parsed)
+        expect(code).toBe(2)
+        expect(networkCalls).toBe(0)
+      })
+    } finally {
+      console.error = prevErr
+      if (prevApi === undefined) delete process.env.NEAT_API_URL
+      else process.env.NEAT_API_URL = prevApi
+    }
+  })
+
+  it('exit code 3 distinct from 1 when daemon connection refused / times out (ADR-050 #4)', async () => {
+    const { runQueryVerb, parseArgs } = await import('../../src/cli.js')
+    // Pick a port that isn't bound. Node's listen-on-0 trick gives us a
+    // free port; we close the listener so a subsequent connect refuses.
+    const http = await import('node:http')
+    const server = http.createServer()
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const addr = server.address()
+    if (!addr || typeof addr === 'string') throw new Error('no address')
+    const port = addr.port
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+
+    const prevApi = process.env.NEAT_API_URL
+    const prevErr = console.error
+    process.env.NEAT_API_URL = `http://127.0.0.1:${port}`
+    let stderrBuf = ''
+    console.error = (...args: unknown[]) => {
+      stderrBuf += args.join(' ') + '\n'
+    }
+    try {
+      const parsed = parseArgs(['x'])
+      const code = await runQueryVerb('search', parsed)
+      expect(code).toBe(3)
+      // Should contain a hint about the daemon not running.
+      expect(stderrBuf.toLowerCase()).toMatch(/daemon|cannot reach/)
+    } finally {
+      console.error = prevErr
+      if (prevApi === undefined) delete process.env.NEAT_API_URL
+      else process.env.NEAT_API_URL = prevApi
+    }
+  })
+
+  it('no mutation verbs registered behind the query verb surface (ADR-050 #5)', async () => {
+    const { QUERY_VERBS } = await import('../../src/cli.js')
+    // The contract pins the verb set to the nine MCP tools, all of which are
+    // read-only. Any verb name suggesting mutation (`add-`, `remove-`,
+    // `update-`, `delete-`, `set-`, `apply-`) is a regression.
+    for (const verb of QUERY_VERBS) {
+      expect(verb).not.toMatch(/^(add|remove|delete|update|set|apply|create|patch)[-_]/)
+    }
+    // Source-grep cli-client.ts: every verb handler hits client.get /
+    // client.post (the latter only for the policies dry-run endpoint, which
+    // is itself read-only — it returns a hypothetical evaluation against the
+    // current graph). No PUT / PATCH / DELETE.
+    const cliClient = readFileSync(join(CORE_SRC, 'cli-client.ts'), 'utf8')
+    expect(cliClient).not.toMatch(/method:\s*['"]PUT['"]/)
+    expect(cliClient).not.toMatch(/method:\s*['"]PATCH['"]/)
+    expect(cliClient).not.toMatch(/method:\s*['"]DELETE['"]/)
+  })
+
+  it('no demo-name hardcoding in `--help` text outside of generic shape examples (ADR-050 #6)', () => {
+    // Cross-cutting rule 8 + ADR-050 #6: `--help` examples reference real-shape
+    // ids (`service:<name>`, `database:<host>`) without committing to demo
+    // names like `payments-db`, `service-a`, `pg`, `postgresql`.
+    const cli = readFileSync(join(CORE_SRC, 'cli.ts'), 'utf8')
+    // Pull the usage() body out so we only check help text, not file-wide
+    // identifiers (e.g. compat strings).
+    const usageBody = cli.match(/function usage\(\)[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(usageBody.length, 'usage() body must be discoverable').toBeGreaterThan(0)
+    for (const banned of ['payments-db', 'service-a', 'service-b', '\'pg\'', '"pg"', 'postgresql']) {
+      expect(usageBody).not.toContain(banned)
+    }
+  })
+
+  it('every verb has a `--help` block listing args, flags, exit codes, example invocation (ADR-050 #7)', async () => {
+    // Per-verb args/flags + an example invocation appear in usage(); exit
+    // codes are listed once at the bottom (the contract reads as one help
+    // block, not nine).
+    const cli = readFileSync(join(CORE_SRC, 'cli.ts'), 'utf8')
+    const usageBody = cli.match(/function usage\(\)[\s\S]*?\n\}/)?.[0] ?? ''
+    const { QUERY_VERBS } = await import('../../src/cli.js')
+    for (const verb of QUERY_VERBS) {
+      // Verb name appears as the leftmost token of a help line.
+      expect(usageBody, `usage() must mention "${verb}"`).toMatch(new RegExp(`\\b${verb}\\b`))
+      // Each verb has at least one example invocation in usage().
+      expect(usageBody, `usage() must show an example for "${verb}"`).toMatch(
+        new RegExp(`example:\\s+neat\\s+${verb}\\b`),
+      )
+    }
+    // Exit codes block.
+    expect(usageBody).toMatch(/exit codes:/)
+    expect(usageBody).toMatch(/0\s+success/)
+    expect(usageBody).toMatch(/1\s+server error/)
+    expect(usageBody).toMatch(/2\s+misuse/)
+    expect(usageBody).toMatch(/3\s+daemon not reachable/)
+  })
+
+  it('`neat --help` lists every verb (lifecycle + query) in one block (ADR-050 #7)', async () => {
+    const cli = readFileSync(join(CORE_SRC, 'cli.ts'), 'utf8')
+    const usageBody = cli.match(/function usage\(\)[\s\S]*?\n\}/)?.[0] ?? ''
+    const { QUERY_VERBS } = await import('../../src/cli.js')
+    // Lifecycle verbs: locked at v0.2.5.
+    const lifecycle = ['init', 'watch', 'list', 'pause', 'resume', 'uninstall', 'skill']
+    for (const verb of [...lifecycle, ...QUERY_VERBS]) {
+      expect(usageBody, `usage() must list "${verb}"`).toMatch(new RegExp(`\\b${verb}\\b`))
+    }
+  })
 })
 
 describe('Frontend-facing API contract (ADR-051)', () => {
