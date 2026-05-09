@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server'
-
-const CORE_URL = process.env.NEAT_CORE_URL ?? 'http://localhost:8080'
+import { CORE_URL } from '../../../lib/proxy'
 
 export async function GET(_request: NextRequest): Promise<Response> {
   try {

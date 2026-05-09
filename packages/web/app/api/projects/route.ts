@@ -1,17 +1,6 @@
-const CORE_URL = process.env.NEAT_CORE_URL ?? 'http://localhost:8080'
+import { CORE_URL, proxyGet } from '../../../lib/proxy'
+import { FIXTURE_PROJECTS } from '../../../lib/fixtures'
 
 export async function GET(): Promise<Response> {
-  try {
-    const upstream = await fetch(`${CORE_URL}/projects`, { cache: 'no-store' })
-    const body = await upstream.text()
-    return new Response(body, {
-      status: upstream.status,
-      headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' },
-    })
-  } catch (err) {
-    return Response.json(
-      { error: 'failed to reach neat-core', detail: err instanceof Error ? err.message : 'unknown' },
-      { status: 502 },
-    )
-  }
+  return proxyGet(`${CORE_URL}/projects`, () => Response.json(FIXTURE_PROJECTS))
 }

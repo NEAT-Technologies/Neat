@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { GraphNode, GraphEdge } from '@neat.is/types'
 import type { GraphData } from './AppShell'
 
@@ -46,34 +46,6 @@ function nodeProps(node: GraphNode): [string, string][] {
   return props
 }
 
-function metricsBlock(nodeType: string, rps: number, p99: string, err: string): React.ReactNode {
-  const skip = ['ConfigNode', 'FrontierNode']
-  if (skip.includes(nodeType)) return null
-  const p99Num = parseFloat(p99)
-  const errNum = parseFloat(err)
-  return (
-    <section className="insp-section">
-      <div className="metrics">
-        <div className="metric">
-          <div className="lbl">req/s</div>
-          <div className="val">{rps.toLocaleString()}</div>
-          <div className="delta">+{(Math.random() * 4).toFixed(1)}%</div>
-        </div>
-        <div className="metric">
-          <div className="lbl">p99 ms</div>
-          <div className="val">{p99}</div>
-          <div className={`delta${p99Num > 80 ? ' bad' : ''}`}>{p99Num > 80 ? '+' : '−'}{(Math.random() * 8).toFixed(1)}%</div>
-        </div>
-        <div className="metric">
-          <div className="lbl">err %</div>
-          <div className="val">{err}</div>
-          <div className={`delta${errNum > 0.4 ? ' bad' : ''}`}>{errNum > 0.4 ? '+' : '−'}{(Math.random() * 0.3).toFixed(2)}</div>
-        </div>
-      </div>
-    </section>
-  )
-}
-
 interface EdgeRow {
   verb: string
   target: string
@@ -90,6 +62,16 @@ export function Inspector({ selectedNodeId, graphData }: InspectorProps) {
   const [node, setNode] = useState<GraphNode | null>(null)
   const [rootCause, setRootCause] = useState<RootCauseResult | null>(null)
   const [activeTab, setActiveTab] = useState<'inspect' | 'edges'>('inspect')
+
+  // Stable synthetic metrics — re-randomised per node, not per render
+  const metrics = useMemo(() => ({
+    rps: Math.round(40 + Math.random() * 200),
+    p99: (38 + Math.random() * 64).toFixed(1),
+    err: (Math.random() * 0.7).toFixed(2),
+    rpsDelta: (Math.random() * 4).toFixed(1),
+    p99Delta: (Math.random() * 8).toFixed(1),
+    errDelta: (Math.random() * 0.3).toFixed(2),
+  }), [selectedNodeId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedNodeId) {
@@ -111,11 +93,11 @@ export function Inspector({ selectedNodeId, graphData }: InspectorProps) {
   if (!selectedNodeId || !node) {
     return (
       <aside className="inspect" id="inspect">
-        <div className="inspect-tabs">
-          <div className="inspect-tab on">Inspect</div>
-          <div className="inspect-tab">Edges</div>
-          <div className="inspect-tab">Owners</div>
-          <div className="inspect-tab">History</div>
+        <div className="inspect-tabs" role="tablist">
+          <div className="inspect-tab on" role="tab" aria-selected={true}>Inspect</div>
+          <div className="inspect-tab" role="tab" aria-selected={false}>Edges</div>
+          <div className="inspect-tab" role="tab" aria-selected={false}>Owners</div>
+          <div className="inspect-tab" role="tab" aria-selected={false}>History</div>
         </div>
         <div className="insp-section" style={{ paddingTop: 32 }}>
           <div style={{ fontFamily: 'Spectral, serif', fontStyle: 'italic', color: 'var(--paper-3)', textAlign: 'center' }}>
@@ -162,33 +144,37 @@ export function Inspector({ selectedNodeId, graphData }: InspectorProps) {
   const labelParts = name.split('/')
   const stem = labelParts.length > 1 ? labelParts[0] + '/' : ''
   const rest = labelParts.length > 1 ? labelParts.slice(1).join('/') : name
-  const rps = Math.round(40 + Math.random() * 200)
-  const p99 = (38 + Math.random() * 64).toFixed(1)
-  const err = (Math.random() * 0.7).toFixed(2)
 
   const provCounts: Record<string, number> = { STATIC: 0, OBSERVED: 0, INFERRED: 0 }
   allEdges.forEach((e) => { provCounts[e.prov] = (provCounts[e.prov] ?? 0) + 1 })
   const total = allEdges.length || 1
 
   const typeLabel = node.type.replace('Node', '').toUpperCase()
+  const showMetrics = !['ConfigNode', 'FrontierNode'].includes(node.type)
+  const p99Num = parseFloat(metrics.p99)
+  const errNum = parseFloat(metrics.err)
 
   return (
     <aside className="inspect" id="inspect">
-      <div className="inspect-tabs">
+      <div className="inspect-tabs" role="tablist">
         <div
           className={`inspect-tab${activeTab === 'inspect' ? ' on' : ''}`}
+          role="tab"
+          aria-selected={activeTab === 'inspect'}
           onClick={() => setActiveTab('inspect')}
         >
           Inspect
         </div>
         <div
           className={`inspect-tab${activeTab === 'edges' ? ' on' : ''}`}
+          role="tab"
+          aria-selected={activeTab === 'edges'}
           onClick={() => setActiveTab('edges')}
         >
           Edges<span className="ct">{edgeCount}</span>
         </div>
-        <div className="inspect-tab">Owners</div>
-        <div className="inspect-tab">History</div>
+        <div className="inspect-tab" role="tab" aria-selected={false}>Owners</div>
+        <div className="inspect-tab" role="tab" aria-selected={false}>History</div>
       </div>
 
       <div id="inspect-body">
@@ -215,7 +201,27 @@ export function Inspector({ selectedNodeId, graphData }: InspectorProps) {
               </div>
             </section>
 
-            {metricsBlock(node.type, rps, p99, err)}
+            {showMetrics && (
+              <section className="insp-section">
+                <div className="metrics">
+                  <div className="metric">
+                    <div className="lbl">req/s</div>
+                    <div className="val">{metrics.rps.toLocaleString()}</div>
+                    <div className="delta">+{metrics.rpsDelta}%</div>
+                  </div>
+                  <div className="metric">
+                    <div className="lbl">p99 ms</div>
+                    <div className="val">{metrics.p99}</div>
+                    <div className={`delta${p99Num > 80 ? ' bad' : ''}`}>{p99Num > 80 ? '+' : '−'}{metrics.p99Delta}%</div>
+                  </div>
+                  <div className="metric">
+                    <div className="lbl">err %</div>
+                    <div className="val">{metrics.err}</div>
+                    <div className={`delta${errNum > 0.4 ? ' bad' : ''}`}>{errNum > 0.4 ? '+' : '−'}{metrics.errDelta}</div>
+                  </div>
+                </div>
+              </section>
+            )}
 
             {rootCause && (
               <section className="insp-section">

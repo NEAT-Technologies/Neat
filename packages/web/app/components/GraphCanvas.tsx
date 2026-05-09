@@ -37,11 +37,13 @@ const COMPOUND_TYPES = new Set(['cloud', 'env', 'vpc', 'cluster', 'namespace'])
 
 interface GraphCanvasProps {
   project: string
+  selectedNodeId: string | null
   onNodeSelect: (id: string) => void
   onGraphLoaded: (data: GraphData) => void
+  onCyReady?: (cy: unknown) => void
 }
 
-export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: GraphCanvasProps) {
+export function GraphCanvas({ project, selectedNodeId, onNodeSelect, onGraphLoaded, onCyReady }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null)
   const minimapFrameRef = useRef<HTMLDivElement>(null)
@@ -106,6 +108,18 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
     mmFrame.style.height = Math.min(rect.height - Math.max(0, fy), fh) + 'px'
   }, [])
 
+  // Pan + select node when selectedNodeId is set from outside (search, URL, incidents link)
+  useEffect(() => {
+    const cy = cyRef.current
+    if (!cy || !selectedNodeId) return
+    const el = cy.getElementById(selectedNodeId)
+    if (el && el.length) {
+      cy.animate({ center: { eles: el }, zoom: 1.4 }, { duration: 300 })
+      cy.$(':selected').unselect()
+      el.select()
+    }
+  }, [selectedNodeId])
+
   useEffect(() => {
     let destroyed = false
 
@@ -113,7 +127,8 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
       // Dynamic import avoids SSR issues
       const cytoscape = (await import('cytoscape')).default
 
-      const res = await fetch('/api/graph').catch(() => null)
+      const projectParam = project && project !== 'default' ? `?project=${encodeURIComponent(project)}` : ''
+      const res = await fetch(`/api/graph${projectParam}`).catch(() => null)
       if (!res || !res.ok || destroyed) return
       const data: GraphData = await res.json()
       if (destroyed) return
@@ -142,7 +157,7 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
         namespace: { color: cssVar('--n-namespace'),  shape: 'round-rectangle' },
         vpc:       { color: cssVar('--n-vpc'),        shape: 'round-rectangle' },
         env:       { color: cssVar('--n-env'),        shape: 'round-rectangle' },
-        cloud:     { color: '#1d1d22',                shape: 'round-rectangle' },
+        cloud:     { color: cssVar('--ink-3'),        shape: 'round-rectangle' },
       }
 
       const provColor: Record<string, string> = {
@@ -312,6 +327,7 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
       })
 
       cyRef.current = cy
+      onCyReady?.(cy)
 
       // Update legend counts
       const counts: Record<string, number> = { STATIC: 0, OBSERVED: 0, INFERRED: 0 }
@@ -422,6 +438,14 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
       // SSE live updates (graceful — pre-v0.2.8 will get unavailable error and stop)
       const sse = new EventSource('/api/events')
       sseRef.current = sse
+
+      function pushGraphUpdate() {
+        onGraphLoaded({
+          nodes: cy.nodes(':visible').map((n: { data: (k: string) => unknown }) => n.data('_raw') as GraphNode),
+          edges: cy.edges(':visible').map((e: { data: (k: string) => unknown }) => ({ id: e.data('id'), source: e.data('source'), target: e.data('target'), type: e.data('type'), provenance: e.data('provenance'), confidence: e.data('confidence') }) as GraphEdge),
+        })
+      }
+
       sse.addEventListener('node-added', (e) => {
         const { node } = JSON.parse(e.data) as { node: GraphNode }
         const vt = visualType(node)
@@ -435,9 +459,11 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
             _shape: ts.shape,
             _size: ts.size ?? 28,
             _isCompound: COMPOUND_TYPES.has(vt),
+            _raw: node,
           },
           classes: `t-${vt} ${COMPOUND_TYPES.has(vt) ? 'compound' : 'leaf'}`,
         })
+        pushGraphUpdate()
       })
       sse.addEventListener('edge-added', (e) => {
         const { edge } = JSON.parse(e.data) as { edge: GraphEdge }
@@ -456,14 +482,17 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
             _opacity: vp === 'INFERRED' ? 0.55 : vp === 'OBSERVED' ? 0.85 : 0.75,
           },
         })
+        pushGraphUpdate()
       })
       sse.addEventListener('node-removed', (e) => {
         const { id } = JSON.parse(e.data) as { id: string }
         cy.getElementById(id).remove()
+        pushGraphUpdate()
       })
       sse.addEventListener('edge-removed', (e) => {
         const { id } = JSON.parse(e.data) as { id: string }
         cy.getElementById(id).remove()
+        pushGraphUpdate()
       })
       sse.addEventListener('error', () => {
         // pre-v0.2.8 or connection drop — ignore silently
@@ -485,13 +514,12 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
         cyRef.current = null
       }
     }
-  // onGraphLoaded + onNodeSelect are stable references from useState setters
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [project])
 
   return (
     <main className="canvas-wrap">
-      <div id="cy" ref={containerRef} />
+      <div id="cy" ref={containerRef} aria-label="Service dependency graph" role="img" />
 
       <div className="canvas-tag">
         <span className="title">NEAT</span>
@@ -499,7 +527,14 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
       </div>
 
       <div className="canvas-toolbar">
-        <button className="on">
+        <button
+          className="on"
+          title="Toggle node dragging"
+          onClick={() => {
+            const cy = cyRef.current
+            if (cy) cy.autoungrabify(!cy.autoungrabify())
+          }}
+        >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
             <rect x="5" y="11" width="14" height="9" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" />
           </svg>
@@ -509,7 +544,9 @@ export function GraphCanvas({ project: _project, onNodeSelect, onGraphLoaded }: 
         <button onClick={() => cyRef.current?.fit(undefined, 40)}>Fit</button>
         <button onClick={() => cyRef.current?.center()}>Center</button>
         <span className="div" />
-        <button>Layout: <span className="mono">cose</span></button>
+        <button onClick={() => cyRef.current?.layout({ name: 'cose', animate: true, randomize: false, idealEdgeLength: 90, nodeRepulsion: 9000, edgeElasticity: 80, gravity: 0.4, numIter: 1200 }).run()}>
+          Layout: <span className="mono">cose</span>
+        </button>
       </div>
 
       <div className="zoomctl">

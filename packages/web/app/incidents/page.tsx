@@ -30,6 +30,7 @@ export default function IncidentsPage() {
   const [data, setData] = useState<IncidentsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [openRow, setOpenRow] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/incidents?limit=100')
@@ -46,11 +47,10 @@ export default function IncidentsPage() {
 
   return (
     <div style={{ background: 'var(--ink-0)', minHeight: '100vh' }}>
-      {/* minimal topbar */}
       <header className="topbar">
         <div className="brand" title="NEAT">N</div>
         <div className="crumbs">
-          <Link href="/" style={{ color: 'var(--paper-2)', textDecoration: 'none', fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>graph view</Link>
+          <Link href="/" className="incidents-nav-link">graph view</Link>
           <span className="sep">/</span>
           <span className="here">incidents</span>
         </div>
@@ -87,14 +87,41 @@ export default function IncidentsPage() {
               </tr>
             </thead>
             <tbody>
-              {data.events.map((evt, i) => (
-                <tr key={i}>
-                  <td className="td-node">{evt.nodeId}</td>
-                  <td className="td-time">{formatTs(evt.timestamp)}</td>
-                  <td className="td-type">{evt.type}</td>
-                  <td className="td-msg">{evt.message}</td>
-                </tr>
-              ))}
+              {data.events.map((evt, i) => {
+                const rowKey = `${i}-${evt.nodeId}`
+                const isOpen = openRow === rowKey
+                return (
+                  <>
+                    <tr
+                      key={rowKey}
+                      style={{ cursor: evt.stacktrace ? 'pointer' : undefined }}
+                      onClick={() => evt.stacktrace && setOpenRow(isOpen ? null : rowKey)}
+                      title={evt.stacktrace ? (isOpen ? 'Collapse stacktrace' : 'Expand stacktrace') : undefined}
+                    >
+                      <td className="td-node">
+                        <Link href={`/?node=${encodeURIComponent(evt.nodeId)}`} className="incidents-node-link">
+                          {evt.nodeId}
+                        </Link>
+                      </td>
+                      <td className="td-time">{formatTs(evt.timestamp)}</td>
+                      <td className="td-type">{evt.type}</td>
+                      <td className="td-msg">
+                        {evt.message}
+                        {evt.stacktrace && (
+                          <span className="stack-toggle">{isOpen ? ' ▲' : ' ▼'}</span>
+                        )}
+                      </td>
+                    </tr>
+                    {isOpen && evt.stacktrace && (
+                      <tr key={`${rowKey}-stack`}>
+                        <td colSpan={4} className="td-stacktrace">
+                          <pre className="stacktrace-pre">{evt.stacktrace}</pre>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )
+              })}
             </tbody>
           </table>
         )}
