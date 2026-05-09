@@ -25,6 +25,24 @@ import {
   type InstallPlan,
   type PatchSection,
 } from './installers/index.js'
+import {
+  createHttpClient,
+  exitCodeForError,
+  formatHuman,
+  formatJson,
+  HttpError,
+  runBlastRadius,
+  runDependencies,
+  runDiff,
+  runIncidents,
+  runObservedDependencies,
+  runPolicies,
+  runRootCause,
+  runSearch,
+  runStaleEdges,
+  TransportError,
+  type VerbResult,
+} from './cli-client.js'
 
 export interface InitOptions {
   scanPath: string
@@ -54,7 +72,7 @@ export interface InitResult {
 function usage(): void {
   console.log('usage: neat <command> [args] [--project <name>]')
   console.log('')
-  console.log('commands:')
+  console.log('lifecycle commands:')
   console.log('  init <path>    One-time install: discover, extract, register, plan SDK install.')
   console.log('                 Snapshot lands in <path>/neat-out/graph.json by default')
   console.log('                 (or <path>/neat-out/<project>.json for non-default).')
@@ -76,65 +94,154 @@ function usage(): void {
   console.log('                   --print-config   print the JSON snippet to stdout')
   console.log('                   --apply          merge mcpServers.neat into ~/.claude.json')
   console.log('')
+  console.log('query commands (mirror the MCP tools, ADR-050):')
+  console.log('  root-cause <node-id>             Walk inbound edges to find what broke first.')
+  console.log('                                   example: neat root-cause service:<name>')
+  console.log('  blast-radius <node-id>           BFS outbound — what would break if this dies.')
+  console.log('                                   example: neat blast-radius database:<host>')
+  console.log('  dependencies <node-id>           Transitive outbound dependencies.')
+  console.log('                                   Flags: --depth N (default 3, max 10)')
+  console.log('                                   example: neat dependencies service:<name> --depth 2')
+  console.log('  observed-dependencies <node-id>  OBSERVED-only outbound edges (runtime traffic).')
+  console.log('                                   example: neat observed-dependencies service:<name>')
+  console.log('  incidents [<node-id>]            Recent error events; per-node when an id is given.')
+  console.log('                                   Flags: --limit N (default 20)')
+  console.log('                                   example: neat incidents service:<name> --limit 5')
+  console.log('  search <query>                   Semantic (or substring) match on node names/ids.')
+  console.log('                                   example: neat search "checkout"')
+  console.log('  diff --against <snapshot>        Compare the live graph to a saved snapshot.')
+  console.log('                                   example: neat diff --against ./snapshots/baseline.json')
+  console.log('  stale-edges                      Recent OBSERVED → STALE transitions.')
+  console.log('                                   Flags: --limit N, --edge-type CALLS|CONNECTS_TO|...')
+  console.log('                                   example: neat stale-edges --edge-type CALLS')
+  console.log('  policies                         Current policy violations.')
+  console.log('                                   Flags: --node <id>, --hypothetical-action <json>')
+  console.log('                                   example: neat policies --node service:<name> --json')
+  console.log('')
   console.log('flags:')
   console.log('  --project <name>   Name the project this command targets. Default: "default".')
+  console.log('  --json             Emit machine-readable JSON instead of human text. Query verbs only.')
+  console.log('')
+  console.log('exit codes:')
+  console.log('  0  success')
+  console.log('  1  server error (4xx/5xx body printed to stderr)')
+  console.log('  2  misuse (missing args, bad flags) — handled before any network call')
+  console.log('  3  daemon not reachable (connection refused / timeout)')
+  console.log('')
+  console.log('environment:')
+  console.log('  NEAT_API_URL    base URL for the core REST API (default http://localhost:8080)')
+  console.log('  NEAT_PROJECT    project name when --project isn\'t passed')
 }
 
-// Tiny argv parser — pulls `--project <name>` and the v0.2.5 init flags
-// (`--apply`, `--dry-run`, `--no-install`) out of `rest`. Boolean flags are
-// only meaningful for `init`; the parser surfaces them unconditionally so
-// `main` can validate per-command.
+// Tiny argv parser — pulls `--project <name>`, the v0.2.5 init flags, and
+// the v0.2.8 verb flags out of `rest`. Boolean / value flags are surfaced
+// unconditionally; per-command validation lives in `main`.
 interface ParsedArgs {
   project: string | null
   apply: boolean
   dryRun: boolean
   noInstall: boolean
   printConfig: boolean
+  json: boolean
+  depth: number | null
+  limit: number | null
+  edgeType: string | null
+  node: string | null
+  since: string | null
+  against: string | null
+  errorId: string | null
+  hypotheticalAction: string | null
   positional: string[]
 }
 
+// String-valued flags supported across the verb surface. Each entry maps the
+// canonical `--flag` name (and its `--flag=` equivalent) to the parsed-args
+// field that receives it. Centralising the table keeps misuse diagnostics
+// (exit code 2) consistent across verbs.
+const STRING_FLAGS = [
+  ['--project', 'project'],
+  ['--depth', 'depth'],
+  ['--limit', 'limit'],
+  ['--edge-type', 'edgeType'],
+  ['--node', 'node'],
+  ['--since', 'since'],
+  ['--against', 'against'],
+  ['--error-id', 'errorId'],
+  ['--hypothetical-action', 'hypotheticalAction'],
+] as const
+
 function parseArgs(rest: string[]): ParsedArgs {
   const positional: string[] = []
-  let project: string | null = null
-  let apply = false
-  let dryRun = false
-  let noInstall = false
-  let printConfig = false
+  const out: ParsedArgs = {
+    project: null,
+    apply: false,
+    dryRun: false,
+    noInstall: false,
+    printConfig: false,
+    json: false,
+    depth: null,
+    limit: null,
+    edgeType: null,
+    node: null,
+    since: null,
+    against: null,
+    errorId: null,
+    hypotheticalAction: null,
+    positional: [],
+  }
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i] as string
-    if (arg === '--project') {
-      const next = rest[i + 1]
-      if (!next) {
-        console.error('neat: --project requires a value')
-        process.exit(2)
+
+    // Boolean flags first.
+    if (arg === '--apply') { out.apply = true; continue }
+    if (arg === '--dry-run') { out.dryRun = true; continue }
+    if (arg === '--no-install') { out.noInstall = true; continue }
+    if (arg === '--print-config') { out.printConfig = true; continue }
+    if (arg === '--json') { out.json = true; continue }
+
+    // String/number flags via the shared table.
+    let matched = false
+    for (const [flag, field] of STRING_FLAGS) {
+      if (arg === flag) {
+        const next = rest[i + 1]
+        if (next === undefined) {
+          console.error(`neat: ${flag} requires a value`)
+          process.exit(2)
+        }
+        assignFlag(out, field, next)
+        i++
+        matched = true
+        break
       }
-      project = next
-      i++
-      continue
+      if (arg.startsWith(`${flag}=`)) {
+        assignFlag(out, field, arg.slice(flag.length + 1))
+        matched = true
+        break
+      }
     }
-    if (arg.startsWith('--project=')) {
-      project = arg.slice('--project='.length)
-      continue
-    }
-    if (arg === '--apply') {
-      apply = true
-      continue
-    }
-    if (arg === '--dry-run') {
-      dryRun = true
-      continue
-    }
-    if (arg === '--no-install') {
-      noInstall = true
-      continue
-    }
-    if (arg === '--print-config') {
-      printConfig = true
-      continue
-    }
+    if (matched) continue
     positional.push(arg)
   }
-  return { project, apply, dryRun, noInstall, printConfig, positional }
+  out.positional = positional
+  return out
+}
+
+export { parseArgs }
+
+// Number flags get parsed at assignment time so misuse (`--depth foo`)
+// surfaces with exit code 2 before any network call.
+function assignFlag(out: ParsedArgs, field: (typeof STRING_FLAGS)[number][1], value: string): void {
+  if (field === 'depth' || field === 'limit') {
+    const n = Number(value)
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
+      console.error(`neat: --${field === 'depth' ? 'depth' : 'limit'} must be a positive integer`)
+      process.exit(2)
+    }
+    out[field] = n
+    return
+  }
+  // String fields.
+  ;(out as unknown as Record<string, unknown>)[field] = value
 }
 
 function summarise(nodes: GraphNode[], edges: GraphEdge[]): string {
@@ -589,9 +696,191 @@ async function main(): Promise<void> {
     return
   }
 
+  // ── Query verbs (ADR-050) ────────────────────────────────────────────
+  // The nine verbs mirror the MCP tool allowlist. Same multi-project
+  // routing, same three-part response shape (summary + block + footer),
+  // exit codes branch on misuse vs server error vs daemon-down.
+  if (QUERY_VERBS.has(cmd)) {
+    const code = await runQueryVerb(cmd, parsed)
+    if (code !== 0) process.exit(code)
+    return
+  }
+
   console.error(`neat: unknown command "${cmd}"`)
   usage()
   process.exit(1)
+}
+
+// ── Query verb dispatcher ──────────────────────────────────────────────
+
+export const QUERY_VERBS: Set<string> = new Set([
+  'root-cause',
+  'blast-radius',
+  'dependencies',
+  'observed-dependencies',
+  'incidents',
+  'search',
+  'diff',
+  'stale-edges',
+  'policies',
+])
+
+// ADR-050 #2: --project flag → NEAT_PROJECT env → undefined (server's
+// `default` slot). undefined keeps legacy unprefixed routes; explicit names
+// route through /projects/:project/...
+function resolveProjectFlag(parsed: ParsedArgs): string | undefined {
+  if (parsed.project) return parsed.project
+  const env = process.env.NEAT_PROJECT
+  if (env && env.length > 0 && env !== DEFAULT_PROJECT) return env
+  return undefined
+}
+
+export async function runQueryVerb(cmd: string, parsed: ParsedArgs): Promise<number> {
+  const baseUrl = process.env.NEAT_API_URL ?? 'http://localhost:8080'
+  const client = createHttpClient(baseUrl)
+  const project = resolveProjectFlag(parsed)
+  const positional = parsed.positional
+
+  // Per-verb arg/flag validation. Misuse exits 2 before any network call.
+  let work: Promise<VerbResult>
+  switch (cmd) {
+    case 'root-cause': {
+      const node = positional[0]
+      if (!node) {
+        console.error('neat root-cause: missing <node-id>')
+        return 2
+      }
+      work = runRootCause(client, {
+        errorNode: node,
+        ...(parsed.errorId ? { errorId: parsed.errorId } : {}),
+        ...(project ? { project } : {}),
+      })
+      break
+    }
+    case 'blast-radius': {
+      const node = positional[0]
+      if (!node) {
+        console.error('neat blast-radius: missing <node-id>')
+        return 2
+      }
+      work = runBlastRadius(client, {
+        nodeId: node,
+        ...(parsed.depth !== null ? { depth: parsed.depth } : {}),
+        ...(project ? { project } : {}),
+      })
+      break
+    }
+    case 'dependencies': {
+      const node = positional[0]
+      if (!node) {
+        console.error('neat dependencies: missing <node-id>')
+        return 2
+      }
+      work = runDependencies(client, {
+        nodeId: node,
+        ...(parsed.depth !== null ? { depth: parsed.depth } : {}),
+        ...(project ? { project } : {}),
+      })
+      break
+    }
+    case 'observed-dependencies': {
+      const node = positional[0]
+      if (!node) {
+        console.error('neat observed-dependencies: missing <node-id>')
+        return 2
+      }
+      work = runObservedDependencies(client, {
+        nodeId: node,
+        ...(project ? { project } : {}),
+      })
+      break
+    }
+    case 'incidents': {
+      // node-id is optional — bare `neat incidents` returns the global log.
+      work = runIncidents(client, {
+        ...(positional[0] ? { nodeId: positional[0] } : {}),
+        ...(parsed.limit !== null ? { limit: parsed.limit } : {}),
+        ...(project ? { project } : {}),
+      })
+      break
+    }
+    case 'search': {
+      const q = positional.join(' ').trim()
+      if (!q) {
+        console.error('neat search: missing <query>')
+        return 2
+      }
+      work = runSearch(client, { query: q, ...(project ? { project } : {}) })
+      break
+    }
+    case 'diff': {
+      // --against names a snapshot file the core can resolve via
+      // loadSnapshotForDiff. --since is reserved for a future date-range
+      // mode (the contract lists it as `[--since <date>]`); for MVP, the
+      // diff verb requires --against.
+      const against = parsed.against ?? parsed.since
+      if (!against) {
+        console.error('neat diff: --against <snapshot-path> is required')
+        return 2
+      }
+      work = runDiff(client, {
+        againstSnapshot: against,
+        ...(project ? { project } : {}),
+      })
+      break
+    }
+    case 'stale-edges': {
+      work = runStaleEdges(client, {
+        ...(parsed.limit !== null ? { limit: parsed.limit } : {}),
+        ...(parsed.edgeType ? { edgeType: parsed.edgeType } : {}),
+        ...(project ? { project } : {}),
+      })
+      break
+    }
+    case 'policies': {
+      let hypothetical: ReturnType<typeof JSON.parse> | undefined
+      if (parsed.hypotheticalAction) {
+        try {
+          hypothetical = JSON.parse(parsed.hypotheticalAction)
+        } catch (err) {
+          console.error(
+            `neat policies: --hypothetical-action must be valid JSON: ${(err as Error).message}`,
+          )
+          return 2
+        }
+      }
+      work = runPolicies(client, {
+        ...(parsed.node ? { nodeId: parsed.node } : {}),
+        ...(hypothetical ? { hypotheticalAction: hypothetical } : {}),
+        ...(project ? { project } : {}),
+      })
+      break
+    }
+    default:
+      // Unreachable — QUERY_VERBS gates the dispatch.
+      console.error(`neat: unknown query verb "${cmd}"`)
+      return 2
+  }
+
+  try {
+    const result = await work
+    if (parsed.json) process.stdout.write(formatJson(result) + '\n')
+    else process.stdout.write(formatHuman(result) + '\n')
+    return 0
+  } catch (err) {
+    // Server / transport errors land on stderr per ADR-050 #3 (stderr for
+    // diagnostics, stdout for results — never mix). Exit code branches per
+    // ADR-050 #4: 1 for HttpError, 3 for TransportError.
+    if (err instanceof HttpError) {
+      const detail = err.responseBody.length > 0 ? err.responseBody : err.message
+      console.error(`neat ${cmd}: ${detail.trim()}`)
+    } else if (err instanceof TransportError) {
+      console.error(`neat ${cmd}: ${err.message}. Is the daemon running? (NEAT_API_URL=${process.env.NEAT_API_URL ?? 'http://localhost:8080'})`)
+    } else {
+      console.error(`neat ${cmd}: ${(err as Error).message}`)
+    }
+    return exitCodeForError(err)
+  }
 }
 
 // Only auto-run when invoked as the CLI entry point. Importing this module
