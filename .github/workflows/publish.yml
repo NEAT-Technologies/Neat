@@ -1,0 +1,106 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — verify everything but do not publish'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+# Single-flight publish. A second tag push waits rather than racing — partial
+# failure leaves a known state to recover from, not a registry made up of
+# whichever job won.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npx turbo build test lint
+
+      - name: Verify versions are in lockstep
+        run: |
+          set -euo pipefail
+          versions=$(node -e "
+            const fs = require('fs')
+            const pkgs = ['types', 'core', 'mcp', 'claude-skill', 'neat.is']
+            const vs = pkgs.map(p => JSON.parse(fs.readFileSync('packages/' + p + '/package.json', 'utf8')).version)
+            console.log(vs.join(' '))
+          ")
+          unique=$(echo "$versions" | tr ' ' '\n' | sort -u | wc -l | tr -d ' ')
+          echo "Versions: $versions"
+          if [ "$unique" != "1" ]; then
+            echo "::error::Publishable packages have mismatched versions. All five must match."
+            exit 1
+          fi
+
+      - name: Publish in dependency order
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          publish_one() {
+            local pkg_dir="$1"
+            local pkg_name
+            pkg_name=$(node -p "require('./${pkg_dir}/package.json').name")
+            local pkg_version
+            pkg_version=$(node -p "require('./${pkg_dir}/package.json').version")
+
+            echo
+            echo "── ${pkg_name}@${pkg_version} ──"
+
+            # Idempotency: skip if this exact version is already on the registry.
+            # `npm view` exits non-zero if the version isn't published.
+            if npm view "${pkg_name}@${pkg_version}" version > /dev/null 2>&1; then
+              echo "  already on registry, skipping"
+              return 0
+            fi
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "  DRY RUN — would publish"
+              ( cd "$pkg_dir" && npm publish --dry-run )
+              return 0
+            fi
+
+            ( cd "$pkg_dir" && npm publish )
+            echo "  published"
+          }
+
+          publish_one "packages/types"
+          publish_one "packages/core"
+          publish_one "packages/mcp"
+          publish_one "packages/claude-skill"
+          publish_one "packages/neat.is"
+
+          echo
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run complete. No packages were published."
+          else
+            echo "Publish complete."
+          fi

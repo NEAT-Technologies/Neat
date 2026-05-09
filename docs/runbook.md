@@ -99,6 +99,21 @@ NEAT_SCAN_PATH=./demo \
 - **README CI badge 404s** — the workflow path changed. The badge URL must match `/.github/workflows/<file>.yml`.
 - **`npm install` adds 80 packages out of nowhere** — someone added `demo/*` back into root `workspaces` before M2 is ready. Drop it again until docker-compose actually launches the services.
 
+## Publishing to npm
+
+CI does the publish on tag push. From a clean working tree on `main`:
+
+```bash
+# Bump versions across all five publishable packages, then:
+git commit -am "Bump to X.Y.Z" && git push origin main
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+gh run watch --repo NEAT-Technologies/Neat
+```
+
+`.github/workflows/publish.yml` handles the rest. Local fallback: `bash scripts/publish.sh` (or `--dry-run` to simulate).
+
+Full process + troubleshooting tree: [`runbook-publish.md`](./runbook-publish.md).
+
 ## Branch / commit / PR flow
 
 - One issue → one branch `<num>-<slug>` → one PR.
