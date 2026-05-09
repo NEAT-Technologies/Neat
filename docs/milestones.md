@@ -12,9 +12,9 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-09. v0.2.0 through v0.2.5 milestones closed and tagged. v0.2.6 contracts (ADRs 050/051 — CLI surface + frontend-facing API) landed on `main`; implementation is queued. The publish system contract (ADR-052) landed alongside the npm pipeline rebuild. npm packages at 0.2.6 on the registry — a broken `exports` field shipped, 0.2.7 fix-only patch in flight.
+**Last session ended:** 2026-05-09. v0.2.0 through v0.2.5 milestones closed and tagged. v0.2.8 contracts (ADRs 050/051 — CLI surface + frontend-facing API) landed on `main`; implementation is queued. The publish system contract (ADR-052) landed alongside the npm pipeline rebuild, and ADR-053 codifies the milestone-naming rule that produced the v0.2.6 → v0.2.8 rename. npm packages at 0.2.7 on the registry; the 0.2.5 and 0.2.6 slots are permanently retired (broken publishes that forced patch bumps per npm policy).
 
-**For current operational state of the active milestone, read `docs/plans/2026-05-07-v0.2.6-kickoff.md` first.** That doc is the canonical handoff; this file describes the long-term shape.
+**For current operational state of the active milestone, read `docs/plans/2026-05-09-v0.2.8-kickoff.md` first.** That doc is the canonical handoff; this file describes the long-term shape.
 
 **Two parallel tracks share `main`:**
 
@@ -27,9 +27,9 @@ Source of truth for sprint status. Update this file at the end of every session.
   - **v0.2.3 — Traversal rebuild.** Opens with contracts #9-#11. Ships #136-#139, #123.
   - **v0.2.4 — Policies + MCP refresh.** Opens with contracts #12-#18. Ships #115-#118, #143, #144.
   - **v0.2.5 — `neat init` + SDK install + Claude skill.** Opens with contracts #19-#22. Ships #119.
-  - **v0.2.6 — CLI parity + frontend-API surface.** Opens with contracts #23-#24. CLI verbs mirroring the nine MCP tools (so a human at a terminal has the same reach as an agent), plus whatever API surface Jed's v0.3.0 frontend track surfaces as a gap. The `(if needed)` qualifier is honest — parts of this milestone wait until v0.3.0 starts pulling on concrete demands.
+  - **v0.2.8 — CLI parity + frontend-API surface.** Opens with contracts #23-#24. CLI verbs mirroring the nine MCP tools (so a human at a terminal has the same reach as an agent), plus whatever API surface Jed's v0.3.0 frontend track surfaces as a gap. The `(if needed)` qualifier is honest — parts of this milestone wait until v0.3.0 starts pulling on concrete demands. Originally named v0.2.6; renamed per ADR-053 after two publish-fix patches consumed the 0.2.6 and 0.2.7 npm version slots.
 
-After v0.2.6: the MVP-success PR experiment (ADR-027). Self-hosting on the NEAT codebase activates only after that PR closes — until then NEAT is the target of construction, not the tool.
+After v0.2.8: the MVP-success PR experiment (ADR-027). Self-hosting on the NEAT codebase activates only after that PR closes — until then NEAT is the target of construction, not the tool.
 
 ### Active work — start here
 

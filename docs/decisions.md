@@ -1338,7 +1338,7 @@ Governs the long-lived `neatd` process. Sibling contracts: ADR-046, ADR-047, ADR
 **Date:** 2026-05-08
 **Status:** Active.
 
-Opens v0.2.6. First of two milestone contracts. Sibling: ADR-051.
+Opens v0.2.8 (contract drafted under the milestone's original v0.2.6 name; renamed per ADR-053 after publish-fix releases consumed those version slots — the contract content is unchanged). First of two milestone contracts. Sibling: ADR-051.
 
 **Context.** Today every reach into the graph goes through MCP — fine for Claude Code, awkward for a human at a terminal who wants to ask "what does `get_root_cause` return for `service:checkout`?" The terminal-vs-agent gap is real: an engineer debugging needs the same nine tools the agent has, without the Claude wrapper. The existing `neat` CLI handles lifecycle (`init`, `watch`, `list`, `pause`, `resume`, `uninstall`, `skill`) but exposes no graph queries.
 
@@ -1379,14 +1379,14 @@ Opens v0.2.6. First of two milestone contracts. Sibling: ADR-051.
 
 **Authority.** `packages/core/src/cli.ts` (extends existing parser) or a new `packages/core/src/cli-verbs.ts` if the surface gets large. Implementation choice left to the implementing agent. The REST client lives at `packages/core/src/cli-client.ts` (or similar) and is shared with `packages/mcp/src/client.ts`.
 
-**Enforcement.** `it.todo` block in `contracts.test.ts` for v0.2.6 #23. Regression tests cover: nine verbs registered, REST-only data path (no `graph.json` reads from CLI), exit-code branching, `--json` shape, `--project` propagation.
+**Enforcement.** `it.todo` block in `contracts.test.ts` for v0.2.8 #23. Regression tests cover: nine verbs registered, REST-only data path (no `graph.json` reads from CLI), exit-code branching, `--json` shape, `--project` propagation.
 
 ## ADR-051 — Frontend-facing API contract
 
 **Date:** 2026-05-08
 **Status:** Active. Speculative — sections marked **(deferred)** wait for v0.3.0 to surface concrete asks.
 
-Opens v0.2.6. Second of two milestone contracts. Sibling: ADR-050.
+Opens v0.2.8 (contract drafted under the milestone's original v0.2.6 name; renamed per ADR-053 after publish-fix releases consumed those version slots — the contract content is unchanged). Second of two milestone contracts. Sibling: ADR-050.
 
 **Context.** Jed's v0.3.0 frontend track builds against the v0.1.2-stable API. The existing REST surface (`/graph`, `/graph/node/:id`, etc., all dual-mounted per ADR-026) is request-response — fine for initial render, insufficient for live views. Two gaps known today: live update streaming, multi-project enumeration. WebSocket-style symmetric subscription is plausibly needed but not surfaced yet.
 
@@ -1425,7 +1425,7 @@ The `(if needed)` qualifier in the kickoff applies. We draft what's clear and ex
 
 **Authority.** `packages/core/src/api.ts` (extend) for `/projects`. SSE endpoint in `packages/core/src/api.ts` or a new `packages/core/src/streaming.ts` if the surface grows. Event emission threaded through `ingest.ts`, `extract/index.ts`, `watch.ts`, `policy.ts` via a small `EventEmitter` singleton in `packages/core/src/events.ts`.
 
-**Enforcement.** `it.todo` block in `contracts.test.ts` for v0.2.6 #24. Regression tests cover: `/events` endpoint exists with `text/event-stream` content-type, dual-mount per ADR-026, event-type taxonomy locked (eight types, no quiet additions), `/projects` endpoint exists and returns the registry shape, heartbeat interval set, backpressure cap honored.
+**Enforcement.** `it.todo` block in `contracts.test.ts` for v0.2.8 #24. Regression tests cover: `/events` endpoint exists with `text/event-stream` content-type, dual-mount per ADR-026, event-type taxonomy locked (eight types, no quiet additions), `/projects` endpoint exists and returns the registry shape, heartbeat interval set, backpressure cap honored.
 
 ## ADR-052 — Publish system contract
 
@@ -1450,3 +1450,26 @@ Documents the load-bearing rules of the npm publish pipeline. The pipeline has b
 **Authority.** `.github/workflows/publish.yml` (CI publish), `scripts/publish.sh` (local fallback), `docs/runbook-publish.md` (process), `packages/neat.is/bin/{neat,neatd,neat-mcp}` (the wrappers under contract), `packages/core/package.json` and `packages/mcp/package.json` (the `exports` fields the wrappers reach through).
 
 **Enforcement.** New describe block in `contracts.test.ts`. Live assertions for rules 2 (version lockstep), 4 (dependency order encoded in scripts), 8 (engines field). Rule 1 (subpath validity) ships as live but depends on the 0.2.7 exports fix being on `main` first; until then, the assertion would fail because main reflects the broken 0.2.6 state. Rule 3 (tarball smoke-test) is an `it.todo` until the workflow step lands. Rules 5, 6, 7 are documented invariants without test mechanization (5 is exercised by every re-run of the workflow; 6 and 7 are policy, not verifiable in CI).
+
+## ADR-053 — Milestone naming convention
+
+**Date:** 2026-05-09
+**Status:** Active.
+
+**Context.** Until now NEAT milestones have been named after the npm version they're projected to ship under (`v0.2.0 — Sunrise`, `v0.2.1 — Tree-sitter rebuild`, etc.). This worked because every milestone shipped exactly one npm version, with no publish-fix releases intervening. The 0.2.6 broken-publish saga broke that assumption: between the v0.2.6 milestone opening (2026-05-08) and any implementation work, two publish-fix releases (`0.2.6` retired, `0.2.7` shipped) consumed the version slot the milestone name implied. Calling the unshipped milestone "v0.2.6" while the next npm publish would actually be `0.2.8` created persistent terminology drift across CLAUDE.md, contracts.md, the kickoff doc, ADR-050/051, and the contracts test suite.
+
+**Decision.**
+
+1. **Milestone name = projected next npm version at kickoff time.** Same convention as before.
+2. **If publish-fix releases consume the projected version before the milestone implementation ships, the milestone name updates to match the new projected version.** Rolling forward, not staying anchored. The rename is mechanical: every forward-looking reference (CLAUDE.md "Where you are in the build", contracts.md status fields, ADR "Opens v0.X.Y" lines, kickoff doc filenames, contracts.test.ts comment headers) updates in one PR. Historical references (commit messages, closed status docs, PR descriptions, retired npm versions) stay as they were — those reflect the world as it was at the time, and rewriting them would be revisionism.
+3. **ADR and contract numbers do not change.** ADR-050 stays ADR-050 even if the milestone it opens is renamed v0.2.6 → v0.2.8. Contract numbering is independent of milestone naming. Same for `it.todo` issue references in contracts.test.ts — those are tracker issue numbers, not milestone version numbers.
+4. **The rename is documented in a status doc.** `docs/plans/<date>-milestone-rename.md` captures what changed and why, so the trail back to the original name stays discoverable.
+5. **Old kickoff docs get a deprecation header.** `docs/plans/<old-date>-v0.X.Y-kickoff.md` gets a one-block redirect to the new kickoff at the top, preserving the body as historical record.
+
+**Why not decouple milestone names from version numbers entirely?** Considered. Descriptive milestone names (`M-CLI-API`, `M-Frontend-Surface`) would prevent any version-name drift forever, but they also break the existing v0.X.Y → version → npm convention NEAT has used since v0.1.0, and they require updating every status doc and runbook reference at once. The roll-forward rule preserves the existing convention while handling the rare case where it slips. If milestone-version drift recurs more than twice in v0.3.x or beyond, revisit.
+
+**Authority.** Process rule, no code authority. Enforced by the rename PR pattern when drift is detected.
+
+**Enforcement.** No mechanized test. Detected by reading: if `CLAUDE.md`'s active-milestone block names a version that's already on the npm registry as a retired or current published version, the milestone needs to be rolled forward.
+
+**First application.** v0.2.6 → v0.2.8 milestone rename, 2026-05-09, see `docs/plans/2026-05-09-milestone-rename.md`.

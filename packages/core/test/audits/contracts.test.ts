@@ -3143,7 +3143,7 @@ describe('Queued contracts (v0.2.1 leftovers — #141, #142, #145)', () => {
 })
 
 describe('CLI surface contract (ADR-050)', () => {
-  // v0.2.6 #23. Nine `neat <verb>` commands mirroring the MCP allowlist.
+  // v0.2.8 #23. Nine `neat <verb>` commands mirroring the MCP allowlist.
   // Implementation lands the verbs; these todos flip as each verb ships.
   it.todo('every MCP tool from ADR-039 has a corresponding `neat <verb>` registered (ADR-050 #1)')
   it.todo('verb names are kebab-case and drop the `get_` prefix (ADR-050 #1 — naming)')
@@ -3163,7 +3163,7 @@ describe('CLI surface contract (ADR-050)', () => {
 })
 
 describe('Frontend-facing API contract (ADR-051)', () => {
-  // v0.2.6 #24. SSE stream + multi-project switcher endpoint. Speculative —
+  // v0.2.8 #24. SSE stream + multi-project switcher endpoint. Speculative —
   // WebSocket transport and per-event filtering deferred to successor ADRs.
   it.todo('GET /events responds with content-type text/event-stream (ADR-051 #1)')
   it.todo('GET /events and GET /projects/:project/events are both registered (dual-mount per ADR-026) (ADR-051 #1)')

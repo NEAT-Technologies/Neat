@@ -14,7 +14,7 @@ adr: [ADR-051, ADR-040, ADR-026, ADR-048]
 
 # Frontend-facing API contract
 
-The second of two v0.2.6 contracts. Sibling: [`cli-surface.md`](./cli-surface.md).
+The second of two v0.2.8 contracts. Sibling: [`cli-surface.md`](./cli-surface.md).
 
 The existing REST surface (ADR-040) is request-response — fine for initial render, insufficient for live views. Jed's v0.3.0 frontend track needs two things the existing surface doesn't cover: live update streaming, multi-project enumeration. WebSocket-style symmetric subscription is plausibly needed but not surfaced yet.
 
@@ -99,6 +99,6 @@ The default-project mount streams every event for the default graph; the `/proje
 
 ## Enforcement
 
-`it.todo` for v0.2.6 #24. Regression tests cover: `/events` endpoint with `text/event-stream` content-type, dual-mount per ADR-026, event-type taxonomy locked (eight types), `/projects` endpoint shape, heartbeat interval, backpressure cap.
+`it.todo` for v0.2.8 #24. Regression tests cover: `/events` endpoint with `text/event-stream` content-type, dual-mount per ADR-026, event-type taxonomy locked (eight types), `/projects` endpoint shape, heartbeat interval, backpressure cap.
 
 Full rationale: [ADR-051](../decisions.md#adr-051--frontend-facing-api-contract).

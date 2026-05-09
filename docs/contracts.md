@@ -32,13 +32,13 @@ This file is the index. Each rule has a short summary and a link to its full per
 | 20 | SDK install | [`contracts/sdk-install.md`](./contracts/sdk-install.md) | Per-language installer modules (Node + Python in MVP). Plan/apply decoupled. Manifests touched, lockfiles never (ADR-047) | ✅ landed (v0.2.5 opens) |
 | 21 | Machine-level project registry | [`contracts/project-registry.md`](./contracts/project-registry.md) | `~/.neat/projects.json` per-user, atomic writes via tmp+rename, flock during writes, path-normalized (ADR-048) | ✅ landed (v0.2.5 opens) |
 | 22 | Daemon | [`contracts/daemon.md`](./contracts/daemon.md) | Single long-lived process, per-project graph isolation, mtime + OTel + policy.json triggers, graceful per-project failure (ADR-049) | ✅ landed (v0.2.5 opens) |
-| 23 | CLI surface | [`contracts/cli-surface.md`](./contracts/cli-surface.md) | Nine `neat <verb>` commands mirroring MCP tools, REST-only data path, `--json` output, exit-code branching (ADR-050) | ✅ landed (v0.2.6 opens) |
-| 24 | Frontend-facing API | [`contracts/frontend-api.md`](./contracts/frontend-api.md) | SSE stream at `/events` with locked 8-type taxonomy, multi-project switcher at `/projects`, WebSocket and per-event filtering deferred (ADR-051) | ✅ landed (v0.2.6 opens) |
+| 23 | CLI surface | [`contracts/cli-surface.md`](./contracts/cli-surface.md) | Nine `neat <verb>` commands mirroring MCP tools, REST-only data path, `--json` output, exit-code branching (ADR-050) | ✅ landed (v0.2.8 opens) |
+| 24 | Frontend-facing API | [`contracts/frontend-api.md`](./contracts/frontend-api.md) | SSE stream at `/events` with locked 8-type taxonomy, multi-project switcher at `/projects`, WebSocket and per-event filtering deferred (ADR-051) | ✅ landed (v0.2.8 opens) |
 | 25 | Publish system | [`contracts/publish-system.md`](./contracts/publish-system.md) | Bin-wrapper subpath validity against dependency `exports`, version lockstep across five packages, tarball smoke-test gate, dependency order, npm immutability acknowledged (ADR-052) | ✅ landed (post-0.2.6 broken-publish) |
 
 ### Future contracts — opened at the start of each milestone
 
-_None queued. v0.2.6 is the last milestone in the v0.2.x sequence. Successor contracts (WebSocket transport, per-event filtering, additional language SDK installers, MVP-success-PR experiment) open as their gating work surfaces._
+_None queued. v0.2.8 is the last milestone in the v0.2.x sequence. Successor contracts (WebSocket transport, per-event filtering, additional language SDK installers, MVP-success-PR experiment) open as their gating work surfaces._
 
 The full reasoning and per-milestone sequencing live in `docs/plans/2026-05-04-v0.2.x-sequencing.md`. The current state of the active milestone lives in `docs/plans/<latest-date>-v0.2.x-status.md`.
 
