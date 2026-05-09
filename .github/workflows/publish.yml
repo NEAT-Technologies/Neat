@@ -104,3 +104,26 @@ jobs:
           else
             echo "Publish complete."
           fi
+
+      - name: Smoke-test the published umbrella tarball
+        if: env.DRY_RUN != 'true'
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./packages/neat.is/package.json').version")
+          echo "Smoke-testing neat.is@${version} from the registry"
+
+          # The registry can be a few seconds behind the publish — retry until
+          # the just-published version is visible, then fail loudly if it never
+          # appears.
+          for i in 1 2 3 4 5; do
+            if npm view "neat.is@${version}" version > /dev/null 2>&1; then break; fi
+            echo "  not yet visible, retrying ($i/5)"
+            sleep 3
+          done
+
+          tmp=$(mktemp -d)
+          cd "$tmp"
+          npm init -y > /dev/null
+          npm install "neat.is@${version}"
+          ./node_modules/.bin/neat --help > /dev/null
+          echo "Smoke test passed — neat --help exited 0 against the published tarball."

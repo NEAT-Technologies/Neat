@@ -3297,10 +3297,13 @@ describe('Publish system contract (ADR-052)', () => {
     }
   })
 
-  // The tarball smoke-test step in the publish workflow doesn't exist yet.
-
-  // The tarball smoke-test step in the publish workflow doesn't exist yet.
-  it.todo(
-    'publish workflow installs the just-published umbrella tarball and asserts `neat --help` exits 0 (ADR-052 #3)',
-  )
+  it('publish workflow installs the just-published umbrella tarball and asserts `neat --help` exits 0 (ADR-052 #3)', () => {
+    const yml = readFileSync(join(REPO_ROOT, '.github/workflows/publish.yml'), 'utf8')
+    // Smoke-test step must install the umbrella from the registry and invoke
+    // its bin. Both signals together — installing the tarball and running
+    // `neat --help` — are what make the step a smoke test rather than a
+    // version-existence check.
+    expect(yml).toMatch(/npm install ["']?neat\.is@/)
+    expect(yml).toMatch(/neat --help/)
+  })
 })
