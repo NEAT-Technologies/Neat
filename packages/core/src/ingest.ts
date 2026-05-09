@@ -24,7 +24,9 @@ import {
   type EdgeTypeValue,
 } from '@neat.is/types'
 import type { NeatGraph } from './graph.js'
+import { DEFAULT_PROJECT } from './graph.js'
 import type { ParsedSpan } from './otel.js'
+import { emitNeatEvent } from './events.js'
 
 // Maps OTel spans to graph signal:
 //   * Cross-service span → upsert CALLS edge.
@@ -45,6 +47,9 @@ import type { ParsedSpan } from './otel.js'
 export interface IngestContext {
   graph: NeatGraph
   errorsPath: string
+  // Project name for event-bus routing (ADR-051). Defaults to DEFAULT_PROJECT
+  // when omitted — keeps single-project tests / scripts wire-compatible.
+  project?: string
   now?: () => number
   // Set to false when the receiver already wrote the ErrorEvent synchronously
   // (production daemons via watch.ts wire this). When true or omitted, handleSpan
@@ -761,6 +766,8 @@ export interface MarkStaleOptions {
   // line. Skipped if undefined — tests and embedded use cases don't need a
   // log.
   staleEventsPath?: string
+  // Project tag for event-bus routing (ADR-051). Defaults to DEFAULT_PROJECT.
+  project?: string
 }
 
 // Demote OBSERVED edges that haven't been seen in a while. Per-edge-type
@@ -774,6 +781,7 @@ export async function markStaleEdges(
   const now = options.now ?? Date.now()
   const events: StaleEvent[] = []
 
+  const project = options.project ?? DEFAULT_PROJECT
   graph.forEachEdge((id, attrs) => {
     const e = attrs as GraphEdge
     if (e.provenance !== Provenance.OBSERVED) return
@@ -792,6 +800,19 @@ export async function markStaleEdges(
         ageMs: age,
         lastObserved: e.lastObserved,
         transitionedAt: new Date(now).toISOString(),
+      })
+      // Stale-transition fires through the bus (ADR-051). The graph
+      // subscription in events.ts can't see the OBSERVED→STALE semantic on
+      // its own — a provenance flip is just an attribute update from
+      // graphology's view.
+      emitNeatEvent({
+        type: 'stale-transition',
+        project,
+        payload: {
+          edgeId: id,
+          from: Provenance.OBSERVED,
+          to: Provenance.STALE,
+        },
       })
     }
   })
@@ -826,6 +847,8 @@ export interface StalenessLoopOptions {
   thresholds?: Record<string, number>
   intervalMs?: number
   staleEventsPath?: string
+  // Project tag for event-bus routing (ADR-051).
+  project?: string
   // Post-stale-transition policy trigger (ADR-043). Fires after each tick of
   // markStaleEdges so policies see the new STALE state. Daemons wire this to
   // evaluateAllPolicies + PolicyViolationsLog.append.
@@ -845,6 +868,7 @@ export function startStalenessLoop(
         await markStaleEdges(graph, {
           thresholds: options.thresholds,
           staleEventsPath: options.staleEventsPath,
+          project: options.project,
         })
         if (options.onPolicyTrigger) await options.onPolicyTrigger(graph)
       } catch (err) {

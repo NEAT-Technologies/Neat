@@ -18,6 +18,7 @@ import {
   Provenance,
 } from '@neat.is/types'
 import type { NeatGraph } from './graph.js'
+import { DEFAULT_PROJECT } from './graph.js'
 import {
   checkCompatibility,
   checkDeprecatedApi,
@@ -28,6 +29,7 @@ import {
   nodeEngineConstraints,
   packageConflicts,
 } from './compat.js'
+import { emitNeatEvent } from './events.js'
 import { getBlastRadius } from './traverse.js'
 
 // Policy evaluation engine (ADR-043). The entry point evaluateAllPolicies is
@@ -415,10 +417,12 @@ export async function loadPolicyFile(policyPath: string): Promise<Policy[]> {
 // — startups that load an existing log don't lose dedup state.
 export class PolicyViolationsLog {
   private readonly path: string
+  private readonly project: string
   private seen: Set<string> | null = null
 
-  constructor(logPath: string) {
+  constructor(logPath: string, project: string = DEFAULT_PROJECT) {
     this.path = logPath
+    this.project = project
   }
 
   async append(v: PolicyViolation): Promise<boolean> {
@@ -427,6 +431,14 @@ export class PolicyViolationsLog {
     this.seen!.add(v.id)
     await fs.mkdir(path.dirname(this.path), { recursive: true })
     await fs.appendFile(this.path, JSON.stringify(v) + '\n', 'utf8')
+    // Emit policy-violation only on first sighting (post-dedup) so SSE
+    // consumers don't see the same violation again on every evaluation
+    // cycle (ADR-051 #2).
+    emitNeatEvent({
+      type: 'policy-violation',
+      project: this.project,
+      payload: { violation: v },
+    })
     return true
   }
 

@@ -29,6 +29,7 @@ import { loadGraphFromDisk, startPersistLoop } from './persist.js'
 import { buildSearchIndex, type SearchIndex } from './search.js'
 import { DEFAULT_PROJECT } from './graph.js'
 import { Projects, pathsForProject } from './projects.js'
+import { attachGraphToEventBus, emitNeatEvent } from './events.js'
 
 export type ExtractPhase =
   | 'services'
@@ -125,7 +126,12 @@ export async function runExtractPhases(
   graph: NeatGraph,
   scanPath: string,
   phases: Set<ExtractPhase>,
+  // Project tag passed through for the runtime event bus (ADR-051) — not
+  // required for extraction logic itself but threaded for parity with
+  // extractFromDirectory's project option.
+  project: string = DEFAULT_PROJECT,
 ): Promise<RunPhasesResult> {
+  void project
   const started = Date.now()
   await ensureCompatLoaded()
   // Discovery is cheap and every phase needs the same DiscoveredService list,
@@ -215,8 +221,13 @@ export async function startWatch(
   opts: WatchOptions,
 ): Promise<WatchHandle> {
   const debounceMs = opts.debounceMs ?? 1000
+  const projectName = opts.project ?? DEFAULT_PROJECT
 
   await loadGraphFromDisk(graph, opts.outPath)
+
+  // Wire graph mutations into the event bus (ADR-051) before extract begins
+  // so the initial pass also produces node/edge events. Detached on stop().
+  const detachEventBus = attachGraphToEventBus(graph, { project: projectName })
 
   // Load policies + open the violations log once at startup. policy.json
   // lives at the project root per ADR-042 §File location; absent file is
@@ -233,7 +244,7 @@ export async function startWatch(
   } catch (err) {
     console.warn(`policies: failed to load ${policyFilePath} — ${(err as Error).message}`)
   }
-  const policyLog = new PolicyViolationsLog(policyViolationsPath)
+  const policyLog = new PolicyViolationsLog(policyViolationsPath, projectName)
 
   // Single shared trigger callback wired into post-ingest, post-extract, and
   // post-stale per ADR-043. Failures append to console.warn but don't kill
@@ -253,15 +264,34 @@ export async function startWatch(
   // startup before the receiver opens. Subsequent watch-driven re-extract
   // passes go through runExtractPhases which doesn't take the hook directly
   // — we run it after each flush() instead.
-  const initial = await runExtractPhases(graph, opts.scanPath, new Set(ALL_PHASES))
+  const initial = await runExtractPhases(
+    graph,
+    opts.scanPath,
+    new Set(ALL_PHASES),
+    projectName,
+  )
   console.log(
     `extract: ${initial.nodesAdded} new nodes, ${initial.edgesAdded} new edges (graph total ${graph.order}/${graph.size})`,
   )
+  // extraction-complete for the initial pass (ADR-051). runExtractPhases
+  // doesn't emit on its own — the event lives at the watch / orchestrator
+  // boundary so the daemon can swap in its own emission shape.
+  emitNeatEvent({
+    type: 'extraction-complete',
+    project: projectName,
+    payload: {
+      project: projectName,
+      fileCount: 0,
+      nodesAdded: initial.nodesAdded,
+      edgesAdded: initial.edgesAdded,
+    },
+  })
   await onPolicyTrigger(graph)
 
   const stopPersist = startPersistLoop(graph, opts.outPath)
   const stopStaleness = startStalenessLoop(graph, {
     staleEventsPath: opts.staleEventsPath,
+    project: projectName,
     onPolicyTrigger,
   })
 
@@ -281,7 +311,6 @@ export async function startWatch(
     )
   }
 
-  const projectName = opts.project ?? DEFAULT_PROJECT
   const registry = new Projects()
   registry.set(projectName, {
     graph,
@@ -313,6 +342,7 @@ export async function startWatch(
   const onSpan = makeSpanHandler({
     graph,
     errorsPath: opts.errorsPath,
+    project: projectName,
     writeErrorEventInline: false,
     onPolicyTrigger,
   })
@@ -331,6 +361,7 @@ export async function startWatch(
     const onSpanGrpc = makeSpanHandler({
       graph,
       errorsPath: opts.errorsPath,
+      project: projectName,
       onPolicyTrigger,
     })
     const r = await startOtelGrpcReceiver({ onSpan: onSpanGrpc, host, port: grpcPort })
@@ -359,10 +390,23 @@ export async function startWatch(
       // (docs/contracts/static-extraction.md §Ghost-edge cleanup).
       let retired = 0
       for (const p of paths) retired += retireEdgesByFile(graph, p)
-      const result = await runExtractPhases(graph, opts.scanPath, phases)
+      const result = await runExtractPhases(graph, opts.scanPath, phases, projectName)
       console.log(
         `[watch] re-extract phases=${result.phases.join(',')} retired=${retired} +${result.nodesAdded}n/+${result.edgesAdded}e in ${result.durationMs}ms`,
       )
+      // extraction-complete after every re-extract pass (ADR-051). fileCount
+      // is the number of paths that drove the pass — closest signal we have
+      // for "how much source moved" without per-phase accounting.
+      emitNeatEvent({
+        type: 'extraction-complete',
+        project: projectName,
+        payload: {
+          project: projectName,
+          fileCount: paths.size,
+          nodesAdded: result.nodesAdded,
+          edgesAdded: result.edgesAdded,
+        },
+      })
       if (searchIndex) {
         try {
           await searchIndex.refresh(graph)
@@ -434,6 +478,7 @@ export async function startWatch(
     await watcher.close()
     stopStaleness()
     stopPersist()
+    detachEventBus()
     await api.close()
     await otelHttp.close()
     if (grpcReceiver) await grpcReceiver.stop()
