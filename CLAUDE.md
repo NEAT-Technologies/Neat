@@ -64,11 +64,13 @@ v0.2.2 closed on 2026-05-06 — see `docs/plans/2026-05-06-v0.2.2-close.md` for 
 
 v0.2.5 closed on 2026-05-07 — see `docs/plans/2026-05-07-v0.2.5-close.md` for the closing snapshot. Six implementation PRs landed in sequence (#185 registry, #186 init mechanics, #187 Node installer, #188 Python installer, #189 daemon, #190 Claude Code skill). Contract scoreboard: 28 / 28 v0.2.5 assertions live in `contracts.test.ts` (25 ADR-046/047/048/049 + 3 Claude-skill packaging). The four remaining `it.todo`s are v0.2.1 cleanup (#141, #142, #145), rolled forward to v0.3.0 prep.
 
-**v0.2.8 — CLI parity + frontend-API surface.** Opens with contracts #23-#24 (CLI surface, frontend-facing API). Ships CLI verbs that mirror the nine MCP tools (so a human at a terminal has the same reach as an agent), plus the API surface a local frontend needs — SSE live-updates, multi-project switcher endpoints, anything else surfaced as v0.3.0 prep work. The `(if that's needed)` qualifier is honest: parts of this milestone wait until Jed's frontend track surfaces concrete API gaps.
+**v0.2.8 — CLI parity + frontend-API surface.** Opens with contracts #23-#24 (CLI surface, frontend-facing API). Ships CLI verbs that mirror the nine MCP tools (so a human at a terminal has the same reach as an agent), plus the SSE event stream + `/projects` switcher endpoint Jed's v0.3.0 frontend needs. Plus contracts #25 (publish system) and ADR-053 (milestone naming) which landed alongside.
 
-This milestone was originally named v0.2.6 when its contract batch (ADRs 050/051) opened on 2026-05-08, projecting that 0.2.6 would be the npm version when implementation shipped. Two publish-fix releases (0.2.5 → 0.2.6 → 0.2.7, both retired npm slots) consumed those numbers, so the milestone rolls forward to v0.2.8 per ADR-053. ADRs and contracts retain their original numbers; only the milestone label changed.
+v0.2.8 closed on 2026-05-09 — see `docs/plans/2026-05-09-v0.2.8-close.md` for the closing snapshot. Nine implementation PRs landed (#199 contracts batch, #200/#202/#203/#204 publish-system rebuild, #205 milestone rename, #206 API reference, #207 frontend-API SSE, #208 CLI surface). Contract scoreboard: 33 / 33 v0.2.8 assertions live (15 ADR-050 + 18 ADR-051) plus 7 / 7 ADR-052 publish-system assertions. Four remaining `it.todo`s are v0.2.1 cleanup (#140, #141, #142, #145), rolled forward to v0.3.0 prep.
 
-After v0.2.8: the MVP-success PR experiment (ADR-027) — point NEAT at an open-source codebase. Self-hosting on the NEAT codebase activates only after that PR closes.
+This milestone was originally named v0.2.6 when its contract batch opened on 2026-05-08; rolled forward to v0.2.8 per ADR-053 after publish-fix releases consumed the 0.2.6 and 0.2.7 npm slots. ADR + contract numbers retain their originals.
+
+After v0.2.8: the MVP-success PR experiment (ADR-027) — point NEAT at an open-source codebase. **This is the actual thesis test, not engineering work.** Track 2 engineering ends at v0.2.8 until either ADR-027 succeeds (and v0.3.x prep can begin from a position of validation) or fails (and the failure mode shapes the next iteration). Self-hosting on the NEAT codebase activates only after that PR closes.
 
 ### Track 1 — v0.3.0 Frontend (Jed)
 
