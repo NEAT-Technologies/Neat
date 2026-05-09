@@ -12,9 +12,9 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-05. v0.1.2 + v0.1.3 shipped. v0.2.0 Sunrise nearly closed — three PRs stacked on `main` carry the data-layer foundation (see "Open PRs awaiting merge" below).
+**Last session ended:** 2026-05-09. v0.2.0 through v0.2.5 milestones closed and tagged. v0.2.6 contracts (ADRs 050/051 — CLI surface + frontend-facing API) landed on `main`; implementation is queued. The publish system contract (ADR-052) landed alongside the npm pipeline rebuild. npm packages at 0.2.6 on the registry — a broken `exports` field shipped, 0.2.7 fix-only patch in flight.
 
-**For current operational state of the active milestone, read `docs/plans/2026-05-05-v0.2.0-status.md` first.** That doc is updated per session; this file describes the long-term shape.
+**For current operational state of the active milestone, read `docs/plans/2026-05-07-v0.2.6-kickoff.md` first.** That doc is the canonical handoff; this file describes the long-term shape.
 
 **Two parallel tracks share `main`:**
 
@@ -346,9 +346,11 @@ A second failing demo service (mysql2/mysql, mongoose/mongo) would prove the sam
 
 ---
 
-## v0.2.0 — Frontend
+## v0.3.0 — Frontend (Track 1, Jed)
 
 **End state:** `packages/web/` is no longer a shell. Graph explorer renders the live graph; node inspector shows attrs + signal + outbound edges; incident log surfaces recent errors and stale-edge transitions; multi-project switcher routes every call through the right `/projects/:project/*` URL; semantic search bar lives in the top chrome; the explorer hot-updates when `neat watch` re-extracts.
+
+Builds against the stable v0.1.2 API plus the SSE event stream + `/projects` endpoint specified by ADR-051 (frontend-facing API contract). Independent of the v0.2.x engineering track — Jed should not block on engineering work.
 
 **Status:** NOT_STARTED.
 
