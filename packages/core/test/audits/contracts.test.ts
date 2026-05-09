@@ -3165,24 +3165,533 @@ describe('CLI surface contract (ADR-050)', () => {
 describe('Frontend-facing API contract (ADR-051)', () => {
   // v0.2.8 #24. SSE stream + multi-project switcher endpoint. Speculative —
   // WebSocket transport and per-event filtering deferred to successor ADRs.
-  it.todo('GET /events responds with content-type text/event-stream (ADR-051 #1)')
-  it.todo('GET /events and GET /projects/:project/events are both registered (dual-mount per ADR-026) (ADR-051 #1)')
-  it.todo('SSE event-type taxonomy is exactly the eight locked types — no more, no fewer (ADR-051 #2)')
-  it.todo('node-added event payload matches `{ node: GraphNode }` (ADR-051 #2)')
-  it.todo('node-updated event payload matches `{ id, changes }` (ADR-051 #2)')
-  it.todo('node-removed / edge-removed event payloads carry only `{ id }` (ADR-051 #2)')
-  it.todo('edge-added event payload matches `{ edge: GraphEdge }` (ADR-051 #2)')
-  it.todo('extraction-complete event payload matches `{ project, fileCount, nodesAdded, edgesAdded }` (ADR-051 #2)')
-  it.todo('policy-violation event payload matches `{ violation: PolicyViolation }` (ADR-051 #2)')
-  it.todo('stale-transition event payload matches `{ edgeId, from: "OBSERVED", to: "STALE" }` (ADR-051 #2)')
-  it.todo('SSE heartbeat comment line emitted at most every 30 seconds (ADR-051 #3)')
-  it.todo('GET /projects returns the listProjects() shape from registry.ts (ADR-051 #4)')
-  it.todo('GET /projects shape is Array<{ name, path, status, registeredAt, lastSeenAt?, languages }> (ADR-051 #4)')
-  it.todo('SSE error responses use `event: error` payload before connection close (ADR-051 #5)')
-  it.todo('non-SSE error responses keep the ADR-040 `{ error, status, details? }` envelope (ADR-051 #5)')
-  it.todo('SSE backpressure cap drops connection at 1000 queued messages with `event: error` `{ reason: "backpressure" }` (ADR-051 #8)')
-  it.todo('event bus is a single EventEmitter singleton in packages/core/src/events.ts (ADR-051 — authority)')
-  it.todo('event producers in ingest.ts / extract/ / watch.ts / policy.ts emit through the bus, not directly to handlers (ADR-051 — authority)')
+
+  it('GET /events responds with content-type text/event-stream (ADR-051 #1)', async () => {
+    const { Projects } = await import('../../src/projects.js')
+    const { buildApi } = await import('../../src/api.js')
+    const { DEFAULT_PROJECT, getGraph, resetGraph } = await import('../../src/graph.js')
+    resetGraph(DEFAULT_PROJECT)
+    const registry = new Projects()
+    const fs2 = await import('node:fs/promises')
+    const os2 = await import('node:os')
+    const path2 = await import('node:path')
+    const tmp = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-sse-events-'))
+    registry.set(DEFAULT_PROJECT, {
+      graph: getGraph(DEFAULT_PROJECT),
+      paths: {
+        snapshotPath: path2.join(tmp, 'graph.json'),
+        errorsPath: path2.join(tmp, 'errors.ndjson'),
+        staleEventsPath: path2.join(tmp, 'stale-events.ndjson'),
+        embeddingsCachePath: path2.join(tmp, 'embeddings.json'),
+        policyViolationsPath: path2.join(tmp, 'policy-violations.ndjson'),
+      },
+    })
+    const app = await buildApi({ projects: registry })
+    try {
+      const address = await app.listen({ port: 0, host: '127.0.0.1' })
+      const ctrl = new AbortController()
+      const res = await fetch(`${address}/events`, { signal: ctrl.signal })
+      expect(res.headers.get('content-type')).toMatch(/text\/event-stream/)
+      ctrl.abort()
+      await res.body?.cancel().catch(() => {})
+    } finally {
+      await app.close()
+      await fs2.rm(tmp, { recursive: true, force: true })
+      resetGraph(DEFAULT_PROJECT)
+    }
+  })
+
+  it('GET /events and GET /projects/:project/events are both registered (dual-mount per ADR-026) (ADR-051 #1)', () => {
+    // Source-grep: the /events route is registered inside registerRoutes,
+    // which is called both at the root scope and inside the
+    // /projects/:project plugin. One registration site → both mounts.
+    const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+    const m = api.match(/scope\.get<[^>]*>\s*\(\s*['"]\/events['"]/)
+    expect(m, 'expected `/events` registered on registerRoutes scope').not.toBeNull()
+    // Dual-mount machinery: registerRoutes is invoked at both root and the
+    // /projects/:project prefix.
+    expect(api).toMatch(/registerRoutes\(app, routeCtx\)/)
+    expect(api).toMatch(/prefix:\s*['"]\/projects\/:project['"]/)
+  })
+
+  it('SSE event-type taxonomy is exactly the eight locked types — no more, no fewer (ADR-051 #2)', async () => {
+    const { NEAT_EVENT_TYPES } = await import('../../src/events.js')
+    expect([...NEAT_EVENT_TYPES].sort()).toEqual(
+      [
+        'edge-added',
+        'edge-removed',
+        'extraction-complete',
+        'node-added',
+        'node-removed',
+        'node-updated',
+        'policy-violation',
+        'stale-transition',
+      ].sort(),
+    )
+  })
+
+  it('node-added event payload matches `{ node: GraphNode }` (ADR-051 #2)', async () => {
+    const { eventBus, EVENT_BUS_CHANNEL, attachGraphToEventBus } = await import(
+      '../../src/events.js'
+    )
+    const captured: unknown[] = []
+    const listener = (env: { type: string; payload: unknown }): void => {
+      if (env.type === 'node-added') captured.push(env.payload)
+    }
+    eventBus.on(EVENT_BUS_CHANNEL, listener)
+    try {
+      const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({
+        allowSelfLoops: false,
+      })
+      const detach = attachGraphToEventBus(g, { project: 'tester' })
+      const node = {
+        id: 'service:probe',
+        type: NodeType.ServiceNode,
+        name: 'probe',
+        language: 'javascript',
+      } as GraphNode
+      g.addNode(node.id, node)
+      detach()
+      expect(captured).toHaveLength(1)
+      expect(captured[0]).toEqual({ node })
+    } finally {
+      eventBus.off(EVENT_BUS_CHANNEL, listener)
+    }
+  })
+
+  it('node-updated event payload matches `{ id, changes }` (ADR-051 #2)', async () => {
+    const { eventBus, EVENT_BUS_CHANNEL, attachGraphToEventBus } = await import(
+      '../../src/events.js'
+    )
+    const captured: { id: string; changes: unknown }[] = []
+    const listener = (env: { type: string; payload: { id: string; changes: unknown } }): void => {
+      if (env.type === 'node-updated') captured.push(env.payload)
+    }
+    eventBus.on(EVENT_BUS_CHANNEL, listener)
+    try {
+      const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({
+        allowSelfLoops: false,
+      })
+      const detach = attachGraphToEventBus(g, { project: 'tester' })
+      const node = {
+        id: 'service:probe',
+        type: NodeType.ServiceNode,
+        name: 'probe',
+        language: 'javascript',
+      } as GraphNode
+      g.addNode(node.id, node)
+      g.replaceNodeAttributes(node.id, { ...node, name: 'renamed' } as GraphNode)
+      detach()
+      const update = captured.find((p) => p.id === 'service:probe')
+      expect(update).toBeDefined()
+      expect(update!.id).toBe('service:probe')
+      expect(update!.changes).toEqual(expect.objectContaining({ name: 'renamed' }))
+    } finally {
+      eventBus.off(EVENT_BUS_CHANNEL, listener)
+    }
+  })
+
+  it('node-removed / edge-removed event payloads carry only `{ id }` (ADR-051 #2)', async () => {
+    const { eventBus, EVENT_BUS_CHANNEL, attachGraphToEventBus } = await import(
+      '../../src/events.js'
+    )
+    const captured: { type: string; payload: unknown }[] = []
+    const listener = (env: { type: string; payload: unknown }): void => {
+      if (env.type === 'node-removed' || env.type === 'edge-removed') {
+        captured.push({ type: env.type, payload: env.payload })
+      }
+    }
+    eventBus.on(EVENT_BUS_CHANNEL, listener)
+    try {
+      const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({
+        allowSelfLoops: false,
+      })
+      const detach = attachGraphToEventBus(g, { project: 'tester' })
+      g.addNode('service:a', {
+        id: 'service:a',
+        type: NodeType.ServiceNode,
+        name: 'a',
+        language: 'javascript',
+      } as GraphNode)
+      g.addNode('service:b', {
+        id: 'service:b',
+        type: NodeType.ServiceNode,
+        name: 'b',
+        language: 'javascript',
+      } as GraphNode)
+      const eid = `${EdgeType.CALLS}:service:a->service:b`
+      g.addEdgeWithKey(eid, 'service:a', 'service:b', {
+        id: eid,
+        source: 'service:a',
+        target: 'service:b',
+        type: EdgeType.CALLS,
+        provenance: Provenance.EXTRACTED,
+      } as GraphEdge)
+      g.dropEdge(eid)
+      g.dropNode('service:b')
+      detach()
+
+      const edgeRemoved = captured.find((c) => c.type === 'edge-removed')
+      const nodeRemoved = captured.find((c) => c.type === 'node-removed')
+      expect(edgeRemoved?.payload).toEqual({ id: eid })
+      expect(nodeRemoved?.payload).toEqual({ id: 'service:b' })
+      // Strict shape — only `id`, nothing else (Object.keys returns ['id']).
+      expect(Object.keys(edgeRemoved!.payload as object)).toEqual(['id'])
+      expect(Object.keys(nodeRemoved!.payload as object)).toEqual(['id'])
+    } finally {
+      eventBus.off(EVENT_BUS_CHANNEL, listener)
+    }
+  })
+
+  it('edge-added event payload matches `{ edge: GraphEdge }` (ADR-051 #2)', async () => {
+    const { eventBus, EVENT_BUS_CHANNEL, attachGraphToEventBus } = await import(
+      '../../src/events.js'
+    )
+    const captured: { edge: unknown }[] = []
+    const listener = (env: { type: string; payload: { edge: unknown } }): void => {
+      if (env.type === 'edge-added') captured.push(env.payload)
+    }
+    eventBus.on(EVENT_BUS_CHANNEL, listener)
+    try {
+      const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({
+        allowSelfLoops: false,
+      })
+      const detach = attachGraphToEventBus(g, { project: 'tester' })
+      g.addNode('service:a', {
+        id: 'service:a',
+        type: NodeType.ServiceNode,
+        name: 'a',
+        language: 'javascript',
+      } as GraphNode)
+      g.addNode('service:b', {
+        id: 'service:b',
+        type: NodeType.ServiceNode,
+        name: 'b',
+        language: 'javascript',
+      } as GraphNode)
+      const edge = {
+        id: `${EdgeType.CALLS}:service:a->service:b`,
+        source: 'service:a',
+        target: 'service:b',
+        type: EdgeType.CALLS,
+        provenance: Provenance.EXTRACTED,
+      } as GraphEdge
+      g.addEdgeWithKey(edge.id, 'service:a', 'service:b', edge)
+      detach()
+      const found = captured.find((p) => (p.edge as GraphEdge).id === edge.id)
+      expect(found).toBeDefined()
+      expect(found!.edge).toEqual(edge)
+    } finally {
+      eventBus.off(EVENT_BUS_CHANNEL, listener)
+    }
+  })
+
+  it('extraction-complete event payload matches `{ project, fileCount, nodesAdded, edgesAdded }` (ADR-051 #2)', async () => {
+    const { eventBus, EVENT_BUS_CHANNEL, emitNeatEvent } = await import('../../src/events.js')
+    const captured: unknown[] = []
+    const listener = (env: { type: string; payload: unknown }): void => {
+      if (env.type === 'extraction-complete') captured.push(env.payload)
+    }
+    eventBus.on(EVENT_BUS_CHANNEL, listener)
+    try {
+      emitNeatEvent({
+        type: 'extraction-complete',
+        project: 'tester',
+        payload: { project: 'tester', fileCount: 3, nodesAdded: 1, edgesAdded: 2 },
+      })
+      expect(captured[0]).toEqual({
+        project: 'tester',
+        fileCount: 3,
+        nodesAdded: 1,
+        edgesAdded: 2,
+      })
+    } finally {
+      eventBus.off(EVENT_BUS_CHANNEL, listener)
+    }
+  })
+
+  it('policy-violation event payload matches `{ violation: PolicyViolation }` (ADR-051 #2)', async () => {
+    const { eventBus, EVENT_BUS_CHANNEL } = await import('../../src/events.js')
+    const { PolicyViolationsLog } = await import('../../src/policy.js')
+    const fs2 = await import('node:fs/promises')
+    const os2 = await import('node:os')
+    const path2 = await import('node:path')
+    const tmp = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-pol-violation-'))
+    const captured: unknown[] = []
+    const listener = (env: { type: string; payload: unknown }): void => {
+      if (env.type === 'policy-violation') captured.push(env.payload)
+    }
+    eventBus.on(EVENT_BUS_CHANNEL, listener)
+    try {
+      const log = new PolicyViolationsLog(path2.join(tmp, 'pv.ndjson'), 'tester')
+      const violation = {
+        id: 'p1:n1',
+        policyId: 'p1',
+        policyName: 'pol',
+        severity: 'error' as const,
+        onViolation: 'alert' as const,
+        ruleType: 'ownership' as const,
+        subject: { nodeId: 'service:x' },
+        message: 'missing owner',
+        observedAt: new Date().toISOString(),
+      }
+      await log.append(violation)
+      expect(captured[0]).toEqual({ violation })
+    } finally {
+      eventBus.off(EVENT_BUS_CHANNEL, listener)
+      await fs2.rm(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('stale-transition event payload matches `{ edgeId, from: "OBSERVED", to: "STALE" }` (ADR-051 #2)', async () => {
+    const { eventBus, EVENT_BUS_CHANNEL } = await import('../../src/events.js')
+    const { markStaleEdges } = await import('../../src/ingest.js')
+    const captured: unknown[] = []
+    const listener = (env: { type: string; payload: unknown }): void => {
+      if (env.type === 'stale-transition') captured.push(env.payload)
+    }
+    eventBus.on(EVENT_BUS_CHANNEL, listener)
+    try {
+      const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({
+        allowSelfLoops: false,
+      })
+      g.addNode('service:a', {
+        id: 'service:a',
+        type: NodeType.ServiceNode,
+        name: 'a',
+        language: 'javascript',
+      } as GraphNode)
+      g.addNode('service:b', {
+        id: 'service:b',
+        type: NodeType.ServiceNode,
+        name: 'b',
+        language: 'javascript',
+      } as GraphNode)
+      const eid = `${EdgeType.CALLS}:OBSERVED:service:a->service:b`
+      g.addEdgeWithKey(eid, 'service:a', 'service:b', {
+        id: eid,
+        source: 'service:a',
+        target: 'service:b',
+        type: EdgeType.CALLS,
+        provenance: Provenance.OBSERVED,
+        confidence: 1,
+        lastObserved: new Date(0).toISOString(),
+        callCount: 1,
+      } as GraphEdge)
+      await markStaleEdges(g, { now: Date.now(), project: 'tester' })
+      expect(captured[0]).toEqual({
+        edgeId: eid,
+        from: Provenance.OBSERVED,
+        to: Provenance.STALE,
+      })
+    } finally {
+      eventBus.off(EVENT_BUS_CHANNEL, listener)
+    }
+  })
+
+  it('SSE heartbeat comment line emitted at most every 30 seconds (ADR-051 #3)', async () => {
+    // Default heartbeat interval is 30s — exposed as SSE_HEARTBEAT_MS so the
+    // contract value is reachable by anything that needs it (proxies, tests).
+    const streaming = readFileSync(join(CORE_SRC, 'streaming.ts'), 'utf8')
+    const { SSE_HEARTBEAT_MS } = await import('../../src/streaming.js')
+    expect(SSE_HEARTBEAT_MS).toBe(30_000)
+    expect(streaming).toMatch(/:heartbeat\\n\\n/)
+  })
+
+  it('GET /projects returns the listProjects() shape from registry.ts (ADR-051 #4)', async () => {
+    const { Projects } = await import('../../src/projects.js')
+    const { buildApi } = await import('../../src/api.js')
+    const { DEFAULT_PROJECT, getGraph, resetGraph } = await import('../../src/graph.js')
+    const fs2 = await import('node:fs/promises')
+    const os2 = await import('node:os')
+    const path2 = await import('node:path')
+    const home = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-projects-list-'))
+    const projDir = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-projects-pdir-'))
+    const projReal = await fs2.realpath(projDir)
+    const prevHome = process.env.NEAT_HOME
+    process.env.NEAT_HOME = home
+    resetGraph(DEFAULT_PROJECT)
+    try {
+      const { addProject, listProjects: listRegistry } = await import('../../src/registry.js')
+      await addProject({ name: 'p', path: projReal, languages: ['javascript'] })
+      const expected = await listRegistry()
+      const reg = new Projects()
+      reg.set(DEFAULT_PROJECT, {
+        graph: getGraph(DEFAULT_PROJECT),
+        paths: {
+          snapshotPath: path2.join(home, 'graph.json'),
+          errorsPath: path2.join(home, 'errors.ndjson'),
+          staleEventsPath: path2.join(home, 'stale-events.ndjson'),
+          embeddingsCachePath: path2.join(home, 'embeddings.json'),
+          policyViolationsPath: path2.join(home, 'policy-violations.ndjson'),
+        },
+      })
+      const app = await buildApi({ projects: reg })
+      const res = await app.inject({ method: 'GET', url: '/projects' })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual(expected)
+      await app.close()
+    } finally {
+      if (prevHome === undefined) delete process.env.NEAT_HOME
+      else process.env.NEAT_HOME = prevHome
+      await fs2.rm(home, { recursive: true, force: true })
+      await fs2.rm(projDir, { recursive: true, force: true })
+      resetGraph(DEFAULT_PROJECT)
+    }
+  })
+
+  it('GET /projects shape is Array<{ name, path, status, registeredAt, lastSeenAt?, languages }> (ADR-051 #4)', async () => {
+    const { Projects } = await import('../../src/projects.js')
+    const { buildApi } = await import('../../src/api.js')
+    const { DEFAULT_PROJECT, getGraph, resetGraph } = await import('../../src/graph.js')
+    const fs2 = await import('node:fs/promises')
+    const os2 = await import('node:os')
+    const path2 = await import('node:path')
+    const home = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-projects-shape-'))
+    const projDir = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-projects-shape-p-'))
+    const projReal = await fs2.realpath(projDir)
+    const prevHome = process.env.NEAT_HOME
+    process.env.NEAT_HOME = home
+    resetGraph(DEFAULT_PROJECT)
+    try {
+      const { addProject } = await import('../../src/registry.js')
+      await addProject({
+        name: 'shape-test',
+        path: projReal,
+        languages: ['python'],
+      })
+      const reg = new Projects()
+      reg.set(DEFAULT_PROJECT, {
+        graph: getGraph(DEFAULT_PROJECT),
+        paths: {
+          snapshotPath: path2.join(home, 'graph.json'),
+          errorsPath: path2.join(home, 'errors.ndjson'),
+          staleEventsPath: path2.join(home, 'stale-events.ndjson'),
+          embeddingsCachePath: path2.join(home, 'embeddings.json'),
+          policyViolationsPath: path2.join(home, 'policy-violations.ndjson'),
+        },
+      })
+      const app = await buildApi({ projects: reg })
+      const res = await app.inject({ method: 'GET', url: '/projects' })
+      expect(res.statusCode).toBe(200)
+      const body = res.json() as Array<{
+        name: string
+        path: string
+        status: string
+        registeredAt: string
+        lastSeenAt?: string
+        languages: string[]
+      }>
+      expect(Array.isArray(body)).toBe(true)
+      expect(body).toHaveLength(1)
+      const entry = body[0]!
+      expect(entry.name).toBe('shape-test')
+      expect(entry.path).toBe(projReal)
+      expect(entry.status).toBe('active')
+      expect(typeof entry.registeredAt).toBe('string')
+      expect(entry.languages).toEqual(['python'])
+      await app.close()
+    } finally {
+      if (prevHome === undefined) delete process.env.NEAT_HOME
+      else process.env.NEAT_HOME = prevHome
+      await fs2.rm(home, { recursive: true, force: true })
+      await fs2.rm(projDir, { recursive: true, force: true })
+      resetGraph(DEFAULT_PROJECT)
+    }
+  })
+
+  it('SSE error responses use `event: error` payload before connection close (ADR-051 #5)', () => {
+    // Backpressure cap is the only error path that closes the connection
+    // mid-stream; the streaming source emits exactly one `event: error`
+    // frame before calling end() in that case.
+    const streaming = readFileSync(join(CORE_SRC, 'streaming.ts'), 'utf8')
+    expect(streaming).toMatch(/event:\s*error/)
+    expect(streaming).toMatch(/closeConnection/)
+  })
+
+  it('non-SSE error responses keep the ADR-040 `{ error, status, details? }` envelope (ADR-051 #5)', async () => {
+    const { Projects } = await import('../../src/projects.js')
+    const { buildApi } = await import('../../src/api.js')
+    const { DEFAULT_PROJECT, getGraph, resetGraph } = await import('../../src/graph.js')
+    const fs2 = await import('node:fs/promises')
+    const os2 = await import('node:os')
+    const path2 = await import('node:path')
+    const tmp = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-err-shape-'))
+    resetGraph(DEFAULT_PROJECT)
+    try {
+      const reg = new Projects()
+      reg.set(DEFAULT_PROJECT, {
+        graph: getGraph(DEFAULT_PROJECT),
+        paths: {
+          snapshotPath: path2.join(tmp, 'graph.json'),
+          errorsPath: path2.join(tmp, 'errors.ndjson'),
+          staleEventsPath: path2.join(tmp, 'stale-events.ndjson'),
+          embeddingsCachePath: path2.join(tmp, 'embeddings.json'),
+          policyViolationsPath: path2.join(tmp, 'policy-violations.ndjson'),
+        },
+      })
+      const app = await buildApi({ projects: reg })
+      const res = await app.inject({ method: 'GET', url: '/projects/missing/graph' })
+      expect(res.statusCode).toBe(404)
+      const body = res.json() as { error: string }
+      expect(typeof body.error).toBe('string')
+      expect(body).toEqual({ error: 'project not found', project: 'missing' })
+      await app.close()
+    } finally {
+      await fs2.rm(tmp, { recursive: true, force: true })
+      resetGraph(DEFAULT_PROJECT)
+    }
+  })
+
+  it('SSE backpressure cap drops connection at 1000 queued messages with `event: error` `{ reason: "backpressure" }` (ADR-051 #8)', async () => {
+    const { SSE_BACKPRESSURE_CAP } = await import('../../src/streaming.js')
+    expect(SSE_BACKPRESSURE_CAP).toBe(1000)
+    const streaming = readFileSync(join(CORE_SRC, 'streaming.ts'), 'utf8')
+    expect(streaming).toMatch(/reason:\s*['"]backpressure['"]/)
+    expect(streaming).toMatch(/backpressureCap/)
+  })
+
+  it('event bus is a single EventEmitter singleton in packages/core/src/events.ts (ADR-051 — authority)', async () => {
+    const events = await import('../../src/events.js')
+    const { EventEmitter } = await import('node:events')
+    expect(events.eventBus).toBeInstanceOf(EventEmitter)
+    // Singleton: re-importing returns the same instance.
+    const again = await import('../../src/events.js')
+    expect(again.eventBus).toBe(events.eventBus)
+    // No competing EventEmitter exported as a public bus — the named export
+    // is exactly `eventBus` and there's only one.
+    const src = readFileSync(join(CORE_SRC, 'events.ts'), 'utf8')
+    expect(src.match(/export const eventBus/g)).toHaveLength(1)
+  })
+
+  it('event producers in ingest.ts / extract/ / watch.ts / policy.ts emit through the bus, not directly to handlers (ADR-051 — authority)', () => {
+    // Each producer module must import from events.ts. None may construct a
+    // private EventEmitter for graph-mutation broadcast.
+    const ingest = readFileSync(join(CORE_SRC, 'ingest.ts'), 'utf8')
+    const extractIdx = readFileSync(join(CORE_SRC, 'extract', 'index.ts'), 'utf8')
+    const watch = readFileSync(join(CORE_SRC, 'watch.ts'), 'utf8')
+    const policy = readFileSync(join(CORE_SRC, 'policy.ts'), 'utf8')
+    for (const [name, src] of [
+      ['ingest.ts', ingest],
+      ['extract/index.ts', extractIdx],
+      ['watch.ts', watch],
+      ['policy.ts', policy],
+    ] as const) {
+      expect(src, `${name} must import from events.ts`).toMatch(/from\s+['"]\.\.?\/events\.js['"]|from\s+['"]\.\/events\.js['"]/)
+    }
+    // Negative: no producer constructs its own EventEmitter for runtime
+    // events. The bus is the only one.
+    for (const [name, src] of [
+      ['ingest.ts', ingest],
+      ['extract/index.ts', extractIdx],
+      ['policy.ts', policy],
+    ] as const) {
+      expect(
+        src,
+        `${name} must not construct a private EventEmitter`,
+      ).not.toMatch(/new\s+EventEmitter/)
+    }
+  })
 })
 
 describe('Publish system contract (ADR-052)', () => {

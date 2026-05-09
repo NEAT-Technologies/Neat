@@ -11,8 +11,10 @@
 //     dependencies; engine names from compat.json via compatPairs().
 //   * Rule 14 — ConfigNodes record file existence only; never the contents.
 import type { NeatGraph } from '../graph.js'
+import { DEFAULT_PROJECT } from '../graph.js'
 import { promoteFrontierNodes } from '../ingest.js'
 import { ensureCompatLoaded } from '../compat.js'
+import { emitNeatEvent } from '../events.js'
 import { addServiceNodes, discoverServices } from './services.js'
 import { addServiceAliases } from './aliases.js'
 import { addDatabasesAndCompat } from './databases/index.js'
@@ -31,6 +33,9 @@ export interface ExtractOptions {
   // so policies see the final post-pass graph state. Daemons wire this to
   // evaluateAllPolicies + PolicyViolationsLog.append.
   onPolicyTrigger?: (graph: NeatGraph) => Promise<void> | void
+  // Project tag for the extraction-complete event (ADR-051). Defaults to
+  // DEFAULT_PROJECT when omitted.
+  project?: string
 }
 
 export async function extractFromDirectory(
@@ -54,7 +59,7 @@ export async function extractFromDirectory(
   // upgrades that just landed).
   if (opts.onPolicyTrigger) await opts.onPolicyTrigger(graph)
 
-  return {
+  const result: ExtractResult = {
     nodesAdded:
       phase1Nodes +
       phase2.nodesAdded +
@@ -65,4 +70,20 @@ export async function extractFromDirectory(
       phase2.edgesAdded + phase3.edgesAdded + phase4.edgesAdded + phase5.edgesAdded,
     frontiersPromoted,
   }
+
+  // extraction-complete (ADR-051). fileCount is the number of services
+  // discovered — the closest proxy we have for "how much source did this
+  // pass touch" without a per-phase file accountant.
+  emitNeatEvent({
+    type: 'extraction-complete',
+    project: opts.project ?? DEFAULT_PROJECT,
+    payload: {
+      project: opts.project ?? DEFAULT_PROJECT,
+      fileCount: services.length,
+      nodesAdded: result.nodesAdded,
+      edgesAdded: result.edgesAdded,
+    },
+  })
+
+  return result
 }

@@ -32,6 +32,8 @@ import { computeGraphDiff, loadSnapshotForDiff } from './diff.js'
 import type { SearchIndex } from './search.js'
 import type { Projects, ProjectContext } from './projects.js'
 import { Projects as ProjectsClass, pathsForProject } from './projects.js'
+import { listProjects as listRegistryProjects } from './registry.js'
+import { handleSse } from './streaming.js'
 
 export interface BuildApiOptions {
   // Multi-project shape. Optional — when absent we synthesise a single-
@@ -131,6 +133,16 @@ interface RouteContext {
 // same handlers run when the URL names a project explicitly.
 function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
   const { registry, startedAt, errorsPathFor, staleEventsPathFor } = ctx
+
+  // SSE event stream (ADR-051 #1). Dual-mounted: hits /events for default
+  // project and /projects/:project/events when scoped. The handler keeps
+  // the connection open and writes one frame per bus envelope whose
+  // `project` matches.
+  scope.get<{ Params: { project?: string } }>('/events', (req, reply) => {
+    const proj = resolveProject(registry, req, reply)
+    if (!proj) return
+    handleSse(req, reply, { project: proj.name })
+  })
 
   scope.get<{ Params: { project?: string } }>('/health', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
@@ -501,18 +513,20 @@ export async function buildApi(opts: BuildApiOptions): Promise<FastifyInstance> 
     policyFilePathFor,
   }
 
-  // Top-level discovery — only meaningful at the root.
-  app.get('/projects', async () => ({
-    projects: registry.list().map((name) => {
-      const proj = registry.get(name) as ProjectContext
-      return {
-        name,
-        nodeCount: proj.graph.order,
-        edgeCount: proj.graph.size,
-        scanPath: proj.scanPath,
-      }
-    }),
-  }))
+  // Multi-project switcher (ADR-051 #4). Direct passthrough of the
+  // machine-level registry from registry.ts (ADR-048) — distinct from the
+  // dual-mount routing in ADR-026, which exposes per-project endpoints.
+  // Returns Array<{ name, path, status, registeredAt, lastSeenAt?, languages }>.
+  app.get('/projects', async (_req, reply) => {
+    try {
+      return await listRegistryProjects()
+    } catch (err) {
+      return reply.code(500).send({
+        error: 'failed to read project registry',
+        details: (err as Error).message,
+      })
+    }
+  })
 
   // Default mount: /health, /graph, /incidents, etc. all hit project=default.
   registerRoutes(app, routeCtx)

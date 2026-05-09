@@ -168,21 +168,30 @@ describe('buildApi multi-project routing', () => {
     await app.close()
   })
 
-  it('GET /projects lists every registered project', async () => {
+  it('GET /projects passes through the machine-level registry (ADR-051 #4)', async () => {
+    // ADR-051 changed /projects from "in-memory project map with node/edge
+    // counts" to a passthrough of registry.listProjects() — that shape is what
+    // a project-picker UI needs. Seed an empty NEAT_HOME so the response is
+    // an empty array; behaviour with seeded registry entries is covered by
+    // the contracts test suite.
     seedDefault()
-    seedAlpha()
     const registry = new Projects()
     registry.set(DEFAULT_PROJECT, { paths: pathsForProject(DEFAULT_PROJECT, tmpDir) })
-    registry.set('alpha', { paths: pathsForProject('alpha', tmpDir) })
 
-    const app = await buildApi({ projects: registry })
-    const res = await app.inject({ method: 'GET', url: '/projects' })
-    expect(res.statusCode).toBe(200)
-    const body = res.json() as { projects: { name: string; nodeCount: number }[] }
-    const byName = Object.fromEntries(body.projects.map((p) => [p.name, p]))
-    expect(byName.default.nodeCount).toBe(1)
-    expect(byName.alpha.nodeCount).toBe(2)
-    await app.close()
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-projects-home-'))
+    const prevHome = process.env.NEAT_HOME
+    process.env.NEAT_HOME = home
+    try {
+      const app = await buildApi({ projects: registry })
+      const res = await app.inject({ method: 'GET', url: '/projects' })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual([])
+      await app.close()
+    } finally {
+      if (prevHome === undefined) delete process.env.NEAT_HOME
+      else process.env.NEAT_HOME = prevHome
+      await fs.rm(home, { recursive: true, force: true })
+    }
   })
 
   it('returns 404 with the project name when an unknown project is requested', async () => {
