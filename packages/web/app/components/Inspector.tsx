@@ -71,7 +71,7 @@ export function Inspector({ selectedNodeId, graphData }: InspectorProps) {
     rpsDelta: (Math.random() * 4).toFixed(1),
     p99Delta: (Math.random() * 8).toFixed(1),
     errDelta: (Math.random() * 0.3).toFixed(2),
-  }), [selectedNodeId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }), [selectedNodeId])
 
   useEffect(() => {
     if (!selectedNodeId) {

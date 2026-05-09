@@ -514,7 +514,6 @@ export function GraphCanvas({ project, selectedNodeId, onNodeSelect, onGraphLoad
         cyRef.current = null
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project])
 
   return (
