@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+// Bin shim — `npm install -g neat.is` puts this on PATH as `neat-mcp`.
+// @neat.is/mcp/dist/index.cjs unconditionally calls main() at module load,
+// so requiring it fires the stdio MCP server.
+require('@neat.is/mcp/dist/index.cjs')
