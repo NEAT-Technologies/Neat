@@ -123,6 +123,7 @@ The Railway gates from M6 are still informational. AWS is the more likely produc
 - Commits and PRs read like a colleague wrote them. No "this commit introduces" or release-notes-y bullets. See ADR-008.
 - Stack γ PRs on top of merged β work, not on each other. `main` rebase is the easier merge story.
 - Every package emits ESM + CJS + DTS via tsup. Don't ship ESM-only.
+- npm publishes go through CI on tag push (`.github/workflows/publish.yml`). Process + troubleshooting in [`docs/runbook-publish.md`](docs/runbook-publish.md). Local publishes via `bash scripts/publish.sh` are a fallback, not the default.
 
 ## Don't do
 
