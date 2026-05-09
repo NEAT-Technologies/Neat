@@ -77,7 +77,15 @@ export async function addHttpCallEdges(
     const seenTargets = new Map<string, { file: string; host: string }>()
     for (const file of files) {
       const parser = path.extname(file.path) === '.py' ? pyParser : jsParser
-      const targets = callsFromSource(file.content, parser, knownHosts)
+      let targets: Set<string>
+      try {
+        targets = callsFromSource(file.content, parser, knownHosts)
+      } catch (err) {
+        console.warn(
+          `[neat] http call extraction skipped ${file.path}: ${(err as Error).message}`,
+        )
+        continue
+      }
       for (const t of targets) {
         const targetId = hostToNodeId.get(t)
         if (!targetId || targetId === service.node.id) continue

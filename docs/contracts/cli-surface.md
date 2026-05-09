@@ -10,7 +10,7 @@ adr: [ADR-050, ADR-039, ADR-026]
 
 # CLI surface contract
 
-The first of two v0.2.6 contracts. Sibling: [`frontend-api.md`](./frontend-api.md).
+The first of two v0.2.8 contracts. Sibling: [`frontend-api.md`](./frontend-api.md).
 
 Closes the terminal-vs-agent gap. Today every reach into the graph goes through MCP. Engineers debugging at a terminal need the same nine tools without a Claude wrapper.
 
@@ -89,6 +89,6 @@ Each verb's `--help` lists args, flags, exit codes, and one example invocation. 
 
 ## Enforcement
 
-`it.todo` for v0.2.6 #23. Regression tests cover: nine verbs registered, REST-only data path, exit-code branching, `--json` shape matches the three-part schema, `--project` propagation matches ADR-026.
+`it.todo` for v0.2.8 #23. Regression tests cover: nine verbs registered, REST-only data path, exit-code branching, `--json` shape matches the three-part schema, `--project` propagation matches ADR-026.
 
 Full rationale: [ADR-050](../decisions.md#adr-050--cli-surface-contract).
