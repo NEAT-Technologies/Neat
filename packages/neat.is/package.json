@@ -24,6 +24,7 @@
   "dependencies": {
     "@neat.is/core": "^0.2.9",
     "@neat.is/mcp": "^0.2.9",
-    "@neat.is/claude-skill": "^0.2.9"
+    "@neat.is/claude-skill": "^0.2.9",
+    "@neat.is/web": "^0.2.9"
   }
 }

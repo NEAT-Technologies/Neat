@@ -10,12 +10,15 @@
  *
  * MVP runs in foreground only. Backgrounding is the supervisor's job
  * (launchd / systemd / nohup) — `neatd start` blocks until SIGINT/SIGTERM.
+ *
+ * v0.2.10: also brings up the web UI on port 6328 by default (ADR-059).
  */
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { startDaemon } from './daemon.js'
 import { listProjects, registryPath } from './registry.js'
+import { spawnWebUI, DEFAULT_WEB_PORT, type WebHandle } from './web-spawn.js'
 
 function neatHome(): string {
   if (process.env.NEAT_HOME && process.env.NEAT_HOME.length > 0) {
@@ -39,10 +42,33 @@ function usage(): void {
   console.log('usage: neatd <start|stop|reload|status> [--foreground]')
 }
 
+function restPortFromEnv(): number {
+  const raw = process.env.PORT
+  return raw && raw.length > 0 ? Number.parseInt(raw, 10) : 8080
+}
+
 async function cmdStart(): Promise<void> {
   const handle = await startDaemon()
   console.log(`neatd: started, PID ${process.pid}, ${handle.slots.size} project(s)`)
   console.log(`neatd: registry at ${registryPath()}`)
+
+  // ADR-059 — bring up the web UI alongside the daemon. Failure here aborts
+  // start with the clear-error pattern from ADR-049 instead of silently
+  // running headless.
+  const skipWeb = process.env.NEAT_WEB_DISABLED === '1'
+  let web: WebHandle | null = null
+  if (!skipWeb) {
+    try {
+      web = await spawnWebUI(restPortFromEnv())
+    } catch (err) {
+      console.error((err as Error).message)
+      await handle.stop().catch(() => {})
+      process.exit(3)
+    }
+  } else {
+    console.log('neatd: web UI disabled (NEAT_WEB_DISABLED=1)')
+  }
+
   console.log('neatd: SIGHUP reloads, SIGTERM/SIGINT stops')
 
   let stopping = false
@@ -50,8 +76,7 @@ async function cmdStart(): Promise<void> {
     if (stopping) return
     stopping = true
     console.log(`neatd: ${signal} received, stopping…`)
-    void handle
-      .stop()
+    void Promise.allSettled([handle.stop(), web ? web.stop() : Promise.resolve()])
       .catch((err) => console.error(`neatd: shutdown error — ${(err as Error).message}`))
       .finally(() => process.exit(0))
   }
@@ -96,6 +121,10 @@ async function cmdStatus(): Promise<void> {
   const pid = await readPid()
   console.log(`pid:      ${pid ?? '(not running)'}`)
   console.log(`registry: ${registryPath()}`)
+  const webPort = process.env.NEAT_WEB_PORT
+    ? Number.parseInt(process.env.NEAT_WEB_PORT, 10)
+    : DEFAULT_WEB_PORT
+  console.log(`web ui:   http://localhost:${webPort}`)
   const projects = await listProjects().catch(() => [])
   if (projects.length === 0) {
     console.log('projects: (none)')

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Local fallback for publishing the five NEAT packages to npm.
+# Local fallback for publishing the six NEAT packages to npm.
 #
 # Preferred path: tag push to GitHub triggers `.github/workflows/publish.yml`.
 # Use this script only when CI isn't an option (offline, hotfix, debugging).
@@ -27,6 +27,7 @@ PACKAGES=(
   "packages/core"
   "packages/mcp"
   "packages/claude-skill"
+  "packages/web"
   "packages/neat.is"
 )
 
@@ -77,7 +78,7 @@ UNIQUE_COUNT=$(printf '%s\n' "${VERSIONS[@]}" | sort -u | wc -l | tr -d ' ')
 if [ "$UNIQUE_COUNT" != "1" ]; then
   echo
   echo "ERROR: package versions are not in lockstep."
-  echo "All five packages must share the same version. Bump and try again."
+  echo "All six packages must share the same version. Bump and try again."
   exit 1
 fi
 
