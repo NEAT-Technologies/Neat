@@ -1521,3 +1521,56 @@ The schema-snapshot test catches the field addition automatically (per ADR-031).
 - Not a node type. Owners aren't first-class graph nodes; they're a property on `ServiceNode`. If real-user demand surfaces a need to query "all services owned by team X" or to wire owner-as-blast-radius-target, that's a successor ADR (probably an `OwnerNode` with `OWNED_BY` edges).
 - Not a runtime concern. The OBSERVED layer doesn't carry owner data; OTel spans don't (and shouldn't) advertise organizational structure. Owner is purely an EXTRACTED-layer property.
 - Not a policy attribute (yet). The `policies` contract (ADRs 042-045) doesn't reference `owner` today. If real-user signal demands ownership-conditioned policies (*"alert team X if their service depends on a deprecated package"*), that's a policy-schema extension, separate work.
+
+## ADR-055 — Producer per-file parse-failure isolation
+
+**Date:** 2026-05-10
+**Status:** Active.
+
+**Context.** Run NEAT against an unfamiliar codebase (in this case `medusa` per the debugger agent's session) and a single file with malformed-but-parseable-by-tree-sitter syntax can throw inside `callsFromSource`, propagating up through the producer's `for (const file of files)` loop and aborting the entire HTTP-call extraction phase. The pattern recurs across producers: a `JSON.parse` on a malformed `package.json`, a `parseAllDocuments` on a broken Compose file, a tree-sitter parse on an exotic JS variant — any one bad file kills the phase.
+
+This violates the implicit assumption everywhere else in the system (OTel ingest backpressure per ADR-033, traversal per ADR-036's clean returns) that NEAT degrades gracefully on partial input. The static-extraction layer was the last piece without an explicit rule.
+
+The debugger agent shipped the fix on `extract/calls/http.ts` (try/catch with `console.warn` + `continue`); ADR-054's implementation independently arrived at the same shape on `extract/owners.ts`; `extract/infra/k8s.ts` already had it; `extract/databases/*` already had it. Four producer files still don't.
+
+**Decision.**
+
+1. **Every producer that parses per-file content wraps the parse in try/catch.** The wrap covers the parse call itself (`readYaml`, `readJson`, `parseAllDocuments`, `callsFromSource`, etc.) and any narrow logic that depends on its return value being well-formed.
+2. **On failure: warn and continue.** `console.warn(\`[neat] <phase> skipped <file>: <err.message>\`)`, then `continue` to the next file. Don't throw; don't abort the phase.
+3. **The phase completes even if some files are unparseable.** A single broken `.compose.yml` doesn't kill all infra extraction; a single bad `package.json` doesn't kill service discovery; a single bad `.js` file doesn't kill HTTP-call extraction.
+4. **Wrap at the call site, not in shared helpers.** `readJson` and `readYaml` in `extract/shared.ts` continue to throw on malformed input; producers wrap their call. This keeps warnings contextual (the message can name the producer, the file path, and the failure mode) and lets pure callers (e.g. `loadCodeowners`, which already wraps) keep their own shape.
+5. **File reads that don't parse follow the same pattern when they sit inside a per-file walk.** `fs.readFile` in `infra/dockerfile.ts` and `infra/terraform.ts` doesn't itself throw on content shape, but a permission error on one file shouldn't kill the phase. Same try/catch + skip discipline.
+
+**Sites already conformant (no work needed):**
+
+- `extract/calls/http.ts` — debugger agent's fix
+- `extract/owners.ts` — ADR-054 implementation
+- `extract/infra/k8s.ts:51-55` — `parseAllDocuments` wrapped
+- `extract/databases/*` — debugger agent confirmed
+
+**Sites needing the fix:**
+
+- `extract/services.ts:125` — `readJson<PackageJson>(pkgPath)` unwrapped (per-service `package.json` read)
+- `extract/services.ts:173` — `readJson<RootPackageJson>(rootPkgPath)` unwrapped (workspace root read)
+- `extract/aliases.ts:98` — `readYaml<ComposeFile>(composePath)` unwrapped
+- `extract/aliases.ts:149` — Dockerfile `fs.readFile` unwrapped (parse-by-regex, but file read can still fail)
+- `extract/infra/docker-compose.ts:58` — `readYaml<ComposeFile>(composePath)` unwrapped
+- `extract/infra/dockerfile.ts:42` — `fs.readFile` unwrapped
+
+Six call sites across four producer modules.
+
+**Authority.** `packages/core/src/extract/**` (every producer). The static-extraction contract (`docs/contracts/static-extraction.md`) gets a new "Per-file parse-failure isolation" section linking back here.
+
+**Enforcement.** `it.todo` block in `contracts.test.ts`:
+
+- A producer-resilience scan that walks every file under `packages/core/src/extract/`, finds every parse-like call (`readYaml`, `readJson`, `parseAllDocuments`, `callsFromSource`), and asserts it's surrounded by a `try { ... } catch { ... }` block.
+- One `it.todo` per known unfixed call site (six total) that flips to live as the implementation agent ships each fix.
+
+The scan is regex-based and approximate but sufficient for the failure shape — a missing try/catch around a `readJson` call shows up as a clean grep miss.
+
+**Out of scope.**
+
+- **Replacing tree-sitter substring scan in `callsFromSource` with regex** (debugger agent item 3). Performance / robustness rewrite; defer until performance becomes the gating concern.
+- **Size pre-filter on parse inputs** (debugger agent item 4). Skipping files > 1 MB before parse would reduce log noise from minified bundles. Optional, not required for correctness.
+- **Asynchronous-error escalation.** A producer can't `process.exit(1)` on a parse failure even if every file fails. The phase must always complete, even with zero successful parses. Logging volume from a `node_modules`-leaking scan is a separate UX concern.
+- **Sentry-style structured error reporting.** Plain `console.warn` is sufficient for MVP. Wrap-at-call-site keeps the message contextual; future telemetry can hook into `console.warn` without changing the contract.

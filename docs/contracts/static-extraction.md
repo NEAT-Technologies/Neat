@@ -117,6 +117,29 @@ Issue #142 adds `framework?: string` to `ServiceNodeSchema`. This is **schema gr
 
 The table lives in `compat.json` or a sibling data file. Population happens at extract time. The snapshot guard catches schema drift.
 
+## Per-file parse-failure isolation (ADR-055)
+
+Every producer that parses per-file content wraps the parse in `try / catch`. On failure: `console.warn` with the producer name, file path, and error message; `continue` to the next file. The phase completes even if some files are unparseable.
+
+```ts
+for (const file of files) {
+  let parsed: T
+  try {
+    parsed = await readJson<T>(file)
+  } catch (err) {
+    console.warn(`[neat] <phase> skipped ${file}: ${(err as Error).message}`)
+    continue
+  }
+  // … use `parsed` …
+}
+```
+
+Wrap at the call site, not in shared helpers. `readJson` and `readYaml` in `extract/shared.ts` continue to throw on malformed input; producers wrap their call. Keeps warning messages contextual (producer name, file path, failure mode).
+
+File reads that don't parse follow the same pattern when they sit inside a per-file walk — a permission error on one file shouldn't kill the phase.
+
+Conformant sites today: `calls/http.ts`, `owners.ts`, `infra/k8s.ts`, `databases/*`. Sites needing the fix: `services.ts` (×2), `aliases.ts` (×2), `infra/docker-compose.ts`, `infra/dockerfile.ts`. See ADR-055 for the full enumeration and the implementation hand-off.
+
 ## Owner extraction (ADR-054)
 
 `extract/services.ts` populates `ServiceNode.owner` per service. Source priority:
