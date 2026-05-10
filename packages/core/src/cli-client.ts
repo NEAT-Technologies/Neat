@@ -14,6 +14,9 @@
 import type {
   BlastRadiusAffectedNode,
   BlastRadiusResult,
+  Divergence,
+  DivergenceResult,
+  DivergenceType,
   ErrorEvent,
   GraphEdge,
   GraphNode,
@@ -643,6 +646,74 @@ export async function runPolicies(
     block: blockLines.join('\n'),
     confidence: hypothetical ? 0.7 : 1,
     provenance: severities.join(' '),
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// divergences (ADR-060) — the tenth verb. Amends ADR-050's nine-verb
+// allowlist; the verb mirrors the get_divergences MCP tool.
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface DivergencesInput {
+  type?: ReadonlyArray<DivergenceType>
+  minConfidence?: number
+  node?: string
+  project?: string
+}
+
+function formatDivergenceLine(d: Divergence): string {
+  switch (d.type) {
+    case 'missing-observed':
+    case 'missing-extracted':
+      return `  • [${d.type}] ${d.source} → ${d.target} (${d.edgeType}) — confidence ${d.confidence.toFixed(2)}`
+    case 'version-mismatch':
+      return `  • [${d.type}] ${d.source} → ${d.target} — declared ${d.extractedVersion}, observed engine ${d.observedVersion} (${d.compatibility})`
+    case 'host-mismatch':
+      return `  • [${d.type}] ${d.source} → ${d.target} — declared host ${d.extractedHost}, observed host ${d.observedHost}`
+    case 'compat-violation':
+      return `  • [${d.type}] ${d.source} → ${d.target} — ${d.rule.kind}${d.rule.package ? ` (${d.rule.package})` : ''}`
+  }
+}
+
+export async function runDivergences(
+  client: HttpClient,
+  input: DivergencesInput,
+): Promise<VerbResult> {
+  const params = new URLSearchParams()
+  if (input.type && input.type.length > 0) params.set('type', input.type.join(','))
+  if (input.minConfidence !== undefined) {
+    params.set('minConfidence', String(input.minConfidence))
+  }
+  if (input.node) params.set('node', input.node)
+  const qs = params.size > 0 ? `?${params.toString()}` : ''
+  const result = await client.get<DivergenceResult>(
+    projectPath(input.project, `/graph/divergences${qs}`),
+  )
+  if (result.totalAffected === 0) {
+    return {
+      summary:
+        'No divergences found between the declared (EXTRACTED) and observed (OBSERVED) views of the graph.',
+    }
+  }
+  const headline = result.divergences[0]!
+  const summary =
+    `Found ${result.totalAffected} divergence${result.totalAffected === 1 ? '' : 's'} between code and production. ` +
+    `Highest-confidence: ${headline.type} on ${headline.source} → ${headline.target}. ${headline.reason}`
+  const blockLines: string[] = []
+  for (const d of result.divergences) {
+    blockLines.push(formatDivergenceLine(d))
+    blockLines.push(`    reason: ${d.reason}`)
+    blockLines.push(`    recommendation: ${d.recommendation}`)
+  }
+  const maxConfidence = result.divergences.reduce(
+    (m, d) => Math.max(m, d.confidence),
+    0,
+  )
+  return {
+    summary,
+    block: blockLines.join('\n'),
+    confidence: maxConfidence,
+    provenance: 'composite (EXTRACTED + OBSERVED)',
   }
 }
 

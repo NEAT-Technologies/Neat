@@ -7,6 +7,9 @@
 import type {
   BlastRadiusAffectedNode,
   BlastRadiusResult,
+  Divergence,
+  DivergenceResult,
+  DivergenceType,
   ErrorEvent,
   GraphEdge,
   GraphNode,
@@ -588,6 +591,82 @@ export async function checkPolicies(
       // violations report 1.00 since the engine ran against current state.
       confidence: hypothetical ? 0.7 : 1,
       provenance: severities.join(' '),
+    })
+  } catch (err) {
+    return formatErrorResponse(`Error talking to neat-core: ${(err as Error).message}`)
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// get_divergences (ADR-060) — the thesis surface
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface DivergencesInput {
+  type?: ReadonlyArray<DivergenceType>
+  minConfidence?: number
+  node?: string
+  project?: string
+}
+
+function buildDivergencesPath(input: DivergencesInput): string {
+  const params = new URLSearchParams()
+  if (input.type && input.type.length > 0) params.set('type', input.type.join(','))
+  if (input.minConfidence !== undefined) {
+    params.set('minConfidence', String(input.minConfidence))
+  }
+  if (input.node) params.set('node', input.node)
+  const qs = params.size > 0 ? `?${params.toString()}` : ''
+  return projectPath(input.project, `/graph/divergences${qs}`)
+}
+
+function formatDivergenceLine(d: Divergence): string {
+  switch (d.type) {
+    case 'missing-observed':
+      return `  • [${d.type}] ${d.source} → ${d.target} (${d.edgeType}) — confidence ${d.confidence.toFixed(2)}`
+    case 'missing-extracted':
+      return `  • [${d.type}] ${d.source} → ${d.target} (${d.edgeType}) — confidence ${d.confidence.toFixed(2)}`
+    case 'version-mismatch':
+      return `  • [${d.type}] ${d.source} → ${d.target} — declared ${d.extractedVersion}, observed engine ${d.observedVersion} (${d.compatibility})`
+    case 'host-mismatch':
+      return `  • [${d.type}] ${d.source} → ${d.target} — declared host ${d.extractedHost}, observed host ${d.observedHost}`
+    case 'compat-violation':
+      return `  • [${d.type}] ${d.source} → ${d.target} — ${d.rule.kind}${d.rule.package ? ` (${d.rule.package})` : ''}`
+  }
+}
+
+export async function getDivergences(
+  client: HttpClient,
+  input: DivergencesInput,
+): Promise<ToolResponse> {
+  try {
+    const result = await client.get<DivergenceResult>(buildDivergencesPath(input))
+    if (result.totalAffected === 0) {
+      return formatEmptyResponse(
+        'No divergences found between the declared (EXTRACTED) and observed (OBSERVED) views of the graph.',
+      )
+    }
+    // Sorted by confidence descending already; first entry is the headline.
+    const headline = result.divergences[0]!
+    const summary =
+      `Found ${result.totalAffected} divergence${result.totalAffected === 1 ? '' : 's'} between code and production. ` +
+      `Highest-confidence: ${headline.type} on ${headline.source} → ${headline.target}. ${headline.reason}`
+    const blockLines: string[] = []
+    for (const d of result.divergences) {
+      blockLines.push(formatDivergenceLine(d))
+      blockLines.push(`    reason: ${d.reason}`)
+      blockLines.push(`    recommendation: ${d.recommendation}`)
+    }
+    const maxConfidence = result.divergences.reduce(
+      (m, d) => Math.max(m, d.confidence),
+      0,
+    )
+    return formatToolResponse({
+      summary,
+      block: blockLines.join('\n'),
+      confidence: maxConfidence,
+      // Composite provenance — divergences sit between EXTRACTED and
+      // OBSERVED by construction; that's what makes them divergences.
+      provenance: 'composite (EXTRACTED + OBSERVED)',
     })
   } catch (err) {
     return formatErrorResponse(`Error talking to neat-core: ${(err as Error).message}`)

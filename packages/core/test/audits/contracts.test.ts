@@ -1952,7 +1952,7 @@ describe('MCP tool surface contract (ADR-039)', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 
-  it('every server.tool registration in mcp/src/index.ts has a name from the locked allowlist of nine tools (ADR-039)', () => {
+  it('every server.tool registration in mcp/src/index.ts has a name from the locked allowlist (ADR-039 + ADR-060 amendment to ten)', () => {
     const ALLOWED = new Set([
       'get_root_cause',
       'get_blast_radius',
@@ -1963,6 +1963,8 @@ describe('MCP tool surface contract (ADR-039)', () => {
       'get_graph_diff',
       'get_recent_stale_edges',
       'check_policies',
+      // Tenth tool added by ADR-060 — the thesis surface.
+      'get_divergences',
     ])
     const indexTs = readFileSync(join(MCP_SRC, 'index.ts'), 'utf8')
     const re = /server\.tool\(\s*['"]([^'"]+)['"]/g
@@ -3536,8 +3538,8 @@ describe('CLI surface contract (ADR-050)', () => {
     }
   }
 
-  // The nine MCP tools, locked at ADR-039. CLI verbs are the kebab-case
-  // de-prefixed mirror.
+  // The MCP tool allowlist (ADR-039 + ADR-060 amendment to ten). CLI verbs
+  // are the kebab-case de-prefixed mirror.
   const MCP_TOOLS_TO_VERBS = {
     get_root_cause: 'root-cause',
     get_blast_radius: 'blast-radius',
@@ -3548,6 +3550,8 @@ describe('CLI surface contract (ADR-050)', () => {
     get_graph_diff: 'diff',
     get_recent_stale_edges: 'stale-edges',
     check_policies: 'policies',
+    // Tenth pairing added by ADR-060 — the thesis surface.
+    get_divergences: 'divergences',
   } as const
 
   it('every MCP tool from ADR-039 has a corresponding `neat <verb>` registered (ADR-050 #1)', async () => {
@@ -4783,34 +4787,627 @@ describe('Web UI bootstrap from neatd (ADR-059)', () => {
 // amendments are explicit, recorded in ADR-060's "Amendments to prior
 // contracts" section.
 describe('Divergence query (ADR-060)', () => {
-  it.todo('DivergenceSchema exists in @neat.is/types with discriminated union over five variants (ADR-060 #1 — schema growth)')
-  it.todo('DivergenceResultSchema validates the wrapped { divergences, totalAffected, computedAt } shape (ADR-060 #1)')
-  it.todo('missing-observed variant parses with extracted edge + reason + recommendation (ADR-060 #5)')
-  it.todo('missing-extracted variant parses with observed edge + reason + recommendation (ADR-060 #5)')
-  it.todo('version-mismatch variant parses with extractedVersion + observedVersion + compatibility discriminator (ADR-060 #5)')
-  it.todo('host-mismatch variant parses with extractedHost + observedHost (ADR-060 #5)')
-  it.todo('compat-violation variant parses with rule reference (ADR-060 #5)')
+  // Fixtures for the discriminated-union schema tests. Pulled top-level so
+  // the per-variant tests can stay focused on the field shape.
+  const extractedCallEdge: GraphEdge = {
+    id: `${EdgeType.CALLS}:service:a->service:b`,
+    source: 'service:a',
+    target: 'service:b',
+    type: EdgeType.CALLS,
+    provenance: Provenance.EXTRACTED,
+    evidence: { file: 'a/src/index.ts', line: 1, snippet: 'callB()' },
+  }
+  const observedCallEdge: GraphEdge = {
+    id: `${EdgeType.CALLS}:OBSERVED:service:a->service:b`,
+    source: 'service:a',
+    target: 'service:b',
+    type: EdgeType.CALLS,
+    provenance: Provenance.OBSERVED,
+    callCount: 7,
+    lastObserved: '2026-05-10T00:00:00.000Z',
+  }
 
-  it.todo('GET /graph/divergences is registered in api.ts (ADR-060 #2)')
-  it.todo('GET /projects/:project/graph/divergences is registered (dual-mount per ADR-026) (ADR-060 #2)')
-  it.todo('?type query param filters results to the specified divergence types (ADR-060 #2)')
-  it.todo('?minConfidence filters results to confidence >= threshold (ADR-060 #2)')
-  it.todo('?node filters results to divergences involving the specified node id (ADR-060 #2)')
+  it('DivergenceSchema exists in @neat.is/types with discriminated union over five variants (ADR-060 #1 — schema growth)', async () => {
+    const { DivergenceSchema } = await import('@neat.is/types')
+    // The five variants discriminate on `type`.
+    const variants = (DivergenceSchema as unknown as {
+      _def: { options: readonly { shape: { type: { value: string } } }[] }
+    })._def.options.map((opt) => opt.shape.type.value)
+    expect([...variants].sort()).toEqual([
+      'compat-violation',
+      'host-mismatch',
+      'missing-extracted',
+      'missing-observed',
+      'version-mismatch',
+    ])
+  })
 
-  it.todo('get_divergences is registered as the tenth MCP tool — extends ADR-039 allowlist (ADR-060 #3 — amendment)')
-  it.todo('get_divergences MCP response is three-part: NL summary + structured block + footer (ADR-060 #3)')
-  it.todo('neat divergences is registered as the tenth CLI verb — extends ADR-050 allowlist (ADR-060 #4 — amendment)')
-  it.todo('neat divergences --json emits machine-readable DivergenceResult (ADR-060 #4)')
-  it.todo('neat divergences --type, --min-confidence, --node, --project flags propagate to REST (ADR-060 #4)')
+  it('DivergenceResultSchema validates the wrapped { divergences, totalAffected, computedAt } shape (ADR-060 #1)', async () => {
+    const { DivergenceResultSchema } = await import('@neat.is/types')
+    const ok = DivergenceResultSchema.safeParse({
+      divergences: [],
+      totalAffected: 0,
+      computedAt: new Date().toISOString(),
+    })
+    expect(ok.success).toBe(true)
+    const bad = DivergenceResultSchema.safeParse({ divergences: [], totalAffected: 0 })
+    expect(bad.success).toBe(false)
+  })
 
-  it.todo('computeDivergences detects missing-observed: EXTRACTED edge without OBSERVED counterpart (ADR-060 #5)')
-  it.todo('computeDivergences detects missing-extracted: OBSERVED edge without EXTRACTED counterpart (ADR-060 #5)')
-  it.todo('computeDivergences detects version-mismatch using compat.json rules (ADR-060 #5)')
-  it.todo('computeDivergences detects host-mismatch: CONFIGURED_BY host !== CONNECTS_TO target host (ADR-060 #5)')
-  it.todo('computeDivergences detects compat-violation: any compat.json rule firing against OBSERVED edge (ADR-060 #5)')
+  it('missing-observed variant parses with extracted edge + reason + recommendation (ADR-060 #5)', async () => {
+    const { DivergenceSchema } = await import('@neat.is/types')
+    const r = DivergenceSchema.safeParse({
+      type: 'missing-observed',
+      source: 'service:a',
+      target: 'service:b',
+      edgeType: EdgeType.CALLS,
+      extracted: extractedCallEdge,
+      confidence: 0.5,
+      reason: 'no traffic',
+      recommendation: 'check feature flags',
+    })
+    expect(r.success).toBe(true)
+  })
 
-  it.todo('computeDivergences sorts results by confidence descending by default (ADR-060 #6)')
-  it.todo('computeDivergences is a pure function — no I/O, no mutation, no async (ADR-060 — binding rule 4)')
-  it.todo('packages/core/src/divergences.ts contains no graph mutation calls (read-only — extends mutation-authority scan)')
-  it.todo('no divergences.ndjson persistence sidecar exists (ADR-060 — binding rule 2; derived, not persisted)')
+  it('missing-extracted variant parses with observed edge + reason + recommendation (ADR-060 #5)', async () => {
+    const { DivergenceSchema } = await import('@neat.is/types')
+    const r = DivergenceSchema.safeParse({
+      type: 'missing-extracted',
+      source: 'service:a',
+      target: 'service:b',
+      edgeType: EdgeType.CALLS,
+      observed: observedCallEdge,
+      confidence: 0.9,
+      reason: 'static missed it',
+      recommendation: 'check aliases',
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it('version-mismatch variant parses with extractedVersion + observedVersion + compatibility discriminator (ADR-060 #5)', async () => {
+    const { DivergenceSchema } = await import('@neat.is/types')
+    const r = DivergenceSchema.safeParse({
+      type: 'version-mismatch',
+      source: 'service:a',
+      target: 'database:db',
+      extractedVersion: '7.4.0',
+      observedVersion: '15',
+      compatibility: 'incompatible',
+      confidence: 1.0,
+      reason: 'pg too old',
+      recommendation: 'upgrade pg',
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it('host-mismatch variant parses with extractedHost + observedHost (ADR-060 #5)', async () => {
+    const { DivergenceSchema } = await import('@neat.is/types')
+    const r = DivergenceSchema.safeParse({
+      type: 'host-mismatch',
+      source: 'service:a',
+      target: 'database:prod-db',
+      extractedHost: 'local-db',
+      observedHost: 'prod-db',
+      confidence: 0.9,
+      reason: 'declared X observed Y',
+      recommendation: 'check env config',
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it('compat-violation variant parses with rule reference (ADR-060 #5)', async () => {
+    const { DivergenceSchema } = await import('@neat.is/types')
+    const r = DivergenceSchema.safeParse({
+      type: 'compat-violation',
+      source: 'service:a',
+      target: 'database:db',
+      rule: { kind: 'deprecated-api', reason: 'request is deprecated', package: 'request' },
+      observed: { ...observedCallEdge, type: EdgeType.CONNECTS_TO },
+      confidence: 1.0,
+      reason: 'request is deprecated',
+      recommendation: 'use undici',
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it('GET /graph/divergences is registered in api.ts (ADR-060 #2)', () => {
+    const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+    expect(api).toMatch(/scope\.get<[^>]*>\s*\(\s*['"]\/graph\/divergences['"]/)
+  })
+
+  it('GET /projects/:project/graph/divergences is registered (dual-mount per ADR-026) (ADR-060 #2)', () => {
+    // The route is registered on `scope` inside registerRoutes, which is
+    // invoked twice — once at root, once under /projects/:project. That
+    // single registration site gives both mounts.
+    const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+    expect(api).toMatch(/scope\.get<[^>]*>\s*\(\s*['"]\/graph\/divergences['"]/)
+    expect(api).toMatch(/registerRoutes\(app, routeCtx\)/)
+    expect(api).toMatch(/prefix:\s*['"]\/projects\/:project['"]/)
+  })
+
+  // Shared graph fixture for the REST integration tests: one extracted-only
+  // edge and one observed-only edge, so both missing-* divergences fire.
+  async function buildDivergenceApi(): Promise<{
+    app: import('fastify').FastifyInstance
+    cleanup: () => Promise<void>
+  }> {
+    const { Projects } = await import('../../src/projects.js')
+    const { buildApi } = await import('../../src/api.js')
+    const { DEFAULT_PROJECT, getGraph, resetGraph } = await import('../../src/graph.js')
+    resetGraph(DEFAULT_PROJECT)
+    const g = getGraph(DEFAULT_PROJECT)
+    g.addNode('service:a', {
+      id: 'service:a',
+      type: NodeType.ServiceNode,
+      name: 'a',
+      language: 'javascript',
+    })
+    g.addNode('service:b', {
+      id: 'service:b',
+      type: NodeType.ServiceNode,
+      name: 'b',
+      language: 'javascript',
+    })
+    g.addNode('service:c', {
+      id: 'service:c',
+      type: NodeType.ServiceNode,
+      name: 'c',
+      language: 'javascript',
+    })
+    // EXTRACTED-only: missing-observed.
+    g.addEdgeWithKey(extractedCallEdge.id, 'service:a', 'service:b', extractedCallEdge)
+    // OBSERVED-only between different nodes: missing-extracted.
+    const onlyObserved: GraphEdge = {
+      id: `${EdgeType.CALLS}:OBSERVED:service:a->service:c`,
+      source: 'service:a',
+      target: 'service:c',
+      type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED,
+      callCount: 3,
+      lastObserved: '2026-05-10T00:00:00.000Z',
+    }
+    g.addEdgeWithKey(onlyObserved.id, 'service:a', 'service:c', onlyObserved)
+    const registry = new Projects()
+    const fs2 = await import('node:fs/promises')
+    const os2 = await import('node:os')
+    const path2 = await import('node:path')
+    const tmp = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-divs-'))
+    registry.set(DEFAULT_PROJECT, {
+      graph: g,
+      paths: {
+        snapshotPath: path2.join(tmp, 'graph.json'),
+        errorsPath: path2.join(tmp, 'errors.ndjson'),
+        staleEventsPath: path2.join(tmp, 'stale-events.ndjson'),
+        embeddingsCachePath: path2.join(tmp, 'embeddings.json'),
+        policyViolationsPath: path2.join(tmp, 'policy-violations.ndjson'),
+      },
+    })
+    const app = await buildApi({ projects: registry })
+    return {
+      app,
+      cleanup: async () => {
+        await app.close()
+        await fs2.rm(tmp, { recursive: true, force: true })
+        resetGraph(DEFAULT_PROJECT)
+      },
+    }
+  }
+
+  it('?type query param filters results to the specified divergence types (ADR-060 #2)', async () => {
+    const { app, cleanup } = await buildDivergenceApi()
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/graph/divergences?type=missing-observed',
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json() as { divergences: { type: string }[]; totalAffected: number }
+      expect(body.totalAffected).toBeGreaterThan(0)
+      for (const d of body.divergences) expect(d.type).toBe('missing-observed')
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('?minConfidence filters results to confidence >= threshold (ADR-060 #2)', async () => {
+    const { app, cleanup } = await buildDivergenceApi()
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/graph/divergences?minConfidence=0.9',
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json() as { divergences: { confidence: number }[] }
+      for (const d of body.divergences) expect(d.confidence).toBeGreaterThanOrEqual(0.9)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('?node filters results to divergences involving the specified node id (ADR-060 #2)', async () => {
+    const { app, cleanup } = await buildDivergenceApi()
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/graph/divergences?node=${encodeURIComponent('service:c')}`,
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json() as { divergences: { source: string; target: string }[] }
+      expect(body.divergences.length).toBeGreaterThan(0)
+      for (const d of body.divergences) {
+        expect(d.source === 'service:c' || d.target === 'service:c').toBe(true)
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('get_divergences is registered as the tenth MCP tool — extends ADR-039 allowlist (ADR-060 #3 — amendment)', () => {
+    const indexTs = readFileSync(join(MCP_SRC, 'index.ts'), 'utf8')
+    expect(indexTs).toMatch(/server\.tool\(\s*['"]get_divergences['"]/)
+  })
+
+  it('get_divergences MCP response is three-part: NL summary + structured block + footer (ADR-060 #3)', async () => {
+    const { getDivergences } = await import('../../../mcp/src/tools.js')
+    const stubClient = {
+      async get<T>(): Promise<T> {
+        return {
+          divergences: [
+            {
+              type: 'missing-observed',
+              source: 'service:a',
+              target: 'service:b',
+              edgeType: EdgeType.CALLS,
+              extracted: extractedCallEdge,
+              confidence: 0.9,
+              reason: 'no traffic',
+              recommendation: 'check flags',
+            },
+          ],
+          totalAffected: 1,
+          computedAt: '2026-05-10T00:00:00.000Z',
+        } as unknown as T
+      },
+    }
+    const result = await getDivergences(stubClient, {})
+    const text = (result.content[0] as { text: string }).text
+    const sections = text.split('\n\n')
+    expect(sections.length).toBeGreaterThanOrEqual(3)
+    // Footer carries the composite provenance string per the contract.
+    expect(sections[sections.length - 1]).toMatch(/confidence: .* · provenance: composite/)
+  })
+
+  it('neat divergences is registered as the tenth CLI verb — extends ADR-050 allowlist (ADR-060 #4 — amendment)', async () => {
+    const { QUERY_VERBS } = await import('../../src/cli.js')
+    expect(QUERY_VERBS.has('divergences')).toBe(true)
+    // Confirms the verb is part of the ten-mirror map captured by the
+    // earlier ADR-050 contract test.
+    expect(QUERY_VERBS.size).toBe(10)
+  })
+
+  it('neat divergences --json emits machine-readable DivergenceResult (ADR-060 #4)', async () => {
+    const { runDivergences } = await import('../../src/cli-client.js')
+    const stubClient = {
+      async get<T>(): Promise<T> {
+        return {
+          divergences: [
+            {
+              type: 'missing-observed',
+              source: 'service:a',
+              target: 'service:b',
+              edgeType: EdgeType.CALLS,
+              extracted: extractedCallEdge,
+              confidence: 0.7,
+              reason: 'no traffic',
+              recommendation: 'check flags',
+            },
+          ],
+          totalAffected: 1,
+          computedAt: '2026-05-10T00:00:00.000Z',
+        } as unknown as T
+      },
+    }
+    const { formatJson } = await import('../../src/cli-client.js')
+    const result = await runDivergences(stubClient, {})
+    const parsed = JSON.parse(formatJson(result)) as Record<string, unknown>
+    expect(parsed.summary).toMatch(/divergence/i)
+    expect(parsed.confidence).toBe(0.7)
+    expect(parsed.provenance).toBe('composite (EXTRACTED + OBSERVED)')
+  })
+
+  it('neat divergences --type, --min-confidence, --node, --project flags propagate to REST (ADR-060 #4)', async () => {
+    const { runDivergences } = await import('../../src/cli-client.js')
+    const captured: string[] = []
+    const stubClient = {
+      async get<T>(path: string): Promise<T> {
+        captured.push(path)
+        return {
+          divergences: [],
+          totalAffected: 0,
+          computedAt: '2026-05-10T00:00:00.000Z',
+        } as unknown as T
+      },
+    }
+    await runDivergences(stubClient, {
+      type: ['missing-observed', 'missing-extracted'],
+      minConfidence: 0.6,
+      node: 'service:checkout',
+      project: 'alpha',
+    })
+    const url = captured[0]!
+    expect(url).toContain('/projects/alpha/graph/divergences')
+    expect(url).toContain('type=missing-observed%2Cmissing-extracted')
+    expect(url).toContain('minConfidence=0.6')
+    expect(url).toContain('node=service%3Acheckout')
+  })
+
+  it('computeDivergences detects missing-observed: EXTRACTED edge without OBSERVED counterpart (ADR-060 #5)', async () => {
+    const { computeDivergences } = await import('../../src/divergences.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', {
+      id: 'service:a',
+      type: NodeType.ServiceNode,
+      name: 'a',
+      language: 'javascript',
+    })
+    g.addNode('service:b', {
+      id: 'service:b',
+      type: NodeType.ServiceNode,
+      name: 'b',
+      language: 'javascript',
+    })
+    g.addEdgeWithKey(extractedCallEdge.id, 'service:a', 'service:b', extractedCallEdge)
+    const result = computeDivergences(g)
+    const hit = result.divergences.find((d) => d.type === 'missing-observed')
+    expect(hit).toBeDefined()
+    expect(hit!.source).toBe('service:a')
+    expect(hit!.target).toBe('service:b')
+    expect(hit!.confidence).toBe(0.5)
+  })
+
+  it('computeDivergences detects missing-extracted: OBSERVED edge without EXTRACTED counterpart (ADR-060 #5)', async () => {
+    const { computeDivergences } = await import('../../src/divergences.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', {
+      id: 'service:a',
+      type: NodeType.ServiceNode,
+      name: 'a',
+      language: 'javascript',
+    })
+    g.addNode('service:b', {
+      id: 'service:b',
+      type: NodeType.ServiceNode,
+      name: 'b',
+      language: 'javascript',
+    })
+    g.addEdgeWithKey(observedCallEdge.id, 'service:a', 'service:b', observedCallEdge)
+    const result = computeDivergences(g)
+    const hit = result.divergences.find((d) => d.type === 'missing-extracted')
+    expect(hit).toBeDefined()
+    expect(hit!.source).toBe('service:a')
+    expect(hit!.target).toBe('service:b')
+  })
+
+  it('computeDivergences detects version-mismatch using compat.json rules (ADR-060 #5)', async () => {
+    const { computeDivergences } = await import('../../src/divergences.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:checkout', {
+      id: 'service:checkout',
+      type: NodeType.ServiceNode,
+      name: 'checkout',
+      language: 'javascript',
+      dependencies: { pg: '7.4.0' },
+    })
+    g.addNode('database:prod-pg', {
+      id: 'database:prod-pg',
+      type: NodeType.DatabaseNode,
+      name: 'prod-pg',
+      engine: 'postgresql',
+      engineVersion: '15',
+      compatibleDrivers: [],
+      host: 'prod-pg',
+    })
+    const eid = `${EdgeType.CONNECTS_TO}:OBSERVED:service:checkout->database:prod-pg`
+    g.addEdgeWithKey(eid, 'service:checkout', 'database:prod-pg', {
+      id: eid,
+      source: 'service:checkout',
+      target: 'database:prod-pg',
+      type: EdgeType.CONNECTS_TO,
+      provenance: Provenance.OBSERVED,
+    })
+    const result = computeDivergences(g)
+    const hit = result.divergences.find((d) => d.type === 'version-mismatch')
+    expect(hit).toBeDefined()
+    if (hit?.type === 'version-mismatch') {
+      expect(hit.extractedVersion).toBe('7.4.0')
+      expect(hit.observedVersion).toBe('15')
+      expect(hit.compatibility).toBe('incompatible')
+      expect(hit.confidence).toBe(1.0)
+    }
+  })
+
+  it('computeDivergences detects host-mismatch: CONFIGURED_BY host !== CONNECTS_TO target host (ADR-060 #5)', async () => {
+    const { computeDivergences } = await import('../../src/divergences.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:api', {
+      id: 'service:api',
+      type: NodeType.ServiceNode,
+      name: 'api',
+      language: 'javascript',
+      dbConnectionTarget: 'local-db',
+    })
+    g.addNode('database:prod-db', {
+      id: 'database:prod-db',
+      type: NodeType.DatabaseNode,
+      name: 'prod-db',
+      engine: 'postgresql',
+      engineVersion: '15',
+      compatibleDrivers: [],
+      host: 'prod-db',
+    })
+    g.addNode('config:env', {
+      id: 'config:env',
+      type: NodeType.ConfigNode,
+      name: '.env',
+      path: '.env',
+      fileType: 'env',
+    })
+    const cfgEdge = `${EdgeType.CONFIGURED_BY}:service:api->config:env`
+    g.addEdgeWithKey(cfgEdge, 'service:api', 'config:env', {
+      id: cfgEdge,
+      source: 'service:api',
+      target: 'config:env',
+      type: EdgeType.CONFIGURED_BY,
+      provenance: Provenance.EXTRACTED,
+      evidence: { file: '.env', line: 1, snippet: 'DB_HOST=local-db' },
+    })
+    const connEdge = `${EdgeType.CONNECTS_TO}:OBSERVED:service:api->database:prod-db`
+    g.addEdgeWithKey(connEdge, 'service:api', 'database:prod-db', {
+      id: connEdge,
+      source: 'service:api',
+      target: 'database:prod-db',
+      type: EdgeType.CONNECTS_TO,
+      provenance: Provenance.OBSERVED,
+    })
+    const result = computeDivergences(g)
+    const hit = result.divergences.find((d) => d.type === 'host-mismatch')
+    expect(hit).toBeDefined()
+    if (hit?.type === 'host-mismatch') {
+      expect(hit.extractedHost).toBe('local-db')
+      expect(hit.observedHost).toBe('prod-db')
+    }
+  })
+
+  it('computeDivergences detects compat-violation: any compat.json rule firing against OBSERVED edge (ADR-060 #5)', async () => {
+    const { computeDivergences } = await import('../../src/divergences.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:legacy', {
+      id: 'service:legacy',
+      type: NodeType.ServiceNode,
+      name: 'legacy',
+      language: 'javascript',
+      // `request` is flagged deprecated in compat.json (packageMaxVersion 2.88.2).
+      dependencies: { request: '2.88.0' },
+    })
+    g.addNode('database:prod-db', {
+      id: 'database:prod-db',
+      type: NodeType.DatabaseNode,
+      name: 'prod-db',
+      engine: 'postgresql',
+      engineVersion: '15',
+      compatibleDrivers: [],
+      host: 'prod-db',
+    })
+    const eid = `${EdgeType.CONNECTS_TO}:OBSERVED:service:legacy->database:prod-db`
+    g.addEdgeWithKey(eid, 'service:legacy', 'database:prod-db', {
+      id: eid,
+      source: 'service:legacy',
+      target: 'database:prod-db',
+      type: EdgeType.CONNECTS_TO,
+      provenance: Provenance.OBSERVED,
+    })
+    const result = computeDivergences(g)
+    const hit = result.divergences.find((d) => d.type === 'compat-violation')
+    expect(hit).toBeDefined()
+    if (hit?.type === 'compat-violation') {
+      expect(hit.rule.kind).toBe('deprecated-api')
+      expect(hit.rule.package).toBe('request')
+    }
+  })
+
+  it('computeDivergences sorts results by confidence descending by default (ADR-060 #6)', async () => {
+    const { computeDivergences } = await import('../../src/divergences.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', {
+      id: 'service:a',
+      type: NodeType.ServiceNode,
+      name: 'a',
+      language: 'javascript',
+    })
+    g.addNode('service:b', {
+      id: 'service:b',
+      type: NodeType.ServiceNode,
+      name: 'b',
+      language: 'javascript',
+    })
+    g.addNode('service:c', {
+      id: 'service:c',
+      type: NodeType.ServiceNode,
+      name: 'c',
+      language: 'javascript',
+    })
+    // EXTRACTED-only edge: missing-observed at confidence 0.5 (no OBSERVED
+    // traffic on source).
+    g.addEdgeWithKey(extractedCallEdge.id, 'service:a', 'service:b', extractedCallEdge)
+    // OBSERVED-only edge: missing-extracted at ~OBSERVED ceiling (higher).
+    const obs: GraphEdge = {
+      id: `${EdgeType.CALLS}:OBSERVED:service:a->service:c`,
+      source: 'service:a',
+      target: 'service:c',
+      type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED,
+      callCount: 100,
+      lastObserved: new Date().toISOString(),
+    }
+    g.addEdgeWithKey(obs.id, 'service:a', 'service:c', obs)
+    const result = computeDivergences(g)
+    expect(result.divergences.length).toBeGreaterThanOrEqual(2)
+    for (let i = 1; i < result.divergences.length; i++) {
+      expect(result.divergences[i - 1]!.confidence).toBeGreaterThanOrEqual(
+        result.divergences[i]!.confidence,
+      )
+    }
+  })
+
+  it('computeDivergences is a pure function — no I/O, no mutation, no async (ADR-060 — binding rule 4)', async () => {
+    const src = readFileSync(join(CORE_SRC, 'divergences.ts'), 'utf8')
+    // Not async. The export signature must be synchronous so the route handler
+    // can call it without an await round-trip.
+    expect(src).toMatch(/export function computeDivergences/)
+    expect(src).not.toMatch(/export async function computeDivergences/)
+    // No fs / fetch / promises imports.
+    expect(src).not.toMatch(/from\s+['"]node:fs/)
+    expect(src).not.toMatch(/from\s+['"]fs/)
+    expect(src).not.toMatch(/\bfetch\s*\(/)
+  })
+
+  it('packages/core/src/divergences.ts contains no graph mutation calls (read-only — extends mutation-authority scan)', () => {
+    const src = readFileSync(join(CORE_SRC, 'divergences.ts'), 'utf8')
+    const mutators = [
+      'addNode',
+      'addEdge',
+      'addEdgeWithKey',
+      'addDirectedEdge',
+      'addDirectedEdgeWithKey',
+      'dropNode',
+      'dropEdge',
+      'replaceEdgeAttributes',
+      'replaceNodeAttributes',
+      'mergeEdgeAttributes',
+      'mergeNodeAttributes',
+    ]
+    const re = new RegExp(`\\b(graph|g)\\.(${mutators.join('|')})\\s*\\(`)
+    const offenders: string[] = []
+    src.split('\n').forEach((line, i) => {
+      const trimmed = line.trim()
+      if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+        offenders.push(`divergences.ts:${i + 1}: ${trimmed}`)
+      }
+    })
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('no divergences.ndjson persistence sidecar exists (ADR-060 — binding rule 2; derived, not persisted)', () => {
+    // No source line in core/src references a divergences.ndjson sidecar —
+    // the contract is "derived, not persisted". A future writer / reader
+    // would land in persist.ts or watch.ts.
+    const offenders: string[] = []
+    for (const file of walkSrc(CORE_SRC)) {
+      const content = readFileSync(file, 'utf8')
+      if (content.includes('divergences.ndjson')) {
+        offenders.push(file)
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
 })

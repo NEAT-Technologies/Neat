@@ -22,6 +22,8 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import {
   BlastRadiusResultSchema,
+  DivergenceResultSchema,
+  DivergenceSchema,
   EdgeTypeSchema,
   ErrorEventSchema,
   GraphEdgeSchema,
@@ -51,6 +53,8 @@ const BINDING_SCHEMAS: Record<string, z.ZodTypeAny> = {
   TransitiveDependenciesResultSchema,
   PolicyFileSchema,
   PolicyViolationSchema,
+  DivergenceSchema,
+  DivergenceResultSchema,
 }
 
 // Walk a Zod schema and produce a stable JSON description. Captures field
