@@ -117,6 +117,20 @@ Issue #142 adds `framework?: string` to `ServiceNodeSchema`. This is **schema gr
 
 The table lives in `compat.json` or a sibling data file. Population happens at extract time. The snapshot guard catches schema drift.
 
+## Owner extraction (ADR-054)
+
+`extract/services.ts` populates `ServiceNode.owner` per service. Source priority:
+
+1. **CODEOWNERS file.** Read `<scanPath>/CODEOWNERS` first, then `<scanPath>/.github/CODEOWNERS`. Match each service's `repoPath` against the file's patterns. Use the literal RHS of the first matching line (`@org/team`, `email@addr`, etc.).
+2. **`package.json` `author` field.** If CODEOWNERS doesn't cover the service's path, read `<service.repoPath>/package.json` and use `author` if present (string form or `name` from object form).
+3. **Otherwise undefined.** No git-blame fallback (last-toucher ≠ owner; per-service git invocations are slow).
+
+Format is the literal source value — no normalization in extract. Display-time normalization is the consumer's job.
+
+OTel-auto-created services (per ADR-033) start with `owner: undefined`; static extraction backfills when `extract/services.ts` later discovers source. Property updates on existing nodes are allowed by extract producers per ADR-030.
+
+CODEOWNERS pattern matching in MVP is minimal: support `*`, `**`, and exact paths. No full gitignore-style parser.
+
 ## Enforcement
 
 `packages/core/test/audits/contracts.test.ts` includes:
@@ -124,6 +138,7 @@ The table lives in `compat.json` or a sibling data file. Population happens at e
 - A scan asserting every EXTRACTED-edge construction site in `extract/` includes an `evidence` field with at least `file`. Lands as `it.todo` keyed to #140 and flips when the issue closes.
 - A producer-interface assertion: every `addX` export under `extract/` accepts `(graph, services, scanPath)` (or a strict subset).
 - An idempotency assertion: run a producer twice on the same fixture, expect identical graph state.
+- Owner-extraction block (`it.todo`s for ADR-054): schema includes optional `owner`; CODEOWNERS at root + at `.github/`; package.json `author` fallback; undefined when neither source covers; backfill on existing nodes from OTel ingest.
 
 The PreToolUse hook surfaces this contract whenever any file under `extract/` or `watch.ts` is edited.
 

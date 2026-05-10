@@ -1473,3 +1473,51 @@ Documents the load-bearing rules of the npm publish pipeline. The pipeline has b
 **Enforcement.** No mechanized test. Detected by reading: if `CLAUDE.md`'s active-milestone block names a version that's already on the npm registry as a retired or current published version, the milestone needs to be rolled forward.
 
 **First application.** v0.2.6 → v0.2.8 milestone rename, 2026-05-09, see `docs/plans/2026-05-09-milestone-rename.md`.
+
+## ADR-054 — `ServiceNode.owner` extraction rule
+
+**Date:** 2026-05-10
+**Status:** Active.
+
+**Context.** The 2026-05-04 audit (`docs/audits/NEAT-audit-types(1).md`) graded the absence of an `owner` field on `ServiceNode` as a FAIL: *"absent. Blocks code-ownership-aware features."* The v0.2.x sequence didn't ship it, didn't track it as a deferred issue, and no contract gated it — it quietly disappeared. The 2026-05-10 pre-v0.3.0 verification pass (`docs/plans/2026-05-10-pre-v0.3.0-verification.md`, Finding 9.1) caught it during the audit-doc re-grade.
+
+`owner` is the difference between diagnostic and actionable. NEAT's value isn't just *"`pg@7.4.0` is incompatible with PostgreSQL 15"* — it's *"and here's who to talk to about fixing it."* Without an owner field, the human consuming the output has to find ownership separately. With it, ADR-027's MVP-success-PR experiment becomes a tighter loop: identify divergence, identify owner, propose fix to that owner.
+
+**Decision.**
+
+1. **Schema.** Add `owner?: string` to `ServiceNodeSchema` in `packages/types/src/nodes.ts`. Optional. Per ADR-031 this is *growth* — commit-and-go, no `persist.ts` migration needed; `schema-snapshot.test.ts` regenerates the fixture as the audit trail.
+
+2. **Source priority during static extraction.** `extract/services.ts` populates `owner` per service in this order:
+
+   1. **CODEOWNERS file.** Read `<scanPath>/CODEOWNERS` or `<scanPath>/.github/CODEOWNERS` (in that order). Match each service's `repoPath` against the patterns; use the first matching line's RHS (the literal owner string, `@org/team` or `email@addr.tld` or whatever the file declares).
+   2. **`package.json` author field.** If CODEOWNERS doesn't cover the service's path, read `<service.repoPath>/package.json` and use the `author` field if present. Accept either string form (`"Cem D <cem@example.com>"`) or object form (use `name` field).
+   3. **Otherwise, leave `owner` undefined.**
+
+   No git-blame fallback. Too noisy (last-toucher ≠ owner), too slow (per-service git invocations), and the failure mode of a wrong owner attribution is worse than no owner attribution.
+
+3. **Format.** Literal value from the source. No normalization in MVP — `@neat-tools/backend` stays `@neat-tools/backend`; `cem@neat.is` stays `cem@neat.is`. The frontend / MCP can normalize for display; the graph stores ground truth.
+
+4. **Trigger.** Population happens during static extraction (`discoverServices` in `extract/services.ts`). Not at OTel ingest time.
+
+5. **OTel-auto-created services.** Per ADR-033 #4, services auto-created from OTel spans (no source path known yet) start with `owner: undefined`. When `extract/services.ts` later discovers the service's source via tree-sitter / file walk, it backfills `owner` per the priority above. Per ADR-030 (lifecycle), property updates on existing nodes are allowed by extract producers; this is a normal property update.
+
+6. **No CODEOWNERS pattern compiler in MVP.** Use a minimal glob match: support `*` and `**` and exact paths. Don't pull in a full CODEOWNERS gitignore-style parser. If real-user signal demands richer patterns, file a successor ADR.
+
+**Authority.** `packages/types/src/nodes.ts` (schema growth), `packages/core/src/extract/services.ts` (extraction logic). The static-extraction contract (`docs/contracts/static-extraction.md`) gets an "Owner extraction" section linking back here.
+
+**Enforcement.** `it.todo` block in `contracts.test.ts`:
+
+- `ServiceNodeSchema` includes optional `owner` field
+- `extract/services.ts` populates `owner` from CODEOWNERS when one exists at repo root
+- `extract/services.ts` populates `owner` from CODEOWNERS at `.github/CODEOWNERS` when no root file
+- `extract/services.ts` falls back to package.json `author` when CODEOWNERS doesn't cover the path
+- `extract/services.ts` leaves `owner` undefined when neither source is available
+- Backfill works: a service auto-created from OTel ingest gets `owner` populated when `discoverServices` later runs
+
+The schema-snapshot test catches the field addition automatically (per ADR-031).
+
+**What this is NOT.**
+
+- Not a node type. Owners aren't first-class graph nodes; they're a property on `ServiceNode`. If real-user demand surfaces a need to query "all services owned by team X" or to wire owner-as-blast-radius-target, that's a successor ADR (probably an `OwnerNode` with `OWNED_BY` edges).
+- Not a runtime concern. The OBSERVED layer doesn't carry owner data; OTel spans don't (and shouldn't) advertise organizational structure. Owner is purely an EXTRACTED-layer property.
+- Not a policy attribute (yet). The `policies` contract (ADRs 042-045) doesn't reference `owner` today. If real-user signal demands ownership-conditioned policies (*"alert team X if their service depends on a deprecated package"*), that's a policy-schema extension, separate work.

@@ -601,6 +601,40 @@ describe('Static-extraction contract (ADR-032)', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// ServiceNode.owner extraction (ADR-054)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Adds optional `owner?: string` to ServiceNodeSchema; populates from
+// CODEOWNERS at <scanPath>/CODEOWNERS or <scanPath>/.github/CODEOWNERS, with
+// package.json `author` fallback, and undefined when neither covers. Per
+// ADR-031 the schema addition is growth — schema-snapshot regenerates as the
+// audit trail. Per ADR-030 backfill on existing nodes is allowed by extract
+// producers; OTel-auto-created services (per ADR-033 #4) get owner populated
+// when extract/services.ts later discovers their source.
+describe('ServiceNode.owner extraction (ADR-054)', () => {
+  it.todo('ServiceNodeSchema includes optional `owner` field (ADR-054 #1 — schema growth)')
+  it.todo(
+    'extract/services.ts populates ServiceNode.owner from <scanPath>/CODEOWNERS when one exists (ADR-054 #2.1)',
+  )
+  it.todo(
+    'extract/services.ts falls back to <scanPath>/.github/CODEOWNERS when no root CODEOWNERS file (ADR-054 #2.1)',
+  )
+  it.todo(
+    'extract/services.ts falls back to package.json `author` when CODEOWNERS does not cover the path (ADR-054 #2.2)',
+  )
+  it.todo(
+    'extract/services.ts accepts package.json `author` as either string form or `{ name }` object form (ADR-054 #2.2)',
+  )
+  it.todo('extract/services.ts leaves owner undefined when neither source covers (ADR-054 #2.3)')
+  it.todo(
+    'CODEOWNERS pattern matcher supports `*`, `**`, and exact paths only (ADR-054 #6 — minimal MVP)',
+  )
+  it.todo(
+    'OTel-auto-created services with no owner get backfilled when extract/services.ts later discovers source (ADR-054 #5)',
+  )
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // OTel ingest contract — non-blocking, span-time, parent-cache (ADR-033)
 // ──────────────────────────────────────────────────────────────────────────
 describe('OTel ingest contract (ADR-033)', () => {
