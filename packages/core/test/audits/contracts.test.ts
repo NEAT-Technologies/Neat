@@ -4569,3 +4569,149 @@ describe('Publish system contract (ADR-052)', () => {
     expect(yml).toMatch(/neat --help/)
   })
 })
+
+// ──────────────────────────────────────────────────────────────────────────
+// Web shell completeness (ADR-056)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// No permanent stub UI in packages/web/. Every interactive element is wired
+// or explicitly disabled; no duplicate components; audit doc tracks the
+// inventory. All scans flip from todo to live as Jed wires the thirteen
+// known stubs from packages/web/audit/09-gaps-and-stubs.md.
+describe('Web shell completeness (ADR-056)', () => {
+  it.todo(
+    'no empty onClick={() => {}} or onClick={undefined} in packages/web/app/components/** (ADR-056 #2)',
+  )
+  it.todo(
+    'no two files under packages/web/app/components/ export default components with the same name (ADR-056 #3)',
+  )
+  it.todo(
+    'every entry in audit/09-gaps-and-stubs.md "Stub buttons" tables corresponds to a button in source (ADR-056 #4)',
+  )
+  // Per-element todos — flip as each is wired or explicitly disabled.
+  it.todo('TopBar: History button wired or disabled (ADR-056 #1)')
+  it.todo('TopBar: Share button wired or disabled (ADR-056 #1)')
+  it.todo('Rail: Layers button wired or disabled (ADR-056 #1)')
+  it.todo('Rail: Find button wired or disabled (ADR-056 #1)')
+  it.todo('Rail: NeatScript button wired or disabled (ADR-056 #1)')
+  it.todo('Rail: Time travel button wired or disabled (ADR-056 #1)')
+  it.todo('Rail: Blast radius button wired or disabled (ADR-056 #1)')
+  it.todo('Rail: Diff button wired or disabled (ADR-056 #1)')
+  it.todo('Rail: Comments button wired or disabled (ADR-056 #1)')
+  it.todo('Rail: Agents button wired or disabled (ADR-056 #1)')
+  it.todo('Rail: Settings button wired or disabled (ADR-056 #1)')
+  it.todo('GraphCanvas toolbar: Layout: cose toggle wired or disabled (ADR-056 #1)')
+  it.todo('GraphCanvas toolbar: Locked toggle wired or disabled (ADR-056 #1)')
+  it.todo('Inspector: Owners tab wired or disabled (ADR-056 #1)')
+  it.todo('Inspector: History tab wired or disabled (ADR-056 #1)')
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// Web shell multi-project routing (ADR-057)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// AppShell.tsx owns project state. URL → localStorage → /projects → 'default'
+// resolution chain. Project change triggers data refresh. No hardcoded
+// project names. Runtime corollary of ADR-026.
+describe('Web shell multi-project routing (ADR-057)', () => {
+  it.todo(
+    'AppShell.tsx initializes project from URL ?project=X first (ADR-057 #2.1)',
+  )
+  it.todo(
+    'AppShell.tsx falls back to localStorage `neat:lastProject` (ADR-057 #2.2)',
+  )
+  it.todo(
+    'AppShell.tsx falls back to first entry from GET /projects when registry is non-empty (ADR-057 #2.3)',
+  )
+  it.todo(
+    'AppShell.tsx falls back to "default" when registry is empty (ADR-057 #2.4)',
+  )
+  it.todo(
+    'Project change triggers data refresh — every component using project re-fetches (ADR-057 #3)',
+  )
+  it.todo(
+    'URL stays in sync — setProject(name) writes ?project=X (ADR-057 #4)',
+  )
+  it.todo(
+    'Every API proxy route under packages/web/app/api/** forwards `project` (ADR-057 #5)',
+  )
+  it.todo(
+    'TopBar.tsx renders the active project name visibly (ADR-057 #6)',
+  )
+  it.todo(
+    'Project switcher in TopBar.tsx uses GET /projects and calls setProject(name) (ADR-057 #7)',
+  )
+  it.todo(
+    'No hardcoded project names (medusa, neat, demo) in branching logic under packages/web/app/components/ or packages/web/lib/ (ADR-057 #8)',
+  )
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// Web shell debugging surface (ADR-058)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// StatusBar shows daemon + SSE connection state. No silent API failures.
+// Debug panel keyboard-shortcut toggleable. Read-only.
+describe('Web shell debugging surface (ADR-058)', () => {
+  it.todo(
+    'StatusBar.tsx renders an element with data-connection-state attribute (ADR-058 #1)',
+  )
+  it.todo(
+    'StatusBar.tsx renders an element with data-sse-state attribute (ADR-058 #2)',
+  )
+  it.todo(
+    'proxy.ts emits a toast or banner on non-2xx response (ADR-058 #3)',
+  )
+  it.todo(
+    'A DebugPanel.tsx (or equivalent) component file exists in packages/web/app/components/ (ADR-058 #4)',
+  )
+  it.todo(
+    'Debug panel toggleable via Ctrl+Shift+D / Cmd+Shift+D keyboard shortcut (ADR-058 #4)',
+  )
+  it.todo(
+    'TopBar.tsx or StatusBar.tsx renders the daemon URL string (ADR-058 #5)',
+  )
+  it.todo(
+    'DebugPanel does not include POST/PUT/DELETE buttons — read-only enforcement (ADR-058 #6)',
+  )
+})
+
+// ──────────────────────────────────────────────────────────────────────────
+// Web UI bootstrap from neatd (ADR-059)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// neatd start launches the web UI on port 6328 (T9 NEAT). NEAT_WEB_PORT
+// overrides. Fail loudly on collision. @neat.is/web joins the publish-system
+// lockstep — six packages instead of five going forward.
+describe('Web UI bootstrap from neatd (ADR-059)', () => {
+  it.todo(
+    'neatd.ts spawns a web UI child process during cmdStart (ADR-059 #1)',
+  )
+  it.todo(
+    'web UI port defaults to 6328 (NEAT in T9 keypad) (ADR-059 #2)',
+  )
+  it.todo(
+    'NEAT_WEB_PORT env var overrides the default port (ADR-059 #3)',
+  )
+  it.todo(
+    'port collision aborts neatd with a clear error and non-zero exit (ADR-059 #4)',
+  )
+  it.todo(
+    'spawned web UI inherits NEAT_API_URL=http://localhost:${restPort} (ADR-059 #6)',
+  )
+  it.todo(
+    'neatd stop / SIGTERM kills the spawned web UI process (no orphans) (ADR-059 #7)',
+  )
+  it.todo(
+    '@neat.is/web is no longer private:true and version-matches the lockstep (ADR-059 #8)',
+  )
+  it.todo(
+    'neat.is umbrella package.json includes @neat.is/web in dependencies (ADR-059 #8)',
+  )
+  it.todo(
+    '.github/workflows/publish.yml dependency order includes @neat.is/web before neat.is (ADR-059 #8)',
+  )
+  it.todo(
+    'scripts/publish.sh dependency order includes packages/web before packages/neat.is (ADR-059 #8)',
+  )
+})
