@@ -270,6 +270,9 @@
             "nodeEngine": {
               "_optional": "_string"
             },
+            "owner": {
+              "_optional": "_string"
+            },
             "repoPath": {
               "_optional": "_string"
             },

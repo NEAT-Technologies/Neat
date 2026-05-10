@@ -612,26 +612,165 @@ describe('Static-extraction contract (ADR-032)', () => {
 // producers; OTel-auto-created services (per ADR-033 #4) get owner populated
 // when extract/services.ts later discovers their source.
 describe('ServiceNode.owner extraction (ADR-054)', () => {
-  it.todo('ServiceNodeSchema includes optional `owner` field (ADR-054 #1 — schema growth)')
-  it.todo(
-    'extract/services.ts populates ServiceNode.owner from <scanPath>/CODEOWNERS when one exists (ADR-054 #2.1)',
-  )
-  it.todo(
-    'extract/services.ts falls back to <scanPath>/.github/CODEOWNERS when no root CODEOWNERS file (ADR-054 #2.1)',
-  )
-  it.todo(
-    'extract/services.ts falls back to package.json `author` when CODEOWNERS does not cover the path (ADR-054 #2.2)',
-  )
-  it.todo(
-    'extract/services.ts accepts package.json `author` as either string form or `{ name }` object form (ADR-054 #2.2)',
-  )
-  it.todo('extract/services.ts leaves owner undefined when neither source covers (ADR-054 #2.3)')
-  it.todo(
-    'CODEOWNERS pattern matcher supports `*`, `**`, and exact paths only (ADR-054 #6 — minimal MVP)',
-  )
-  it.todo(
-    'OTel-auto-created services with no owner get backfilled when extract/services.ts later discovers source (ADR-054 #5)',
-  )
+  async function scaffold(
+    files: Record<string, string>,
+  ): Promise<string> {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const root = mkdtempSync(join(tmpdir(), 'owner-test-'))
+    for (const [rel, content] of Object.entries(files)) {
+      const full = join(root, rel)
+      mkdirSync(join(full, '..'), { recursive: true })
+      writeFileSync(full, content, 'utf8')
+    }
+    return root
+  }
+
+  it('ServiceNodeSchema includes optional `owner` field (ADR-054 #1 — schema growth)', async () => {
+    const { ServiceNodeSchema } = await import('@neat.is/types')
+    const shape = ServiceNodeSchema.shape
+    expect('owner' in shape).toBe(true)
+    expect(shape.owner.isOptional()).toBe(true)
+    // Round-trip: parses with and without the field present.
+    expect(ServiceNodeSchema.parse({
+      id: 'service:x', type: NodeType.ServiceNode, name: 'x', language: 'javascript',
+    }).owner).toBeUndefined()
+    expect(ServiceNodeSchema.parse({
+      id: 'service:x', type: NodeType.ServiceNode, name: 'x', language: 'javascript',
+      owner: '@neat-tools/backend',
+    }).owner).toBe('@neat-tools/backend')
+  })
+
+  it('extract/services.ts populates ServiceNode.owner from <scanPath>/CODEOWNERS when one exists (ADR-054 #2.1)', async () => {
+    const { discoverServices } = await import('../../src/extract/services.js')
+    const root = await scaffold({
+      'CODEOWNERS': '* @neat-tools/backend\n',
+      'package.json': JSON.stringify({ name: 'svc-a', version: '1.0.0' }),
+    })
+    const services = await discoverServices(root)
+    expect(services).toHaveLength(1)
+    expect(services[0]!.node.owner).toBe('@neat-tools/backend')
+  })
+
+  it('extract/services.ts falls back to <scanPath>/.github/CODEOWNERS when no root CODEOWNERS file (ADR-054 #2.1)', async () => {
+    const { discoverServices } = await import('../../src/extract/services.js')
+    const root = await scaffold({
+      '.github/CODEOWNERS': '* @neat-tools/platform\n',
+      'package.json': JSON.stringify({ name: 'svc-b', version: '1.0.0' }),
+    })
+    const services = await discoverServices(root)
+    expect(services).toHaveLength(1)
+    expect(services[0]!.node.owner).toBe('@neat-tools/platform')
+  })
+
+  it('extract/services.ts falls back to package.json `author` when CODEOWNERS does not cover the path (ADR-054 #2.2)', async () => {
+    const { discoverServices } = await import('../../src/extract/services.js')
+    // CODEOWNERS exists but only matches `apps/web` — the service lives at
+    // packages/api so the root pattern doesn't apply, package.json wins.
+    const root = await scaffold({
+      'CODEOWNERS': 'apps/web @neat-tools/frontend\n',
+      'packages/api/package.json': JSON.stringify({
+        name: 'api',
+        version: '1.0.0',
+        author: 'cem@neat.is',
+      }),
+    })
+    const services = await discoverServices(root)
+    expect(services).toHaveLength(1)
+    expect(services[0]!.node.owner).toBe('cem@neat.is')
+  })
+
+  it('extract/services.ts accepts package.json `author` as either string form or `{ name }` object form (ADR-054 #2.2)', async () => {
+    const { discoverServices } = await import('../../src/extract/services.js')
+
+    const stringRoot = await scaffold({
+      'package.json': JSON.stringify({
+        name: 'svc-string',
+        version: '1.0.0',
+        author: 'Cem D <cem@example.com>',
+      }),
+    })
+    const stringServices = await discoverServices(stringRoot)
+    expect(stringServices[0]!.node.owner).toBe('Cem D <cem@example.com>')
+
+    const objectRoot = await scaffold({
+      'package.json': JSON.stringify({
+        name: 'svc-object',
+        version: '1.0.0',
+        author: { name: 'Deniz D', email: 'deniz@neat.is' },
+      }),
+    })
+    const objectServices = await discoverServices(objectRoot)
+    expect(objectServices[0]!.node.owner).toBe('Deniz D')
+  })
+
+  it('extract/services.ts leaves owner undefined when neither source covers (ADR-054 #2.3)', async () => {
+    const { discoverServices } = await import('../../src/extract/services.js')
+    const root = await scaffold({
+      'package.json': JSON.stringify({ name: 'svc-no-owner', version: '1.0.0' }),
+    })
+    const services = await discoverServices(root)
+    expect(services).toHaveLength(1)
+    expect(services[0]!.node.owner).toBeUndefined()
+  })
+
+  it('CODEOWNERS pattern matcher supports `*`, `**`, and exact paths only (ADR-054 #6 — minimal MVP)', async () => {
+    const { matchOwner } = await import('../../src/extract/owners.js')
+    const file = {
+      rules: [
+        { pattern: 'apps/web', owners: '@team/exact' },
+        { pattern: 'packages/*', owners: '@team/single-star' },
+        { pattern: 'services/**', owners: '@team/double-star' },
+      ],
+    }
+    // Exact path
+    expect(matchOwner(file, 'apps/web')).toBe('@team/exact')
+    expect(matchOwner(file, 'apps/web/src/index.ts')).toBe('@team/exact')
+    // Single * — one segment under packages/
+    expect(matchOwner(file, 'packages/api')).toBe('@team/single-star')
+    // ** — anything below services/
+    expect(matchOwner(file, 'services/checkout')).toBe('@team/double-star')
+    expect(matchOwner(file, 'services/checkout/src/handler.ts')).toBe('@team/double-star')
+    // No match
+    expect(matchOwner(file, 'tools/scripts')).toBeNull()
+    // First match wins
+    const ordered = {
+      rules: [
+        { pattern: 'apps/web', owners: '@first' },
+        { pattern: 'apps/**', owners: '@second' },
+      ],
+    }
+    expect(matchOwner(ordered, 'apps/web')).toBe('@first')
+  })
+
+  it('OTel-auto-created services with no owner get backfilled when extract/services.ts later discovers source (ADR-054 #5)', async () => {
+    const { discoverServices, addServiceNodes } = await import('../../src/extract/services.js')
+
+    // Stage 1: OTel ingest auto-creates a minimal node with no owner.
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:checkout', {
+      id: 'service:checkout',
+      type: NodeType.ServiceNode,
+      name: 'checkout',
+      language: 'unknown',
+      discoveredVia: 'otel',
+    })
+    expect((g.getNodeAttributes('service:checkout') as { owner?: string }).owner).toBeUndefined()
+
+    // Stage 2: static extraction later discovers source with an owner.
+    const root = await scaffold({
+      'CODEOWNERS': '* @neat-tools/backend\n',
+      'package.json': JSON.stringify({ name: 'checkout', version: '1.0.0' }),
+    })
+    const services = await discoverServices(root)
+    expect(services[0]!.node.owner).toBe('@neat-tools/backend')
+
+    addServiceNodes(g, services)
+
+    const merged = g.getNodeAttributes('service:checkout') as { owner?: string; discoveredVia?: string }
+    expect(merged.owner).toBe('@neat-tools/backend')
+    expect(merged.discoveredVia).toBe('merged')
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
