@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 
 interface Project {
   name: string
-  path: string
-  status: 'active' | 'paused' | 'broken'
+  path?: string
+  status?: 'active' | 'paused' | 'broken'
 }
 
 interface SearchResult {
@@ -27,15 +27,19 @@ export function TopBar({ project, onProjectChange, onNodeSelect, onRelayout, onT
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [showResults, setShowResults] = useState(false)
+  const [showSwitcher, setShowSwitcher] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
+  const switcherRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // ADR-051 — list projects via GET /projects, used by the switcher (ADR-057 #7).
   useEffect(() => {
     fetch('/api/projects')
-      .then((r) => r.json())
-      .then((data: Project[]) => {
-        if (Array.isArray(data)) setProjects(data)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: Project[] | { projects?: Project[] }) => {
+        const list = Array.isArray(data) ? data : Array.isArray(data?.projects) ? data.projects : []
+        setProjects(list)
       })
       .catch(() => {})
   }, [])
@@ -51,6 +55,7 @@ export function TopBar({ project, onProjectChange, onNodeSelect, onRelayout, onT
     return () => clearInterval(id)
   }, [])
 
+  // ADR-057 #5 — search is project-scoped.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     if (!query.trim()) {
@@ -59,7 +64,7 @@ export function TopBar({ project, onProjectChange, onNodeSelect, onRelayout, onT
       return
     }
     debounceRef.current = setTimeout(() => {
-      fetch(`/api/search?q=${encodeURIComponent(query)}`)
+      fetch(`/api/search?q=${encodeURIComponent(query)}&project=${encodeURIComponent(project)}`)
         .then((r) => r.json())
         .then((d: { results: SearchResult[] }) => {
           if (Array.isArray(d.results)) {
@@ -69,12 +74,15 @@ export function TopBar({ project, onProjectChange, onNodeSelect, onRelayout, onT
         })
         .catch(() => {})
     }, 280)
-  }, [query])
+  }, [query, project])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
         setShowResults(false)
+      }
+      if (switcherRef.current && !switcherRef.current.contains(e.target as Node)) {
+        setShowSwitcher(false)
       }
     }
     document.addEventListener('mousedown', handler)
@@ -98,25 +106,44 @@ export function TopBar({ project, onProjectChange, onNodeSelect, onRelayout, onT
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
-  const displayProject = project === 'default' ? (projects[0]?.name ?? 'default') : project
-
   return (
     <header className="topbar">
       <div className="brand" title="NEAT">N</div>
 
-      <div className="crumbs">
-        {projects.length > 1 ? (
-          <select
-            className="project-select"
-            value={project}
-            onChange={(e) => onProjectChange(e.target.value)}
-          >
-            {projects.map((p) => (
-              <option key={p.name} value={p.name}>{p.name}</option>
-            ))}
-          </select>
-        ) : (
-          <span className="repo">{displayProject}</span>
+      {/* ADR-057 #6 — active project always visible. ADR-057 #7 — switcher always reachable. */}
+      <div className="crumbs" ref={switcherRef}>
+        <button
+          className="repo project-switcher"
+          aria-label={`Active project: ${project}. Click to switch.`}
+          aria-expanded={showSwitcher}
+          onClick={() => setShowSwitcher((v) => !v)}
+          title="Switch project"
+        >
+          <span className="project-name">{project}</span>
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginLeft: 4, opacity: 0.6 }}>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+        {showSwitcher && (
+          <div className="project-menu" role="menu">
+            {projects.length === 0 ? (
+              <div className="project-menu-empty">no registered projects</div>
+            ) : (
+              projects.map((p) => (
+                <button
+                  key={p.name}
+                  className={`project-menu-item${p.name === project ? ' active' : ''}`}
+                  role="menuitem"
+                  onClick={() => {
+                    onProjectChange(p.name)
+                    setShowSwitcher(false)
+                  }}
+                >
+                  {p.name}
+                </button>
+              ))
+            )}
+          </div>
         )}
         <span className="sep">/</span>
         <span className="here">graph view</span>

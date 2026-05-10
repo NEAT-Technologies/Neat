@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import type { GraphData } from './AppShell'
 
 interface StatusBarProps {
+  project: string
   graphData: GraphData | null
 }
 
@@ -11,29 +12,27 @@ function formatTime(d: Date): string {
   return d.toTimeString().slice(0, 8) + ' ' + d.toTimeString().slice(9, 12)
 }
 
-export function StatusBar({ graphData }: StatusBarProps) {
+export function StatusBar({ project, graphData }: StatusBarProps) {
   const [now, setNow] = useState(() => formatTime(new Date()))
   const [healthy, setHealthy] = useState<boolean | null>(null)
-  const [project, setProject] = useState<string>('—')
 
   useEffect(() => {
     const id = setInterval(() => setNow(formatTime(new Date())), 1000)
     return () => clearInterval(id)
   }, [])
 
+  // ADR-057 #3 — re-check health when project changes so the indicator
+  // reflects the active project's daemon state.
   useEffect(() => {
     const check = () =>
-      fetch('/api/health')
+      fetch(`/api/health?project=${encodeURIComponent(project)}`)
         .then((r) => r.json())
-        .then((d: { ok: boolean; project?: string }) => {
-          setHealthy(d.ok === true)
-          if (d.project) setProject(d.project)
-        })
+        .then((d: { ok: boolean }) => setHealthy(d.ok === true))
         .catch(() => setHealthy(false))
     check()
     const id = setInterval(check, 15_000)
     return () => clearInterval(id)
-  }, [])
+  }, [project])
 
   const nodeCount = graphData?.nodes.length ?? '—'
   const edgeCount = graphData?.edges.length ?? '—'

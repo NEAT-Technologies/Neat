@@ -127,8 +127,8 @@ export function GraphCanvas({ project, selectedNodeId, onNodeSelect, onGraphLoad
       // Dynamic import avoids SSR issues
       const cytoscape = (await import('cytoscape')).default
 
-      const projectParam = project && project !== 'default' ? `?project=${encodeURIComponent(project)}` : ''
-      const res = await fetch(`/api/graph${projectParam}`).catch(() => null)
+      // ADR-057 #5 — every API call carries the active project.
+      const res = await fetch(`/api/graph?project=${encodeURIComponent(project)}`).catch(() => null)
       if (!res || !res.ok || destroyed) return
       const data: GraphData = await res.json()
       if (destroyed) return
