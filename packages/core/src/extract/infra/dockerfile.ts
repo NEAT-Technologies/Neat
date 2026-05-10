@@ -39,7 +39,15 @@ export async function addDockerfileRuntimes(
   for (const service of services) {
     const dockerfilePath = path.join(service.dir, 'Dockerfile')
     if (!(await exists(dockerfilePath))) continue
-    const content = await fs.readFile(dockerfilePath, 'utf8')
+    let content: string
+    try {
+      content = await fs.readFile(dockerfilePath, 'utf8')
+    } catch (err) {
+      console.warn(
+        `[neat] infra dockerfile skipped ${path.relative(scanPath, dockerfilePath)}: ${(err as Error).message}`,
+      )
+      continue
+    }
     const image = runtimeImage(content)
     if (!image) continue
 

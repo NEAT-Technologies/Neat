@@ -122,7 +122,15 @@ async function discoverNodeService(
 ): Promise<DiscoveredService | null> {
   const pkgPath = path.join(dir, 'package.json')
   if (!(await exists(pkgPath))) return null
-  const pkg = await readJson<PackageJson>(pkgPath)
+  let pkg: PackageJson
+  try {
+    pkg = await readJson<PackageJson>(pkgPath)
+  } catch (err) {
+    console.warn(
+      `[neat] services skipped ${path.relative(scanPath, pkgPath)}: ${(err as Error).message}`,
+    )
+    return null
+  }
   if (!pkg.name) return null
   const node: ServiceNode = {
     id: serviceId(pkg.name),
@@ -169,9 +177,16 @@ async function discoverPyService(
 // duplicate logs a warning naming both paths.
 export async function discoverServices(scanPath: string): Promise<DiscoveredService[]> {
   const rootPkgPath = path.join(scanPath, 'package.json')
-  const rootPkg = (await exists(rootPkgPath))
-    ? await readJson<RootPackageJson>(rootPkgPath)
-    : null
+  let rootPkg: RootPackageJson | null = null
+  if (await exists(rootPkgPath)) {
+    try {
+      rootPkg = await readJson<RootPackageJson>(rootPkgPath)
+    } catch (err) {
+      console.warn(
+        `[neat] services workspaces skipped ${path.relative(scanPath, rootPkgPath)}: ${(err as Error).message}`,
+      )
+    }
+  }
   const wsGlobs = rootPkg ? workspaceGlobs(rootPkg) : null
 
   const candidateDirs: string[] = []

@@ -95,7 +95,15 @@ async function collectComposeAliases(
   }
   if (!composePath) return
 
-  const compose = await readYaml<ComposeFile>(composePath)
+  let compose: ComposeFile
+  try {
+    compose = await readYaml<ComposeFile>(composePath)
+  } catch (err) {
+    console.warn(
+      `[neat] aliases compose skipped ${path.relative(scanPath, composePath)}: ${(err as Error).message}`,
+    )
+    return
+  }
   if (!compose?.services) return
 
   for (const [composeName, svc] of Object.entries(compose.services)) {
@@ -146,7 +154,15 @@ async function collectDockerfileAliases(
   for (const service of services) {
     const dockerfilePath = path.join(service.dir, 'Dockerfile')
     if (!(await exists(dockerfilePath))) continue
-    const content = await fs.readFile(dockerfilePath, 'utf8')
+    let content: string
+    try {
+      content = await fs.readFile(dockerfilePath, 'utf8')
+    } catch (err) {
+      console.warn(
+        `[neat] aliases dockerfile skipped ${dockerfilePath}: ${(err as Error).message}`,
+      )
+      continue
+    }
     const aliases = parseDockerfileLabels(content)
     if (aliases.length > 0) addAliases(graph, service.node.id, aliases)
   }

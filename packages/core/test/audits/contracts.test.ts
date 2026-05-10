@@ -10,7 +10,7 @@
  * Only relax a test if /docs/contracts.md and the relevant ADR change first.
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { MultiDirectedGraph } from 'graphology'
 import {
   EdgeType,
@@ -785,26 +785,189 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
 // is a live regression scan; the six per-site todos flip as each call site
 // is wrapped.
 describe('Producer per-file parse-failure isolation (ADR-055)', () => {
-  // Global scan ships as `it.todo` until the six per-site fixes land. Once
-  // every site is wrapped, the implementation agent flips this from todo to
-  // live; the assertion then catches any future regression mechanically.
-  // The scan walks producer files under extract/, finds every parse-like
-  // call (`readJson`, `readYaml`, `parseAllDocuments`, `callsFromSource`),
-  // and asserts the file contains at least one try/catch block. Whole-file
-  // presence of try/catch is sufficient evidence — per-call-site precision
-  // lives in the six todos below.
-  it.todo(
-    'every producer file under extract/ that calls a parse-like function wraps it in try/catch (ADR-055 — global scan, flips after the six per-site fixes ship)',
-  )
+  async function scaffold(files: Record<string, string>): Promise<string> {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const root = mkdtempSync(join(tmpdir(), 'adr-055-'))
+    for (const [rel, content] of Object.entries(files)) {
+      const full = join(root, rel)
+      mkdirSync(join(full, '..'), { recursive: true })
+      writeFileSync(full, content, 'utf8')
+    }
+    return root
+  }
 
-  // Per-site todos. Each flips when its call site is wrapped per the
-  // canonical pattern (try { parse } catch { console.warn(...); continue }).
-  it.todo('extract/services.ts:125 — readJson<PackageJson>(pkgPath) wrapped (ADR-055 #1)')
-  it.todo('extract/services.ts:173 — readJson<RootPackageJson>(rootPkgPath) wrapped (ADR-055 #1)')
-  it.todo('extract/aliases.ts:98 — readYaml<ComposeFile>(composePath) wrapped (ADR-055 #1)')
-  it.todo('extract/aliases.ts:149 — Dockerfile fs.readFile wrapped (ADR-055 #5)')
-  it.todo('extract/infra/docker-compose.ts:58 — readYaml<ComposeFile>(composePath) wrapped (ADR-055 #1)')
-  it.todo('extract/infra/dockerfile.ts:42 — fs.readFile wrapped (ADR-055 #5)')
+  async function scaffoldDir(files: Record<string, string>, dirs: string[]): Promise<string> {
+    const { mkdirSync } = await import('node:fs')
+    const root = await scaffold(files)
+    for (const d of dirs) mkdirSync(join(root, d), { recursive: true })
+    return root
+  }
+
+  // Global scan. Walks every file under packages/core/src/extract/, finds
+  // each parse-like call (`readJson`, `readYaml`, `parseAllDocuments`,
+  // `callsFromSource`), and asserts the file contains at least one
+  // try/catch block. Whole-file presence is sufficient evidence — per-site
+  // precision lives in the six tests below.
+  it('every producer file under extract/ that calls a parse-like function wraps it in try/catch (ADR-055 — global scan)', () => {
+    const EXTRACT_SRC = join(CORE_SRC, 'extract')
+    const PARSE_RE = /\b(readJson|readYaml|parseAllDocuments|callsFromSource)\s*[<(]/
+    const TRY_RE = /\btry\s*\{/
+    const CATCH_RE = /\bcatch\b/
+    // shared.ts defines readJson/readYaml; the helpers themselves intentionally
+    // throw (ADR-055 #4 — wrap at call site, not in shared helpers).
+    // databases/index.ts dispatches every parser.parse() through a single
+    // try/catch (lines 191-198), so the per-parser modules don't need their
+    // own — the dispatcher catches for them.
+    const VIA_DISPATCHER = new Set<string>([
+      join(EXTRACT_SRC, 'shared.ts'),
+      join(EXTRACT_SRC, 'databases/sequelize.ts'),
+      join(EXTRACT_SRC, 'databases/ormconfig.ts'),
+      join(EXTRACT_SRC, 'databases/docker-compose.ts'),
+      join(EXTRACT_SRC, 'databases/db-config-yaml.ts'),
+    ])
+    const offenders: string[] = []
+    for (const file of walkSrc(EXTRACT_SRC)) {
+      if (VIA_DISPATCHER.has(file)) continue
+      const content = readFileSync(file, 'utf8')
+      if (!PARSE_RE.test(content)) continue
+      if (!TRY_RE.test(content) || !CATCH_RE.test(content)) {
+        offenders.push(file)
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('extract/services.ts:125 — readJson<PackageJson>(pkgPath) wrapped (ADR-055 #1)', async () => {
+    const { discoverServices } = await import('../../src/extract/services.js')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const root = await scaffold({
+        // Malformed package.json — JSON.parse throws on the trailing comma + missing close.
+        'svc-broken/package.json': '{ "name": "broken", "version":,',
+        'svc-good/package.json': JSON.stringify({ name: 'svc-good', version: '1.0.0' }),
+      })
+      const services = await discoverServices(root)
+      // The broken service is skipped, the valid sibling is still discovered.
+      expect(services.map((s) => s.node.name)).toEqual(['svc-good'])
+      const warnedAboutBroken = warn.mock.calls.some(([msg]) =>
+        typeof msg === 'string' && /services skipped .*svc-broken[\\/]package\.json/.test(msg),
+      )
+      expect(warnedAboutBroken).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('extract/services.ts:173 — readJson<RootPackageJson>(rootPkgPath) wrapped (ADR-055 #1)', async () => {
+    const { discoverServices } = await import('../../src/extract/services.js')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const root = await scaffold({
+        // Malformed root package.json — extraction must fall back to the free walk.
+        'package.json': '{ "name": "root", "workspaces":',
+        'apps/api/package.json': JSON.stringify({ name: 'api', version: '1.0.0' }),
+      })
+      const services = await discoverServices(root)
+      // Root is unparseable, but the nested service is still found.
+      expect(services.map((s) => s.node.name)).toContain('api')
+      const warnedAboutRoot = warn.mock.calls.some(([msg]) =>
+        typeof msg === 'string' && /services workspaces skipped package\.json/.test(msg),
+      )
+      expect(warnedAboutRoot).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('extract/aliases.ts:98 — readYaml<ComposeFile>(composePath) wrapped (ADR-055 #1)', async () => {
+    const { addServiceAliases } = await import('../../src/extract/aliases.js')
+    const { discoverServices } = await import('../../src/extract/services.js')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const root = await scaffold({
+        'docker-compose.yml': 'services:\n  api: {\n  unterminated',
+        'package.json': JSON.stringify({ name: 'api', version: '1.0.0' }),
+      })
+      const services = await discoverServices(root)
+      const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+      for (const s of services) g.addNode(s.node.id, s.node)
+      // Phase must complete without throwing.
+      await expect(addServiceAliases(g, root, services)).resolves.toBeUndefined()
+      const warned = warn.mock.calls.some(([msg]) =>
+        typeof msg === 'string' && /aliases compose skipped docker-compose\.yml/.test(msg),
+      )
+      expect(warned).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('extract/aliases.ts:149 — Dockerfile fs.readFile wrapped (ADR-055 #5)', async () => {
+    const { addServiceAliases } = await import('../../src/extract/aliases.js')
+    const { discoverServices } = await import('../../src/extract/services.js')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      // A directory named `Dockerfile` makes fs.access succeed (so `exists` returns true)
+      // but fs.readFile throws EISDIR. Reproduces the failure mode without needing chmod.
+      const root = await scaffoldDir(
+        { 'package.json': JSON.stringify({ name: 'svc', version: '1.0.0' }) },
+        ['Dockerfile'],
+      )
+      const services = await discoverServices(root)
+      const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+      for (const s of services) g.addNode(s.node.id, s.node)
+      await expect(addServiceAliases(g, root, services)).resolves.toBeUndefined()
+      const warned = warn.mock.calls.some(([msg]) =>
+        typeof msg === 'string' && /aliases dockerfile skipped/.test(msg),
+      )
+      expect(warned).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('extract/infra/docker-compose.ts:58 — readYaml<ComposeFile>(composePath) wrapped (ADR-055 #1)', async () => {
+    const { addComposeInfra } = await import('../../src/extract/infra/docker-compose.js')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const root = await scaffold({
+        'docker-compose.yml': 'services:\n  db: {\n  unterminated',
+      })
+      const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+      const result = await addComposeInfra(g, root, [])
+      expect(result).toEqual({ nodesAdded: 0, edgesAdded: 0 })
+      const warned = warn.mock.calls.some(([msg]) =>
+        typeof msg === 'string' && /infra docker-compose skipped docker-compose\.yml/.test(msg),
+      )
+      expect(warned).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('extract/infra/dockerfile.ts:42 — fs.readFile wrapped (ADR-055 #5)', async () => {
+    const { addDockerfileRuntimes } = await import('../../src/extract/infra/dockerfile.js')
+    const { discoverServices } = await import('../../src/extract/services.js')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const root = await scaffoldDir(
+        { 'package.json': JSON.stringify({ name: 'svc', version: '1.0.0' }) },
+        ['Dockerfile'],
+      )
+      const services = await discoverServices(root)
+      const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+      for (const s of services) g.addNode(s.node.id, s.node)
+      const result = await addDockerfileRuntimes(g, services, root)
+      expect(result).toEqual({ nodesAdded: 0, edgesAdded: 0 })
+      const warned = warn.mock.calls.some(([msg]) =>
+        typeof msg === 'string' && /infra dockerfile skipped Dockerfile/.test(msg),
+      )
+      expect(warned).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
