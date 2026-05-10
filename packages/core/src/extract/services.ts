@@ -13,6 +13,7 @@ import {
   type PackageJson,
 } from './shared.js'
 import { discoverPythonService, pythonToPackage } from './python.js'
+import { computeServiceOwner, loadCodeowners } from './owners.js'
 
 const DEFAULT_SCAN_DEPTH = 5
 
@@ -219,6 +220,16 @@ export async function discoverServices(scanPath: string): Promise<DiscoveredServ
     seen.set(service.node.name, dir)
     out.push(service)
   }
+
+  // Owner extraction (ADR-054). CODEOWNERS first, package.json `author`
+  // fallback, undefined otherwise. Read once per discovery pass; the file
+  // is small and parsing it per-service would be wasteful.
+  const codeowners = await loadCodeowners(scanPath)
+  for (const service of out) {
+    const owner = await computeServiceOwner(codeowners, service.node.repoPath, service.dir)
+    if (owner !== undefined) service.node.owner = owner
+  }
+
   return out
 }
 

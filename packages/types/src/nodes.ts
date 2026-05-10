@@ -23,6 +23,7 @@ export const ServiceNodeSchema = z.object({
   version: z.string().optional(),
   dbConnectionTarget: z.string().optional(),
   repoPath: z.string().optional(),
+  owner: z.string().optional(),
   dependencies: z.record(z.string(), z.string()).optional(),
   // Hostnames OTel spans might mention for this service: compose service
   // names, k8s metadata.name (and the cluster-DNS variants), Dockerfile
