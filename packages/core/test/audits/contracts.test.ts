@@ -774,6 +774,40 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// Producer per-file parse-failure isolation (ADR-055)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Surfaced 2026-05-10 by the debugger agent's medusa-codebase session: a
+// single malformed file in a producer's per-file walk could throw inside the
+// parse call and abort the entire phase. ADR-055 codifies the rule — every
+// producer wraps each per-file parse in try/catch, warns on failure, and
+// continues. Six call sites needed the fix at ADR time. The first assertion
+// is a live regression scan; the six per-site todos flip as each call site
+// is wrapped.
+describe('Producer per-file parse-failure isolation (ADR-055)', () => {
+  // Global scan ships as `it.todo` until the six per-site fixes land. Once
+  // every site is wrapped, the implementation agent flips this from todo to
+  // live; the assertion then catches any future regression mechanically.
+  // The scan walks producer files under extract/, finds every parse-like
+  // call (`readJson`, `readYaml`, `parseAllDocuments`, `callsFromSource`),
+  // and asserts the file contains at least one try/catch block. Whole-file
+  // presence of try/catch is sufficient evidence — per-call-site precision
+  // lives in the six todos below.
+  it.todo(
+    'every producer file under extract/ that calls a parse-like function wraps it in try/catch (ADR-055 — global scan, flips after the six per-site fixes ship)',
+  )
+
+  // Per-site todos. Each flips when its call site is wrapped per the
+  // canonical pattern (try { parse } catch { console.warn(...); continue }).
+  it.todo('extract/services.ts:125 — readJson<PackageJson>(pkgPath) wrapped (ADR-055 #1)')
+  it.todo('extract/services.ts:173 — readJson<RootPackageJson>(rootPkgPath) wrapped (ADR-055 #1)')
+  it.todo('extract/aliases.ts:98 — readYaml<ComposeFile>(composePath) wrapped (ADR-055 #1)')
+  it.todo('extract/aliases.ts:149 — Dockerfile fs.readFile wrapped (ADR-055 #5)')
+  it.todo('extract/infra/docker-compose.ts:58 — readYaml<ComposeFile>(composePath) wrapped (ADR-055 #1)')
+  it.todo('extract/infra/dockerfile.ts:42 — fs.readFile wrapped (ADR-055 #5)')
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // OTel ingest contract — non-blocking, span-time, parent-cache (ADR-033)
 // ──────────────────────────────────────────────────────────────────────────
 describe('OTel ingest contract (ADR-033)', () => {
