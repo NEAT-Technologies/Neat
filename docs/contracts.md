@@ -39,6 +39,7 @@ This file is the index. Each rule has a short summary and a link to its full per
 | 27 | Web shell multi-project routing | [`contracts/web-multi-project.md`](./contracts/web-multi-project.md) | AppShell owns project state; URL → localStorage → /projects → 'default' resolution chain; project change triggers data refresh; no hardcoded project names (ADR-057) | ✅ landed (Track 1 frontend) |
 | 28 | Web shell debugging surface | [`contracts/web-debugging.md`](./contracts/web-debugging.md) | StatusBar shows daemon + SSE connection state; no silent API failures; debug panel toggleable via Ctrl+Shift+D; read-only (ADR-058) | ✅ landed (Track 1 frontend) |
 | 29 | Web UI bootstrap from neatd | [`contracts/web-bootstrap.md`](./contracts/web-bootstrap.md) | `neatd start` launches the web UI on port 6328 (T9 NEAT); `NEAT_WEB_PORT` overrides; fail-loud on collision; `@neat.is/web` joins the lockstep (ADR-059) | ✅ landed (Track 1 frontend) |
+| 30 | Divergence query | [`contracts/divergence-query.md`](./contracts/divergence-query.md) | `get_divergences` as a first-class graph operation across REST + MCP + CLI; five divergence types; read-only; derived not persisted; amends ADR-039 + ADR-050 allowlists from nine to ten (ADR-060) | ✅ landed (the thesis surface; we waited until the end) |
 
 ### Future contracts — opened at the start of each milestone
 

@@ -4715,3 +4715,46 @@ describe('Web UI bootstrap from neatd (ADR-059)', () => {
     'scripts/publish.sh dependency order includes packages/web before packages/neat.is (ADR-059 #8)',
   )
 })
+
+// ──────────────────────────────────────────────────────────────────────────
+// Divergence query — get_divergences as the thesis surface (ADR-060)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// The synthesis. Every layer in the v0.2.x sequence converged on this query;
+// we waited until the end to string it all together. Five divergence types,
+// read-only, derived (not persisted). Surfaced across REST + MCP + CLI.
+// Amends ADR-039 (nine→ten tools) and ADR-050 (nine→ten verbs) — the
+// amendments are explicit, recorded in ADR-060's "Amendments to prior
+// contracts" section.
+describe('Divergence query (ADR-060)', () => {
+  it.todo('DivergenceSchema exists in @neat.is/types with discriminated union over five variants (ADR-060 #1 — schema growth)')
+  it.todo('DivergenceResultSchema validates the wrapped { divergences, totalAffected, computedAt } shape (ADR-060 #1)')
+  it.todo('missing-observed variant parses with extracted edge + reason + recommendation (ADR-060 #5)')
+  it.todo('missing-extracted variant parses with observed edge + reason + recommendation (ADR-060 #5)')
+  it.todo('version-mismatch variant parses with extractedVersion + observedVersion + compatibility discriminator (ADR-060 #5)')
+  it.todo('host-mismatch variant parses with extractedHost + observedHost (ADR-060 #5)')
+  it.todo('compat-violation variant parses with rule reference (ADR-060 #5)')
+
+  it.todo('GET /graph/divergences is registered in api.ts (ADR-060 #2)')
+  it.todo('GET /projects/:project/graph/divergences is registered (dual-mount per ADR-026) (ADR-060 #2)')
+  it.todo('?type query param filters results to the specified divergence types (ADR-060 #2)')
+  it.todo('?minConfidence filters results to confidence >= threshold (ADR-060 #2)')
+  it.todo('?node filters results to divergences involving the specified node id (ADR-060 #2)')
+
+  it.todo('get_divergences is registered as the tenth MCP tool — extends ADR-039 allowlist (ADR-060 #3 — amendment)')
+  it.todo('get_divergences MCP response is three-part: NL summary + structured block + footer (ADR-060 #3)')
+  it.todo('neat divergences is registered as the tenth CLI verb — extends ADR-050 allowlist (ADR-060 #4 — amendment)')
+  it.todo('neat divergences --json emits machine-readable DivergenceResult (ADR-060 #4)')
+  it.todo('neat divergences --type, --min-confidence, --node, --project flags propagate to REST (ADR-060 #4)')
+
+  it.todo('computeDivergences detects missing-observed: EXTRACTED edge without OBSERVED counterpart (ADR-060 #5)')
+  it.todo('computeDivergences detects missing-extracted: OBSERVED edge without EXTRACTED counterpart (ADR-060 #5)')
+  it.todo('computeDivergences detects version-mismatch using compat.json rules (ADR-060 #5)')
+  it.todo('computeDivergences detects host-mismatch: CONFIGURED_BY host !== CONNECTS_TO target host (ADR-060 #5)')
+  it.todo('computeDivergences detects compat-violation: any compat.json rule firing against OBSERVED edge (ADR-060 #5)')
+
+  it.todo('computeDivergences sorts results by confidence descending by default (ADR-060 #6)')
+  it.todo('computeDivergences is a pure function — no I/O, no mutation, no async (ADR-060 — binding rule 4)')
+  it.todo('packages/core/src/divergences.ts contains no graph mutation calls (read-only — extends mutation-authority scan)')
+  it.todo('no divergences.ndjson persistence sidecar exists (ADR-060 — binding rule 2; derived, not persisted)')
+})
