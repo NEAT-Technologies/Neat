@@ -1708,3 +1708,123 @@ The fix is for `neatd start` to launch the web UI alongside the REST + OTel list
 - `@neat.is/web` is no longer `private: true` and is included in the umbrella's lockstep version bump (publish-system contract gets a fifth-package-becomes-six update).
 
 The publishability change touches the publish-system contract (ADR-052) and the umbrella's `dependencies` list. That's a structural change to the publish surface — flag for the implementing agent, may warrant a successor ADR amendment to ADR-052 if the lockstep set grows from five to six.
+
+## ADR-060 — `get_divergences` — the thesis surface
+
+**Date:** 2026-05-10
+**Status:** Active.
+
+**Context.** Every layer in the v0.2.x sequence was building toward this query, and we waited until the end to string it all together. The data layer (ADRs 028-031) gave provenance and edge identity. Static extraction (ADR-032) populated the EXTRACTED layer. OTel ingest (ADR-033) populated the OBSERVED layer. The coexistence rule (ADR-029 #2) refused to collapse them — *"the gap between declared intent and observed reality is the load-bearing semantic"* — and kept the disagreement legible. Traversal (ADRs 036-038) gave us walks across the resulting graph. The MCP, REST, and CLI surfaces (ADRs 039, 040, 050) gave the agent and the human ways to ask. And ADR-027 named the whole point: *"MVP success = closing a real PR on an open-source codebase, where the OBSERVED layer was load-bearing — not just static analysis a Graphify fork could match."*
+
+But the nine MCP tools (ADR-039) don't expose the thesis directly. `get_root_cause` walks back from a failing node; `get_blast_radius` walks forward from any node; `get_dependencies` and `get_observed_dependencies` each show one provenance in isolation. A consumer can compute the divergence by calling two of them and set-diffing client-side, but they have to know to do that. The query that says *"here is where what the code claims and what production observes don't match — sorted by confidence, with a recommendation per row"* doesn't exist as a first-class operation.
+
+This ADR closes that gap. `get_divergences` is the synthesis — the one query the v0.2.x layers were converging on, surfaced at the same three places every other read operation is: REST, MCP, CLI.
+
+The frontend surfaces for this query are real and several, but they belong to the v0.3.0 track. They're captured separately in `docs/frontend-divergence-suggestions.md` so the backend contract can ship now and frontend integration follows when Jed paces it.
+
+**Decision.**
+
+1. **Schema.** A `Divergence` is a typed result with five variants discriminated by `type`:
+
+   ```ts
+   type Divergence =
+     | { type: 'missing-observed', source: string, target: string, edgeType: EdgeType,
+         extracted: GraphEdge, confidence: number, reason: string, recommendation: string }
+     | { type: 'missing-extracted', source: string, target: string, edgeType: EdgeType,
+         observed: GraphEdge, confidence: number, reason: string, recommendation: string }
+     | { type: 'version-mismatch', source: string, target: string,
+         extractedVersion: string, observedVersion: string, compatibility: 'incompatible' | 'deprecated' | 'unknown',
+         confidence: number, reason: string, recommendation: string }
+     | { type: 'host-mismatch', source: string, target: string,
+         extractedHost: string, observedHost: string,
+         confidence: number, reason: string, recommendation: string }
+     | { type: 'compat-violation', source: string, target: string,
+         rule: CompatRule, observed: GraphEdge,
+         confidence: number, reason: string, recommendation: string }
+   ```
+
+   Lives in `packages/types/src/divergence.ts`. Schema growth per ADR-031 — snapshot-test catches the addition; no `persist.ts` migration needed (Divergence isn't persisted; it's computed at query time).
+
+   `DivergenceResultSchema`:
+
+   ```ts
+   { divergences: Divergence[], totalAffected: number, computedAt: string /* ISO8601 */ }
+   ```
+
+2. **REST endpoint.** `GET /graph/divergences` (dual-mounted per ADR-026 at `/graph/divergences` and `/projects/:project/graph/divergences`). Query params:
+   - `type` (optional) — comma-separated filter by `Divergence['type']`
+   - `minConfidence` (optional) — float 0.0-1.0; only divergences with confidence ≥ this
+   - `node` (optional) — node id; only divergences involving this node as source or target
+
+   Returns `DivergenceResult`. Same JSON error envelope as ADR-040.
+
+3. **MCP tool.** `get_divergences`. **Amends ADR-039's locked allowlist of nine tools to ten.** The amendment is explicit, not a quiet bend. Tool description:
+
+   > *"Returns places where what the code declares (EXTRACTED) doesn't match what production observed (OBSERVED). The single most NEAT-shaped query — the one that justifies the whole graph. Use when the user asks 'is anything weird?' or 'what does production do that the code doesn't?' or 'find me a bug' on an unfamiliar codebase. Returns divergences ranked by confidence × severity. Prefer this over `get_root_cause` when no specific node is failing."*
+
+   Routes through the REST client per ADR-039 rule. Three-part response per ADR-039:
+   - NL summary: *"Found N divergences in project X. Highest-confidence: <description>."*
+   - Structured block: serialized `DivergenceResult`
+   - Footer: `confidence: <max> · provenance: composite (EXTRACTED + OBSERVED)`
+
+4. **CLI verb.** `neat divergences`. **Amends ADR-050's locked allowlist of nine verbs to ten.** Same amendment shape as the MCP tool. Flags:
+   - `--type <type[,type]>` — filter by type
+   - `--min-confidence <float>` — filter by minimum confidence
+   - `--node <id>` — scope to divergences involving a specific node
+   - `--json` — machine-readable output per ADR-050 rule 3
+   - `--project <name>` — same scoping as the other verbs
+
+5. **The five divergence types — detection rules.** Computed against the live graph at request time. No persistence; pure derivation.
+
+   - **`missing-observed`** — there exists an EXTRACTED edge `(source, target, edgeType)` and no OBSERVED edge for the same triple. Confidence: 1.0 if any traffic at all has been observed on `source`, else 0.5 (could just be untested). Reason: *"Code claims `source` calls `target` but no production traffic observed."* Recommendation: *"Verify the code path is exercised; check feature flags / conditionals."*
+   - **`missing-extracted`** — there exists an OBSERVED edge `(source, target, edgeType)` and no EXTRACTED edge for the same triple. Confidence: cascaded from the OBSERVED edge's confidence. Reason: *"Production observed `source` calls `target` but static analysis didn't surface this call."* Recommendation: *"Likely dynamic dispatch, reflection, or coverage gap in tree-sitter extraction. Consider an `aliases` entry on `source` or filing an extractor issue."*
+   - **`version-mismatch`** — `source` is a `ServiceNode` with a declared dependency version (via `dependencies` field), and `source` has an OBSERVED edge to a `target` whose `engineVersion` is incompatible per `compat.json`. Reuses the existing compat infrastructure. Confidence: 1.0 (compat rule definitive). Recommendation pulls from compat.json's recommendation field.
+   - **`host-mismatch`** — `source` has an EXTRACTED `CONFIGURED_BY` edge pointing at a config that declares a host, AND an OBSERVED `CONNECTS_TO` edge whose target's host is different. Reason: *"Config declares host X; production connects to host Y."* Recommendation: *"Check environment-specific config overrides."*
+   - **`compat-violation`** — broader than version mismatch. Any compat.json rule that fires against an OBSERVED edge. Recommendation pulled from the rule.
+
+6. **Confidence ranking.** Divergence rows are returned in `confidence` descending order by default. Type-specific severity weights are NOT in scope — the consumer can re-rank.
+
+7. **No persistence.** Divergence is derived state, not stored state. Each query computes fresh. The graph is the source of truth; if the user wants to audit divergences over time, they snapshot the graph (existing ADR-041 mechanism). No `divergences.ndjson` sidecar.
+
+8. **No mutation.** `get_divergences` is read-only. Per the read-only discipline across MCP / REST / CLI / web (ADRs 039, 040, 050, 058), divergences observe — they don't suppress, dismiss, snooze, or otherwise mutate graph state.
+
+9. **Frontend integration is OUT of scope for this contract.** Captured in `docs/frontend-divergence-suggestions.md` as recommendations, not bindings. Jed paces v0.3.0; this contract specifies the backend surface that v0.3.0 will consume.
+
+**Authority.**
+
+- **Schema:** `packages/types/src/divergence.ts` (new).
+- **Computation:** `packages/core/src/divergences.ts` (new) — pure functions, read-only, no mutation. Operates on a `NeatGraph` reference.
+- **REST surface:** new endpoint in `packages/core/src/api.ts`, dual-mounted per ADR-026.
+- **MCP surface:** new tool in `packages/mcp/src/index.ts`, routed through the REST client.
+- **CLI surface:** new verb in `packages/core/src/cli.ts`, plus client implementation in `packages/core/src/cli-client.ts`.
+
+**Enforcement.** `it.todo` block in `contracts.test.ts` for ADR-060. Regression assertions:
+
+- `DivergenceSchema` exists in `@neat.is/types` with the five-variant discriminated union and parses each variant cleanly.
+- `GET /graph/divergences` is registered and dual-mounted per ADR-026.
+- `get_divergences` is registered as the tenth MCP tool (amends the ADR-039 allowlist scan).
+- `neat divergences` is registered as the tenth CLI verb (amends the ADR-050 allowlist scan).
+- For each of the five divergence types: a fixture graph triggers the type, the query returns the expected divergence with correct schema, confidence, recommendation.
+- Read-only: `divergences.ts` contains no graph mutation calls.
+- Filtering works: `?type=`, `?minConfidence=`, `?node=` each narrow the result correctly.
+
+**Amendments to prior contracts.**
+
+This ADR explicitly amends two locked allowlists:
+
+- **ADR-039** — nine MCP tools → ten. The ADR-039 contract test (`every server.tool registration has a name from the locked allowlist`) gets the tenth name added.
+- **ADR-050** — nine CLI verbs → ten. The ADR-050 contract test (`every MCP tool has a corresponding neat <verb>`) gets the tenth pairing added.
+
+Both amendments are documented here, not in ADR-039 / ADR-050. The original ADRs stay frozen as the historical record; this ADR records the change. Future ADRs use the same pattern when expanding locked allowlists — explicit reference, not quiet drift.
+
+**Why we waited.** Every component of `get_divergences` existed before this ADR — the data, the schema, the coexistence rule, the traversal primitives, the surfaces. The reason we didn't ship this query at v0.2.4 (when MCP first locked its allowlist) was the layers underneath weren't yet stable. ADR-029's edge-id wire format had to lock before "match EXTRACTED to OBSERVED" was well-defined. ADR-033's OTel ingest had to land before we had OBSERVED edges to compare against EXTRACTED in any volume. ADR-052's publish system had to work before the operator could actually install NEAT against an unfamiliar codebase. The thesis surface only made sense once every underneath layer was locked.
+
+The MVP-success-PR experiment (ADR-027) was the gate forcing the synthesis. The operator running NEAT against medusa for 24-48h needs *one* query that says *"here are the divergences."* This ADR is that query.
+
+**What we're NOT doing.**
+
+- **Divergence acknowledgement model.** No "snooze for 7 days", no "this divergence is intentional, mute it." Divergences are derived from the graph; if the graph changes, divergences disappear. If the user wants to suppress noise, they fix the underlying data (add an EXTRACTED edge to close a `missing-extracted`, etc.) or filter at the query layer.
+- **Custom divergence rules.** The five built-in types are the lock. User-defined divergence rules would extend the policy schema (ADR-042) and would be a successor ADR — probably called when real-user signal demands "alert me when divergence type X involving service Y appears."
+- **Cross-project divergences.** Per ADR-026, each project is its own graph. Divergence list is per-project. Cross-codebase joins remain explicitly out of MVP.
+- **Persistence of divergence history.** No `divergences.ndjson` sidecar. The graph snapshot is the audit trail; if the operator wants divergence history, they diff snapshot N against snapshot N+1.
+- **SSE push for new divergences.** ADR-051's locked taxonomy is eight types; expanding to nine for `divergence-detected` would be a successor ADR if Jed's track surfaces the demand. For MVP, polling `/graph/divergences` works.
