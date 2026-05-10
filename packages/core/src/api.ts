@@ -11,7 +11,9 @@ import type {
   Policy,
   PolicyViolation,
 } from '@neat.is/types'
-import { PoliciesCheckBodySchema, PolicySeveritySchema } from '@neat.is/types'
+import { DivergenceTypeSchema, PoliciesCheckBodySchema, PolicySeveritySchema } from '@neat.is/types'
+import type { DivergenceType } from '@neat.is/types'
+import { computeDivergences } from './divergences.js'
 import {
   evaluateAllPolicies,
   loadPolicyFile,
@@ -214,6 +216,51 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
       })
     }
     return getTransitiveDependencies(proj.graph, id, depth)
+  })
+
+  // Divergence query — the thesis surface (ADR-060). Read-only, derived,
+  // dual-mounted via registerRoutes. Query params filter the result set;
+  // body shape is DivergenceResult.
+  scope.get<{
+    Params: { project?: string }
+    Querystring: { type?: string; minConfidence?: string; node?: string }
+  }>('/graph/divergences', async (req, reply) => {
+    const proj = resolveProject(registry, req, reply)
+    if (!proj) return
+    let typeFilter: Set<DivergenceType> | undefined
+    if (req.query.type) {
+      const candidates = req.query.type
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+      const parsed: DivergenceType[] = []
+      for (const c of candidates) {
+        const r = DivergenceTypeSchema.safeParse(c)
+        if (!r.success) {
+          return reply.code(400).send({
+            error: `unknown divergence type "${c}"`,
+            allowed: DivergenceTypeSchema.options,
+          })
+        }
+        parsed.push(r.data)
+      }
+      typeFilter = new Set(parsed)
+    }
+    let minConfidence: number | undefined
+    if (req.query.minConfidence !== undefined) {
+      const n = Number(req.query.minConfidence)
+      if (!Number.isFinite(n) || n < 0 || n > 1) {
+        return reply.code(400).send({
+          error: 'minConfidence must be a number in [0, 1]',
+        })
+      }
+      minConfidence = n
+    }
+    return computeDivergences(proj.graph, {
+      ...(typeFilter ? { type: typeFilter } : {}),
+      ...(minConfidence !== undefined ? { minConfidence } : {}),
+      ...(req.query.node ? { node: req.query.node } : {}),
+    })
   })
 
   scope.get<{ Params: { project?: string } }>('/incidents', async (req, reply) => {
