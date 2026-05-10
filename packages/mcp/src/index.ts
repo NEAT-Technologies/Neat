@@ -6,10 +6,12 @@ import { z } from 'zod'
 import { CheckPoliciesScopeSchema, HypotheticalActionSchema } from '@neat.is/types'
 import { createHttpClient } from './client.js'
 import { registerResources } from './resources.js'
+import { DivergenceTypeSchema } from '@neat.is/types'
 import {
   checkPolicies,
   getBlastRadius,
   getDependencies,
+  getDivergences,
   getGraphDiff,
   getIncidentHistory,
   getObservedDependencies,
@@ -154,6 +156,32 @@ server.tool(
     project: projectField,
   },
   async (input) => getRecentStaleEdges(client, { ...input, project: projectFor(input) }),
+)
+
+server.tool(
+  'get_divergences',
+  "Returns places where what the code declares (EXTRACTED) doesn't match what production observed (OBSERVED). The single most NEAT-shaped query — the one that justifies the whole graph. Use when the user asks 'is anything weird?' or 'what does production do that the code doesn't?' or 'find me a bug' on an unfamiliar codebase. Returns divergences ranked by confidence × severity. Prefer this over `get_root_cause` when no specific node is failing.",
+  {
+    type: z
+      .array(DivergenceTypeSchema)
+      .optional()
+      .describe(
+        'Filter by divergence type. One or more of: missing-observed, missing-extracted, version-mismatch, host-mismatch, compat-violation. Omit for all.',
+      ),
+    minConfidence: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe('Drop divergences below this confidence threshold (0.0 - 1.0).'),
+    node: z
+      .string()
+      .optional()
+      .describe('Scope to divergences involving this node id (as source or target).'),
+    project: projectField,
+  },
+  async (input) =>
+    getDivergences(client, { ...input, project: projectFor(input) }),
 )
 
 server.tool(
