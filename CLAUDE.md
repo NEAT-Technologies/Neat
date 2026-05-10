@@ -30,7 +30,7 @@ A generic `Dockerfile` at the repo root builds the demo-free image. Mount your c
 **Two parallel tracks now share `main`:**
 
 - **Track 1 — v0.3.0 Frontend (Jed).** Builds against the stable v0.1.2 API. Doesn't gate the MVP success criterion; this track delivers investor-legibility. Issues #28-#31 + #106-#108.
-- **Track 2 — v0.2.x Engineering (Cem + Kurt).** Three releases, sequential. v0.2.0 ships first.
+- **Track 2 — v0.2.x Engineering (Cem + Kurt).** Seven milestones, sequential (v0.2.0 through v0.2.5 plus v0.2.8). Each opens with the contract batch governing its layer, then ships the rebuild + cleanup against the locked contract. Closed at v0.2.8 (2026-05-09); ADR-027 MVP-success-PR experiment is the next gate.
 
 `docs/milestones.md` has the full verification gates and the "Pick up here" handoff. Always check it before starting any work — it's the source of truth for what's done and what's next.
 

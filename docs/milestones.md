@@ -19,7 +19,7 @@ Source of truth for sprint status. Update this file at the end of every session.
 **Two parallel tracks share `main`:**
 
 - **Track 1 — v0.3.0 Frontend (Jed).** Builds against the stable v0.1.2 API. Issues #28-#31 + #106-#108. Doesn't gate the MVP success criterion.
-- **Track 2 — v0.2.x Engineering (Cem + Kurt).** Six releases, sequential. Each milestone owns one layer: it opens with the contract batch that governs that layer, then ships the rebuild + cleanup against the locked contract. **Don't ship cleanup work against an unlocked contract** — that's what produced the v0.1.x drift the verification pass surfaced. Full v0.2.x sequencing in `docs/plans/2026-05-04-v0.2.x-sequencing.md`.
+- **Track 2 — v0.2.x Engineering (Cem + Kurt).** Seven milestones, sequential (v0.2.0 through v0.2.5 plus v0.2.8 — originally numbered v0.2.6, renamed per ADR-053 after publish-fix releases consumed the 0.2.6 / 0.2.7 npm slots). Each opens with the contract batch that governs that layer, then ships the rebuild + cleanup against the locked contract. **Don't ship cleanup work against an unlocked contract** — that's what produced the v0.1.x drift the verification pass surfaced. Full v0.2.x sequencing in `docs/plans/2026-05-04-v0.2.x-sequencing.md`.
 
   - **v0.2.0 — Sunrise** — data-layer foundation. ADRs 028-031 + contract framework + audit verification + AUDIT-DRIFT sync. Pending merge in PRs #146 + #147 + the doc-refresh PR.
   - **v0.2.1 — Tree-sitter rebuild.** Opens with contract #5 (static extraction). Ships #140, #141, #142, #145.
