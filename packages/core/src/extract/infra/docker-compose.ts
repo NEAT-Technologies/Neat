@@ -55,7 +55,15 @@ export async function addComposeInfra(
   }
   if (!composePath) return { nodesAdded, edgesAdded }
 
-  const compose = await readYaml<ComposeFile>(composePath)
+  let compose: ComposeFile
+  try {
+    compose = await readYaml<ComposeFile>(composePath)
+  } catch (err) {
+    console.warn(
+      `[neat] infra docker-compose skipped ${path.relative(scanPath, composePath)}: ${(err as Error).message}`,
+    )
+    return { nodesAdded, edgesAdded }
+  }
   if (!compose?.services) return { nodesAdded, edgesAdded }
   const evidenceFile = path.relative(scanPath, composePath).split(path.sep).join('/')
 
