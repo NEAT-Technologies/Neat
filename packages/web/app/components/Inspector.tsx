@@ -54,11 +54,12 @@ interface EdgeRow {
 }
 
 interface InspectorProps {
+  project: string
   selectedNodeId: string | null
   graphData: GraphData | null
 }
 
-export function Inspector({ selectedNodeId, graphData }: InspectorProps) {
+export function Inspector({ project, selectedNodeId, graphData }: InspectorProps) {
   const [node, setNode] = useState<GraphNode | null>(null)
   const [rootCause, setRootCause] = useState<RootCauseResult | null>(null)
   const [activeTab, setActiveTab] = useState<'inspect' | 'edges'>('inspect')
@@ -73,22 +74,24 @@ export function Inspector({ selectedNodeId, graphData }: InspectorProps) {
     errDelta: (Math.random() * 0.3).toFixed(2),
   }), [selectedNodeId])
 
+  // ADR-057 #3 — re-fetch when project or selection changes.
   useEffect(() => {
     if (!selectedNodeId) {
       setNode(null)
       setRootCause(null)
       return
     }
-    fetch(`/api/graph/node/${encodeURIComponent(selectedNodeId)}`)
+    const proj = `?project=${encodeURIComponent(project)}`
+    fetch(`/api/graph/node/${encodeURIComponent(selectedNodeId)}${proj}`)
       .then((r) => r.json())
       .then((d: { node: GraphNode }) => setNode(d.node))
       .catch(() => {})
 
-    fetch(`/api/graph/root-cause/${encodeURIComponent(selectedNodeId)}`)
+    fetch(`/api/graph/root-cause/${encodeURIComponent(selectedNodeId)}${proj}`)
       .then((r) => r.json())
       .then((d: RootCauseResult) => setRootCause(d.rootCauseNode ? d : null))
       .catch(() => {})
-  }, [selectedNodeId])
+  }, [selectedNodeId, project])
 
   if (!selectedNodeId || !node) {
     return (
@@ -319,6 +322,7 @@ export function Inspector({ selectedNodeId, graphData }: InspectorProps) {
             </ul>
           </section>
         )}
+
       </div>
     </aside>
   )

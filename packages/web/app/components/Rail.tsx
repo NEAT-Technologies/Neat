@@ -3,12 +3,18 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
-export function Rail() {
+interface RailProps {
+  project: string
+}
+
+export function Rail({ project }: RailProps) {
   const [blastBadge, setBlastBadge] = useState(0)
   const [incidentBadge, setIncidentBadge] = useState(0)
 
+  // ADR-057 #3 — re-fetch on project change.
   useEffect(() => {
-    fetch('/api/policies/violations')
+    const proj = `?project=${encodeURIComponent(project)}`
+    fetch(`/api/policies/violations${proj}`)
       .then((r) => r.json())
       .then((d: { violations: unknown[] }) => {
         if (Array.isArray(d.violations)) {
@@ -17,13 +23,13 @@ export function Rail() {
       })
       .catch(() => {})
 
-    fetch('/api/incidents?limit=1')
+    fetch(`/api/incidents?limit=1&project=${encodeURIComponent(project)}`)
       .then((r) => r.json())
       .then((d: { total: number }) => {
         if (typeof d.total === 'number') setIncidentBadge(Math.min(d.total, 9))
       })
       .catch(() => {})
-  }, [])
+  }, [project])
 
   return (
     <nav className="rail">

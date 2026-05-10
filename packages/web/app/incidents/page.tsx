@@ -32,8 +32,22 @@ export default function IncidentsPage() {
   const [error, setError] = useState<string | null>(null)
   const [openRow, setOpenRow] = useState<string | null>(null)
 
+  // ADR-057 #2 — page reads project from URL (deep-linkable) or localStorage,
+  // matching AppShell's resolution chain so the incidents view stays in sync
+  // with whichever project the operator last selected on the graph view.
+  const [project, setProject] = useState<string>('default')
   useEffect(() => {
-    fetch('/api/incidents?limit=100')
+    if (typeof window === 'undefined') return
+    const fromUrl = new URLSearchParams(window.location.search).get('project')
+    let stored: string | null = null
+    try { stored = window.localStorage.getItem('neat:lastProject') } catch { /* noop */ }
+    setProject(fromUrl || stored || 'default')
+  }, [])
+
+  // ADR-057 #3 — re-fetch when project changes.
+  useEffect(() => {
+    setLoading(true)
+    fetch(`/api/incidents?limit=100&project=${encodeURIComponent(project)}`)
       .then((r) => r.json())
       .then((d: IncidentsResponse) => {
         setData(d)
@@ -43,7 +57,7 @@ export default function IncidentsPage() {
         setError(e.message)
         setLoading(false)
       })
-  }, [])
+  }, [project])
 
   return (
     <div style={{ background: 'var(--ink-0)', minHeight: '100vh' }}>
@@ -99,7 +113,7 @@ export default function IncidentsPage() {
                       title={evt.stacktrace ? (isOpen ? 'Collapse stacktrace' : 'Expand stacktrace') : undefined}
                     >
                       <td className="td-node">
-                        <Link href={`/?node=${encodeURIComponent(evt.nodeId)}`} className="incidents-node-link">
+                        <Link href={`/?node=${encodeURIComponent(evt.nodeId)}&project=${encodeURIComponent(project)}`} className="incidents-node-link">
                           {evt.nodeId}
                         </Link>
                       </td>

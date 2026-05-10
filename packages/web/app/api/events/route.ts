@@ -1,9 +1,14 @@
 import { NextRequest } from 'next/server'
 import { CORE_URL } from '../../../lib/proxy'
 
-export async function GET(_request: NextRequest): Promise<Response> {
+// ADR-057 #5 — SSE stream is project-scoped per ADR-026 + ADR-051.
+export async function GET(request: NextRequest): Promise<Response> {
+  const project = new URL(request.url).searchParams.get('project') ?? ''
+  const base = project && project !== 'default'
+    ? `/projects/${encodeURIComponent(project)}/events`
+    : '/events'
   try {
-    const upstream = await fetch(`${CORE_URL}/events`, {
+    const upstream = await fetch(`${CORE_URL}${base}`, {
       cache: 'no-store',
       headers: { Accept: 'text/event-stream' },
     })
