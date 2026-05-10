@@ -1,8 +1,30 @@
 {
   "name": "@neat.is/web",
-  "version": "0.2.0",
-  "private": true,
+  "version": "0.2.9",
   "description": "NEAT web shell — minimal Next.js app fronting the core API",
+  "license": "BUSL-1.1",
+  "homepage": "https://neat.is",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NEAT-Technologies/Neat.git",
+    "directory": "packages/web"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "app",
+    "lib",
+    "public",
+    "next.config.js",
+    "tsconfig.json",
+    "postcss.config.js",
+    "tailwind.config.js",
+    "README.md"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,7 +34,7 @@
     "clean": "rm -rf .next .turbo"
   },
   "dependencies": {
-    "@neat.is/types": "*",
+    "@neat.is/types": "^0.2.9",
     "cytoscape": "^3.33.3",
     "next": "14.2.35",
     "react": "^18",

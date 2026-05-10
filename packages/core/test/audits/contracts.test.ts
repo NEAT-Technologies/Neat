@@ -4456,7 +4456,9 @@ describe('Publish system contract (ADR-052)', () => {
   // users. This block locks the failure shape so it can't recur.
 
   const REPO_ROOT = join(__dirname, '../../../..')
-  const PUBLISHABLE_PACKAGES = ['types', 'core', 'mcp', 'claude-skill', 'neat.is'] as const
+  // ADR-059 grew the lockstep from five to six packages — `@neat.is/web` is now
+  // shipped alongside the rest so `npm install -g neat.is` pulls in the UI.
+  const PUBLISHABLE_PACKAGES = ['types', 'core', 'mcp', 'claude-skill', 'web', 'neat.is'] as const
 
   function readPackageJson(pkgDirName: string): Record<string, unknown> {
     return JSON.parse(
@@ -4464,7 +4466,7 @@ describe('Publish system contract (ADR-052)', () => {
     ) as Record<string, unknown>
   }
 
-  it('all five publishable packages share the same version (ADR-052 #2 — lockstep)', () => {
+  it('all six publishable packages share the same version (ADR-052 #2 — lockstep)', () => {
     const versions = PUBLISHABLE_PACKAGES.map((p) => readPackageJson(p).version as string)
     const unique = [...new Set(versions)]
     expect(unique).toHaveLength(1)
@@ -4479,10 +4481,14 @@ describe('Publish system contract (ADR-052)', () => {
     const mcp = readPackageJson('mcp') as { dependencies: Record<string, string> }
     expect(mcp.dependencies['@neat.is/types']).toBe(`^${version}`)
 
+    const web = readPackageJson('web') as { dependencies: Record<string, string> }
+    expect(web.dependencies['@neat.is/types']).toBe(`^${version}`)
+
     const umbrella = readPackageJson('neat.is') as { dependencies: Record<string, string> }
     expect(umbrella.dependencies['@neat.is/core']).toBe(`^${version}`)
     expect(umbrella.dependencies['@neat.is/mcp']).toBe(`^${version}`)
     expect(umbrella.dependencies['@neat.is/claude-skill']).toBe(`^${version}`)
+    expect(umbrella.dependencies['@neat.is/web']).toBe(`^${version}`)
   })
 
   it('every publishable package declares engines.node: ">=20" (ADR-052 #8)', () => {
@@ -4684,36 +4690,86 @@ describe('Web shell debugging surface (ADR-058)', () => {
 // overrides. Fail loudly on collision. @neat.is/web joins the publish-system
 // lockstep — six packages instead of five going forward.
 describe('Web UI bootstrap from neatd (ADR-059)', () => {
-  it.todo(
-    'neatd.ts spawns a web UI child process during cmdStart (ADR-059 #1)',
-  )
-  it.todo(
-    'web UI port defaults to 6328 (NEAT in T9 keypad) (ADR-059 #2)',
-  )
-  it.todo(
-    'NEAT_WEB_PORT env var overrides the default port (ADR-059 #3)',
-  )
-  it.todo(
-    'port collision aborts neatd with a clear error and non-zero exit (ADR-059 #4)',
-  )
-  it.todo(
-    'spawned web UI inherits NEAT_API_URL=http://localhost:${restPort} (ADR-059 #6)',
-  )
-  it.todo(
-    'neatd stop / SIGTERM kills the spawned web UI process (no orphans) (ADR-059 #7)',
-  )
-  it.todo(
-    '@neat.is/web is no longer private:true and version-matches the lockstep (ADR-059 #8)',
-  )
-  it.todo(
-    'neat.is umbrella package.json includes @neat.is/web in dependencies (ADR-059 #8)',
-  )
-  it.todo(
-    '.github/workflows/publish.yml dependency order includes @neat.is/web before neat.is (ADR-059 #8)',
-  )
-  it.todo(
-    'scripts/publish.sh dependency order includes packages/web before packages/neat.is (ADR-059 #8)',
-  )
+  const REPO_ROOT = join(__dirname, '../../../..')
+  const NEATD = join(REPO_ROOT, 'packages/core/src/neatd.ts')
+  const WEB_SPAWN = join(REPO_ROOT, 'packages/core/src/web-spawn.ts')
+
+  function readSrc(p: string): string {
+    return readFileSync(p, 'utf8')
+  }
+  function readPkg(name: string): Record<string, unknown> {
+    return JSON.parse(readFileSync(join(REPO_ROOT, 'packages', name, 'package.json'), 'utf8'))
+  }
+
+  it('neatd.ts spawns a web UI child process during cmdStart (ADR-059 #1)', () => {
+    const src = readSrc(NEATD)
+    expect(src).toMatch(/spawnWebUI\(/)
+    const cmdStartIdx = src.indexOf('async function cmdStart')
+    const spawnIdx = src.indexOf('spawnWebUI(', cmdStartIdx)
+    expect(spawnIdx).toBeGreaterThan(cmdStartIdx)
+  })
+
+  it('web UI port defaults to 6328 (NEAT in T9 keypad) (ADR-059 #2)', () => {
+    expect(readSrc(WEB_SPAWN)).toMatch(/DEFAULT_WEB_PORT\s*=\s*6328/)
+  })
+
+  it('NEAT_WEB_PORT env var overrides the default port (ADR-059 #3)', () => {
+    const src = readSrc(WEB_SPAWN)
+    expect(src).toMatch(/process\.env\.NEAT_WEB_PORT/)
+    expect(src).toMatch(/NEAT_WEB_PORT[\s\S]*?DEFAULT_WEB_PORT/)
+  })
+
+  it('port collision aborts neatd with a clear error and non-zero exit (ADR-059 #4)', () => {
+    const spawn = readSrc(WEB_SPAWN)
+    expect(spawn).toMatch(/EADDRINUSE/)
+    expect(spawn).toMatch(/web UI port [^]*in use/)
+    const neatd = readSrc(NEATD)
+    expect(neatd).toMatch(/process\.exit\(3\)/)
+  })
+
+  it('spawned web UI inherits NEAT_API_URL=http://localhost:${restPort} (ADR-059 #6)', () => {
+    const src = readSrc(WEB_SPAWN)
+    expect(src).toMatch(/NEAT_API_URL/)
+    expect(src).toMatch(/http:\/\/localhost:\$\{restPort\}/)
+    expect(src).toMatch(/process\.env\.NEAT_API_URL\s*\?\?/)
+  })
+
+  it('neatd stop / SIGTERM kills the spawned web UI process (no orphans) (ADR-059 #7)', () => {
+    const neatd = readSrc(NEATD)
+    expect(neatd).toMatch(/web\s*\?\s*web\.stop\(\)/)
+    const spawn = readSrc(WEB_SPAWN)
+    expect(spawn).toMatch(/child\.kill\(['"]SIGTERM['"]\)/)
+    expect(spawn).toMatch(/SIGKILL/)
+  })
+
+  it('@neat.is/web is no longer private:true and version-matches the lockstep (ADR-059 #8)', () => {
+    const web = readPkg('web') as { private?: boolean; version: string; publishConfig?: Record<string, unknown> }
+    expect(web.private).not.toBe(true)
+    expect(web.publishConfig).toBeTruthy()
+    const types = readPkg('types') as { version: string }
+    expect(web.version).toBe(types.version)
+  })
+
+  it('neat.is umbrella package.json includes @neat.is/web in dependencies (ADR-059 #8)', () => {
+    const umbrella = readPkg('neat.is') as { dependencies: Record<string, string> }
+    expect(umbrella.dependencies['@neat.is/web']).toBeTruthy()
+  })
+
+  it('.github/workflows/publish.yml dependency order includes @neat.is/web before neat.is (ADR-059 #8)', () => {
+    const yml = readSrc(join(REPO_ROOT, '.github/workflows/publish.yml'))
+    const webIdx = yml.indexOf('publish_one "packages/web"')
+    const umbrellaIdx = yml.indexOf('publish_one "packages/neat.is"')
+    expect(webIdx).toBeGreaterThan(-1)
+    expect(umbrellaIdx).toBeGreaterThan(webIdx)
+  })
+
+  it('scripts/publish.sh dependency order includes packages/web before packages/neat.is (ADR-059 #8)', () => {
+    const sh = readSrc(join(REPO_ROOT, 'scripts/publish.sh'))
+    const webIdx = sh.indexOf('"packages/web"')
+    const umbrellaIdx = sh.indexOf('"packages/neat.is"')
+    expect(webIdx).toBeGreaterThan(-1)
+    expect(umbrellaIdx).toBeGreaterThan(webIdx)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
