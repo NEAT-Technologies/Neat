@@ -1,5 +1,5 @@
-import { GraphView } from './components/GraphView'
+import { AppShell } from './components/AppShell'
 
 export default function Home(): JSX.Element {
-  return <GraphView />
+  return <AppShell />
 }
