@@ -25,6 +25,7 @@ import {
   type InstallPlan,
   type PatchSection,
 } from './installers/index.js'
+import { DivergenceTypeSchema, type DivergenceType } from '@neat.is/types'
 import {
   createHttpClient,
   exitCodeForError,
@@ -34,6 +35,7 @@ import {
   runBlastRadius,
   runDependencies,
   runDiff,
+  runDivergences,
   runIncidents,
   runObservedDependencies,
   runPolicies,
@@ -117,6 +119,9 @@ function usage(): void {
   console.log('  policies                         Current policy violations.')
   console.log('                                   Flags: --node <id>, --hypothetical-action <json>')
   console.log('                                   example: neat policies --node service:<name> --json')
+  console.log('  divergences                      Where code (EXTRACTED) and production (OBSERVED) disagree.')
+  console.log('                                   Flags: --type <list>, --min-confidence <0..1>, --node <id>')
+  console.log('                                   example: neat divergences --min-confidence 0.7')
   console.log('')
   console.log('flags:')
   console.log('  --project <name>   Name the project this command targets. Default: "default".')
@@ -151,6 +156,8 @@ interface ParsedArgs {
   against: string | null
   errorId: string | null
   hypotheticalAction: string | null
+  type: string | null
+  minConfidence: number | null
   positional: string[]
 }
 
@@ -168,6 +175,8 @@ const STRING_FLAGS = [
   ['--against', 'against'],
   ['--error-id', 'errorId'],
   ['--hypothetical-action', 'hypotheticalAction'],
+  ['--type', 'type'],
+  ['--min-confidence', 'minConfidence'],
 ] as const
 
 function parseArgs(rest: string[]): ParsedArgs {
@@ -187,6 +196,8 @@ function parseArgs(rest: string[]): ParsedArgs {
     against: null,
     errorId: null,
     hypotheticalAction: null,
+    type: null,
+    minConfidence: null,
     positional: [],
   }
   for (let i = 0; i < rest.length; i++) {
@@ -238,6 +249,15 @@ function assignFlag(out: ParsedArgs, field: (typeof STRING_FLAGS)[number][1], va
       process.exit(2)
     }
     out[field] = n
+    return
+  }
+  if (field === 'minConfidence') {
+    const n = Number(value)
+    if (!Number.isFinite(n) || n < 0 || n > 1) {
+      console.error('neat: --min-confidence must be a number in [0, 1]')
+      process.exit(2)
+    }
+    out.minConfidence = n
     return
   }
   // String fields.
@@ -723,6 +743,8 @@ export const QUERY_VERBS: Set<string> = new Set([
   'diff',
   'stale-edges',
   'policies',
+  // Tenth verb (ADR-060) — amends ADR-050's locked allowlist of nine.
+  'divergences',
 ])
 
 // ADR-050 #2: --project flag → NEAT_PROJECT env → undefined (server's
@@ -852,6 +874,34 @@ export async function runQueryVerb(cmd: string, parsed: ParsedArgs): Promise<num
       work = runPolicies(client, {
         ...(parsed.node ? { nodeId: parsed.node } : {}),
         ...(hypothetical ? { hypotheticalAction: hypothetical } : {}),
+        ...(project ? { project } : {}),
+      })
+      break
+    }
+    case 'divergences': {
+      let typeFilter: DivergenceType[] | undefined
+      if (parsed.type) {
+        const parts = parsed.type
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+        const out: DivergenceType[] = []
+        for (const p of parts) {
+          const r = DivergenceTypeSchema.safeParse(p)
+          if (!r.success) {
+            console.error(
+              `neat divergences: unknown --type "${p}". allowed: ${DivergenceTypeSchema.options.join(', ')}`,
+            )
+            return 2
+          }
+          out.push(r.data)
+        }
+        typeFilter = out
+      }
+      work = runDivergences(client, {
+        ...(typeFilter ? { type: typeFilter } : {}),
+        ...(parsed.minConfidence !== null ? { minConfidence: parsed.minConfidence } : {}),
+        ...(parsed.node ? { node: parsed.node } : {}),
         ...(project ? { project } : {}),
       })
       break
