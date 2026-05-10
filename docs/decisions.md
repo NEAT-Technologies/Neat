@@ -1574,3 +1574,137 @@ The scan is regex-based and approximate but sufficient for the failure shape —
 - **Size pre-filter on parse inputs** (debugger agent item 4). Skipping files > 1 MB before parse would reduce log noise from minified bundles. Optional, not required for correctness.
 - **Asynchronous-error escalation.** A producer can't `process.exit(1)` on a parse failure even if every file fails. The phase must always complete, even with zero successful parses. Logging volume from a `node_modules`-leaking scan is a separate UX concern.
 - **Sentry-style structured error reporting.** Plain `console.warn` is sufficient for MVP. Wrap-at-call-site keeps the message contextual; future telemetry can hook into `console.warn` without changing the contract.
+
+## ADR-056 — Web shell completeness
+
+**Date:** 2026-05-10
+**Status:** Active.
+
+**Context.** Jed's v0.3.0 frontend track has been pushing `packages/web/` to main since the v0.2.5 close. The audit at `packages/web/audit/09-gaps-and-stubs.md` self-identifies thirteen UI elements that render visibly but do nothing on click — eleven buttons in TopBar / Rail, two Inspector tabs. Every one of them is a credibility leak: a user clicks the button, expecting the action, gets silence, concludes NEAT is half-built.
+
+The frontend audit is comprehensive and Jed's track is independent (Track 1 per CLAUDE.md), but the contract surface didn't cover it. Permanent stub UI is its own failure mode — the kind that bites the MVP-success-PR experiment when the OSS user clicks "Time travel" expecting a panel and gets nothing.
+
+**Decision.**
+
+1. **No permanent stub UI.** Every interactive element rendered to the user — button, tab, link, menu item, keyboard shortcut — must either:
+   - **Map to a real action** (an `onClick` / `onKeyDown` handler that produces an observable change in the UI or backend state), OR
+   - **Be explicitly disabled** with visual affordance: `disabled` attribute set, lower opacity, and a tooltip / badge ("Coming soon", "Not yet available", "v0.3.x") so the user doesn't perceive a malfunction.
+2. **No `onClick={() => {}}` or `onClick={undefined}` on rendered components.** Empty handlers are the most common stub shape and the most disorienting for users.
+3. **Component uniqueness.** No two files in `packages/web/app/components/` may export a component with the same name. If a component needs extension (filter view, grouped variant, etc.), extend the existing one — don't fork. Helps prevent the `GraphView.tsx` / `GraphCanvas.tsx` confusion that already happened (the old `GraphView.tsx` was deleted in a recent commit; the contract codifies "don't do this again").
+4. **Inventory tied to the audit doc.** `packages/web/audit/09-gaps-and-stubs.md` is the canonical list of known stubs. As stubs are removed or wired, the audit doc updates. The contract test reads the audit doc and asserts no stub appears in code without a matching entry — drift in either direction is a finding.
+
+**Authority.** `packages/web/app/components/**` (component library), `packages/web/app/**/page.tsx` (route surfaces), `packages/web/audit/09-gaps-and-stubs.md` (the canonical inventory). Web track is Jed's; this contract sets binding rules but doesn't dictate visual or interaction design.
+
+**Enforcement.** `it.todo` block in `contracts.test.ts` for ADR-056. Regression scans:
+
+- No empty `onClick={() => {}}` or `onClick={undefined}` in `packages/web/app/components/**`.
+- No two files under `packages/web/app/components/` export `default` components with the same name.
+- Every entry in `audit/09-gaps-and-stubs.md`'s "Stub buttons" table corresponds to a button in source code (audit-vs-code consistency).
+
+`it.todo` initially because all thirteen stubs from the audit currently exist in source. As they wire or get explicitly disabled, the corresponding todos flip to live, and the global empty-handler scan flips last.
+
+## ADR-057 — Web shell multi-project routing
+
+**Date:** 2026-05-10
+**Status:** Active.
+
+**Context.** When NEAT runs against an unfamiliar codebase (e.g., medusa, the canonical MVP-success-PR target), the web shell must show *that codebase's* graph, not the default project's. Jed's audit already flags this as an open gap: *"Multi-project — graph not re-fetched on project change."* The current `AppShell.tsx` initializes `project = 'default'` and accepts a setter, but the downstream components (GraphCanvas, Inspector, StatusBar, the proxy routes) don't all re-fetch when the project changes.
+
+This is the runtime corollary of ADR-026 (multi-project dual-mount). The backend already supports it; the frontend has to honor it consistently.
+
+**Decision.**
+
+1. **Single source of truth.** `AppShell.tsx` owns the `project` state. Every component that fetches backend data reads it as a prop and re-fetches on change.
+2. **Initial project resolution chain (in order):**
+   1. URL query param: `?project=X`
+   2. `localStorage.getItem('neat:lastProject')` — survives reload
+   3. First entry from `GET /projects` if registry is non-empty
+   4. `'default'` fallback
+3. **Project change triggers data refresh.** When `project` changes (user picks from switcher, URL updates, etc.), every component that depends on it re-fetches via its own `useEffect([project])` hook. No stale data carries over.
+4. **API proxy routes accept `project` consistently.** All routes under `packages/web/app/api/` accept `?project=X` or path-scoped `/projects/:project/X` and forward to the matching backend endpoint per ADR-026. New routes use the helper from day one (proxy.ts pattern).
+5. **TopBar surfaces the active project visibly.** The user always knows which codebase NEAT is currently graphing — no ambiguity, no implicit defaults.
+6. **Project switcher is a real control.** Uses `GET /projects` (per ADR-051) to populate; clicking an entry calls `setProject(name)` and updates the URL. Not a stub.
+7. **No hardcoded project names in branching logic.** `'default'` is allowed only as the explicit fallback in `AppShell.tsx`'s state initializer. No `'medusa'`, no `'neat'`, no `if (project === 'demo')` anywhere in `packages/web/`. Same rule as the cross-cutting "no demo-name hardcoding" but extended to the web track.
+
+**Authority.** `packages/web/app/components/AppShell.tsx` (state owner), `packages/web/app/components/TopBar.tsx` (display + switcher), `packages/web/app/components/GraphCanvas.tsx` (consumes project prop), `packages/web/lib/proxy.ts` (project-aware fetcher), `packages/web/app/api/**/route.ts` (project-aware proxies).
+
+**Enforcement.** `it.todo` block in `contracts.test.ts`:
+
+- AppShell.tsx initializes `project` from URL → localStorage → /projects → 'default' (read source, regex check).
+- Every component file that imports `proxy.ts` or fetches from `/api/` accepts `project: string` as a prop or reads it from a context.
+- Every API proxy route forwards `project` query/path to the backend.
+- No hardcoded project names (`medusa`, `neat`, `demo`, etc.) in branching logic under `packages/web/app/components/` or `packages/web/lib/`.
+- Multi-project re-fetch test: render AppShell with project=A, change to B, assert all data-fetching hooks re-ran (uses Vitest + React Testing Library — a new-tooling addition for the web track).
+
+## ADR-058 — Web shell debugging surface
+
+**Date:** 2026-05-10
+**Status:** Active.
+
+**Context.** When NEAT misbehaves in production — daemon down, registry stale, SSE reconnecting, proxy returning 5xx — the web shell currently fails silently. The user clicks something, nothing happens, no indication why. This is the worst failure mode for an MVP that's supposed to be diagnostic itself.
+
+The fix is observable connection state plus loud-not-silent error surfaces. Not a debug-only feature — debugging IS the product, and the user shouldn't need to open devtools to see why a query failed.
+
+**Decision.**
+
+1. **StatusBar shows daemon connection state.** A small indicator (green / yellow / red dot) reflecting whether `GET /health` against `NEAT_API_URL` succeeded recently. Yellow = slow / retrying; red = failed for ≥ N attempts. Updated on a heartbeat (default 5s).
+2. **SSE connection state visible.** When the `/events` EventSource is open, healthy, or reconnecting, the StatusBar reflects it. EventSource auto-reconnects per spec; a UI indicator tells the user *that* it's reconnecting, not just that updates have stopped flowing.
+3. **No silent API errors.** Every fetch that returns a non-2xx status surfaces a transient toast or banner with the error envelope from ADR-040 (`{ error, status, details? }`). User sees what failed, not just nothing.
+4. **Debug panel keyboard shortcut.** `Ctrl+Shift+D` (or `Cmd+Shift+D`) toggles a debug panel overlay showing:
+   - Current `project` and `NEAT_API_URL`
+   - Last 10 API calls with status code + duration
+   - Last 10 SSE events with type + timestamp
+   - Daemon health-check history
+5. **Daemon URL is visible.** TopBar or StatusBar shows the value of `NEAT_API_URL` (or its public-facing equivalent) so the user knows which backend they're querying. Not a debug-only feature — multi-daemon environments will exist eventually.
+6. **Read-only.** The debugging surface doesn't mutate state. It observes. Per the existing role discipline (ADR-039 MCP is read-only; ADR-040 REST has only two write endpoints; ADR-050 CLI verbs are read-only), the web debugging panel matches.
+
+**Authority.** `packages/web/app/components/StatusBar.tsx` (connection indicator), `packages/web/app/components/TopBar.tsx` (URL surface), `packages/web/lib/proxy.ts` (error capture + toast emission), a new `packages/web/app/components/DebugPanel.tsx` (or similar) for the keyboard-shortcut overlay.
+
+**Enforcement.** `it.todo` in `contracts.test.ts`:
+
+- StatusBar.tsx renders a connection indicator element with a state attribute (`data-connection-state="ok|slow|down"`).
+- StatusBar.tsx renders an SSE indicator with a state attribute.
+- proxy.ts emits a toast / banner on non-2xx response.
+- A `DebugPanel.tsx` (or equivalent) component exists and is keyboard-shortcut-toggleable.
+- TopBar or StatusBar renders the daemon URL.
+
+## ADR-059 — Web UI bootstrap from `neatd`
+
+**Date:** 2026-05-10
+**Status:** Active.
+
+**Context.** Today running NEAT against an unfamiliar codebase requires three terminals: one for `neatd start` (REST + OTel), one for `npm run dev --workspace @neat.is/web` (the Next.js dev server), and a third for the user's own work. The user has to know the right `dev` invocation, and the Next.js port (currently the Next.js default `3000`) collides with every other Node project they may have running.
+
+For the MVP-success-PR experiment, this is a non-starter: the operator runs `neatd start` against medusa, expects to be able to view the graph, and there's no obvious way. The web shell that ADRs 056-058 govern is unreachable.
+
+The fix is for `neatd start` to launch the web UI alongside the REST + OTel listeners, on a port that's narratable and unlikely to clash.
+
+**Decision.**
+
+1. **`neatd start` launches the web UI.** As part of the daemon's startup, after the REST API and OTel receivers are listening, `neatd` spawns the web UI as a child process. The web UI runs in production mode (`next start`), not dev mode.
+2. **Default port: `6328`.** This is NEAT in T9 phone keypad (N=6, E=3, A=2, T=8). Memorable, narratable, and not in `/etc/services` or any common-port list. The number doesn't carry a stronger semantic; it's chosen to avoid the universal collisions on `3000`, `5000`, `8000`, `8080`.
+3. **Override via `NEAT_WEB_PORT` env var.** If the user wants a different port (CI environments, port already in use locally, multi-instance setups), they set it. neatd reads the env at start time.
+4. **Fail loudly on port collision.** If port 6328 is already in use and no override is provided, `neatd start` aborts with a clear error message: `port 6328 in use; set NEAT_WEB_PORT to override or stop the conflicting process.` No silent fallback to a random port — the user needs to know what URL to open.
+5. **Port relationship.** REST API on `8080`. OTel HTTP on `4318`. OTel gRPC on `4317` (opt-in). Web UI on `6328`. Each port has one job; each is overridable via its own env var (`PORT` for REST, `OTEL_PORT` for OTel HTTP, `NEAT_OTLP_GRPC_PORT` for OTel gRPC, `NEAT_WEB_PORT` for the web UI).
+6. **Web UI inherits `NEAT_API_URL` automatically.** When neatd spawns the web UI process, it sets `NEAT_API_URL=http://localhost:<rest-port>` so the web shell points at the same daemon that launched it. The user doesn't configure this twice.
+7. **Shutdown cascades.** When `neatd stop` is invoked or `SIGTERM` reaches the daemon, the spawned web UI process is also stopped (process group kill or explicit child termination). No orphaned web UI processes.
+8. **Distribution.** The `@neat.is/web` package is published to npm as part of the umbrella (along with core / mcp / claude-skill / types). `neatd` resolves the web UI's location via `require.resolve('@neat.is/web/package.json')` and runs its production-mode start script. This requires bumping `@neat.is/web` from `private: true` to publishable and including it in the lockstep version bump going forward.
+
+**Out of scope.**
+
+- **Static-export bundling into `@neat.is/core`.** Considered (single port, single process, simpler). Rejected for MVP because it requires rewriting Jed's existing Next.js API routes as direct fetches to the backend (lose proxy abstraction), and it forks the web track's existing development workflow (`next dev` for live-reload). The child-process approach preserves Jed's track unchanged. If real-user signal demands single-port simplicity, that's a successor ADR.
+- **Process supervision / restart-on-crash for the web UI.** Per ADR-049 the daemon doesn't auto-restart on crash; same rule applies to the spawned web UI. External supervisors (launchd, systemd) can wrap the whole thing if needed.
+- **Authentication on the web UI.** Localhost-only, MVP. Future ADR if multi-user / hosted instances become a thing.
+
+**Authority.** `packages/core/src/neatd.ts` (spawning logic), `packages/web/package.json` (publishability + start script), `@neat.is/web` distribution (becomes part of the umbrella).
+
+**Enforcement.** `it.todo` block in `contracts.test.ts`:
+
+- `neatd.ts` spawns a web UI child process during `cmdStart`.
+- The child process runs on `process.env.NEAT_WEB_PORT ?? 6328`.
+- The child inherits `NEAT_API_URL=http://localhost:${restPort}`.
+- Port collision on the configured web port aborts neatd with the exit-3 / clear-error pattern from ADR-049.
+- `neatd stop` kills the spawned web UI process.
+- `@neat.is/web` is no longer `private: true` and is included in the umbrella's lockstep version bump (publish-system contract gets a fifth-package-becomes-six update).
+
+The publishability change touches the publish-system contract (ADR-052) and the umbrella's `dependencies` list. That's a structural change to the publish surface — flag for the implementing agent, may warrant a successor ADR amendment to ADR-052 if the lockstep set grows from five to six.
