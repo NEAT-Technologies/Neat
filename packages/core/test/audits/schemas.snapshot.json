@@ -41,6 +41,837 @@
       }
     }
   },
+  "DivergenceResultSchema": {
+    "_object": {
+      "computedAt": {
+        "_string": [
+          "datetime"
+        ]
+      },
+      "divergences": {
+        "_array": {
+          "_discriminated": {
+            "discriminator": "type",
+            "options": {
+              "missing-observed": {
+                "_object": {
+                  "confidence": {
+                    "_number": [
+                      "max",
+                      "min"
+                    ]
+                  },
+                  "edgeType": {
+                    "_enum": [
+                      "CALLS",
+                      "CONFIGURED_BY",
+                      "CONNECTS_TO",
+                      "CONSUMES_FROM",
+                      "DEPENDS_ON",
+                      "PUBLISHES_TO",
+                      "RUNS_ON"
+                    ]
+                  },
+                  "extracted": {
+                    "_object": {
+                      "callCount": {
+                        "_optional": {
+                          "_number": [
+                            "int",
+                            "min"
+                          ]
+                        }
+                      },
+                      "confidence": {
+                        "_optional": {
+                          "_number": [
+                            "max",
+                            "min"
+                          ]
+                        }
+                      },
+                      "evidence": {
+                        "_optional": {
+                          "_object": {
+                            "file": "_string",
+                            "line": {
+                              "_number": [
+                                "int",
+                                "min"
+                              ]
+                            },
+                            "snippet": "_string"
+                          }
+                        }
+                      },
+                      "id": "_string",
+                      "lastObserved": {
+                        "_optional": {
+                          "_string": [
+                            "datetime"
+                          ]
+                        }
+                      },
+                      "provenance": {
+                        "_enum": [
+                          "EXTRACTED",
+                          "FRONTIER",
+                          "INFERRED",
+                          "OBSERVED",
+                          "STALE"
+                        ]
+                      },
+                      "signal": {
+                        "_optional": {
+                          "_object": {
+                            "errorCount": {
+                              "_number": [
+                                "int",
+                                "min"
+                              ]
+                            },
+                            "lastObservedAgeMs": {
+                              "_optional": {
+                                "_number": [
+                                  "min"
+                                ]
+                              }
+                            },
+                            "spanCount": {
+                              "_number": [
+                                "int",
+                                "min"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "source": "_string",
+                      "target": "_string",
+                      "type": {
+                        "_enum": [
+                          "CALLS",
+                          "CONFIGURED_BY",
+                          "CONNECTS_TO",
+                          "CONSUMES_FROM",
+                          "DEPENDS_ON",
+                          "PUBLISHES_TO",
+                          "RUNS_ON"
+                        ]
+                      }
+                    }
+                  },
+                  "reason": "_string",
+                  "recommendation": "_string",
+                  "source": "_string",
+                  "target": "_string",
+                  "type": {
+                    "_literal": "missing-observed"
+                  }
+                }
+              },
+              "missing-extracted": {
+                "_object": {
+                  "confidence": {
+                    "_number": [
+                      "max",
+                      "min"
+                    ]
+                  },
+                  "edgeType": {
+                    "_enum": [
+                      "CALLS",
+                      "CONFIGURED_BY",
+                      "CONNECTS_TO",
+                      "CONSUMES_FROM",
+                      "DEPENDS_ON",
+                      "PUBLISHES_TO",
+                      "RUNS_ON"
+                    ]
+                  },
+                  "observed": {
+                    "_object": {
+                      "callCount": {
+                        "_optional": {
+                          "_number": [
+                            "int",
+                            "min"
+                          ]
+                        }
+                      },
+                      "confidence": {
+                        "_optional": {
+                          "_number": [
+                            "max",
+                            "min"
+                          ]
+                        }
+                      },
+                      "evidence": {
+                        "_optional": {
+                          "_object": {
+                            "file": "_string",
+                            "line": {
+                              "_number": [
+                                "int",
+                                "min"
+                              ]
+                            },
+                            "snippet": "_string"
+                          }
+                        }
+                      },
+                      "id": "_string",
+                      "lastObserved": {
+                        "_optional": {
+                          "_string": [
+                            "datetime"
+                          ]
+                        }
+                      },
+                      "provenance": {
+                        "_enum": [
+                          "EXTRACTED",
+                          "FRONTIER",
+                          "INFERRED",
+                          "OBSERVED",
+                          "STALE"
+                        ]
+                      },
+                      "signal": {
+                        "_optional": {
+                          "_object": {
+                            "errorCount": {
+                              "_number": [
+                                "int",
+                                "min"
+                              ]
+                            },
+                            "lastObservedAgeMs": {
+                              "_optional": {
+                                "_number": [
+                                  "min"
+                                ]
+                              }
+                            },
+                            "spanCount": {
+                              "_number": [
+                                "int",
+                                "min"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "source": "_string",
+                      "target": "_string",
+                      "type": {
+                        "_enum": [
+                          "CALLS",
+                          "CONFIGURED_BY",
+                          "CONNECTS_TO",
+                          "CONSUMES_FROM",
+                          "DEPENDS_ON",
+                          "PUBLISHES_TO",
+                          "RUNS_ON"
+                        ]
+                      }
+                    }
+                  },
+                  "reason": "_string",
+                  "recommendation": "_string",
+                  "source": "_string",
+                  "target": "_string",
+                  "type": {
+                    "_literal": "missing-extracted"
+                  }
+                }
+              },
+              "version-mismatch": {
+                "_object": {
+                  "compatibility": {
+                    "_enum": [
+                      "deprecated",
+                      "incompatible",
+                      "unknown"
+                    ]
+                  },
+                  "confidence": {
+                    "_number": [
+                      "max",
+                      "min"
+                    ]
+                  },
+                  "extractedVersion": "_string",
+                  "observedVersion": "_string",
+                  "reason": "_string",
+                  "recommendation": "_string",
+                  "source": "_string",
+                  "target": "_string",
+                  "type": {
+                    "_literal": "version-mismatch"
+                  }
+                }
+              },
+              "host-mismatch": {
+                "_object": {
+                  "confidence": {
+                    "_number": [
+                      "max",
+                      "min"
+                    ]
+                  },
+                  "extractedHost": "_string",
+                  "observedHost": "_string",
+                  "reason": "_string",
+                  "recommendation": "_string",
+                  "source": "_string",
+                  "target": "_string",
+                  "type": {
+                    "_literal": "host-mismatch"
+                  }
+                }
+              },
+              "compat-violation": {
+                "_object": {
+                  "confidence": {
+                    "_number": [
+                      "max",
+                      "min"
+                    ]
+                  },
+                  "observed": {
+                    "_object": {
+                      "callCount": {
+                        "_optional": {
+                          "_number": [
+                            "int",
+                            "min"
+                          ]
+                        }
+                      },
+                      "confidence": {
+                        "_optional": {
+                          "_number": [
+                            "max",
+                            "min"
+                          ]
+                        }
+                      },
+                      "evidence": {
+                        "_optional": {
+                          "_object": {
+                            "file": "_string",
+                            "line": {
+                              "_number": [
+                                "int",
+                                "min"
+                              ]
+                            },
+                            "snippet": "_string"
+                          }
+                        }
+                      },
+                      "id": "_string",
+                      "lastObserved": {
+                        "_optional": {
+                          "_string": [
+                            "datetime"
+                          ]
+                        }
+                      },
+                      "provenance": {
+                        "_enum": [
+                          "EXTRACTED",
+                          "FRONTIER",
+                          "INFERRED",
+                          "OBSERVED",
+                          "STALE"
+                        ]
+                      },
+                      "signal": {
+                        "_optional": {
+                          "_object": {
+                            "errorCount": {
+                              "_number": [
+                                "int",
+                                "min"
+                              ]
+                            },
+                            "lastObservedAgeMs": {
+                              "_optional": {
+                                "_number": [
+                                  "min"
+                                ]
+                              }
+                            },
+                            "spanCount": {
+                              "_number": [
+                                "int",
+                                "min"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "source": "_string",
+                      "target": "_string",
+                      "type": {
+                        "_enum": [
+                          "CALLS",
+                          "CONFIGURED_BY",
+                          "CONNECTS_TO",
+                          "CONSUMES_FROM",
+                          "DEPENDS_ON",
+                          "PUBLISHES_TO",
+                          "RUNS_ON"
+                        ]
+                      }
+                    }
+                  },
+                  "reason": "_string",
+                  "recommendation": "_string",
+                  "rule": {
+                    "_object": {
+                      "driver": {
+                        "_optional": "_string"
+                      },
+                      "engine": {
+                        "_optional": "_string"
+                      },
+                      "kind": "_string",
+                      "package": {
+                        "_optional": "_string"
+                      },
+                      "reason": "_string"
+                    }
+                  },
+                  "source": "_string",
+                  "target": "_string",
+                  "type": {
+                    "_literal": "compat-violation"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "totalAffected": {
+        "_number": [
+          "int",
+          "min"
+        ]
+      }
+    }
+  },
+  "DivergenceSchema": {
+    "_discriminated": {
+      "discriminator": "type",
+      "options": {
+        "missing-observed": {
+          "_object": {
+            "confidence": {
+              "_number": [
+                "max",
+                "min"
+              ]
+            },
+            "edgeType": {
+              "_enum": [
+                "CALLS",
+                "CONFIGURED_BY",
+                "CONNECTS_TO",
+                "CONSUMES_FROM",
+                "DEPENDS_ON",
+                "PUBLISHES_TO",
+                "RUNS_ON"
+              ]
+            },
+            "extracted": {
+              "_object": {
+                "callCount": {
+                  "_optional": {
+                    "_number": [
+                      "int",
+                      "min"
+                    ]
+                  }
+                },
+                "confidence": {
+                  "_optional": {
+                    "_number": [
+                      "max",
+                      "min"
+                    ]
+                  }
+                },
+                "evidence": {
+                  "_optional": {
+                    "_object": {
+                      "file": "_string",
+                      "line": {
+                        "_number": [
+                          "int",
+                          "min"
+                        ]
+                      },
+                      "snippet": "_string"
+                    }
+                  }
+                },
+                "id": "_string",
+                "lastObserved": {
+                  "_optional": {
+                    "_string": [
+                      "datetime"
+                    ]
+                  }
+                },
+                "provenance": {
+                  "_enum": [
+                    "EXTRACTED",
+                    "FRONTIER",
+                    "INFERRED",
+                    "OBSERVED",
+                    "STALE"
+                  ]
+                },
+                "signal": {
+                  "_optional": {
+                    "_object": {
+                      "errorCount": {
+                        "_number": [
+                          "int",
+                          "min"
+                        ]
+                      },
+                      "lastObservedAgeMs": {
+                        "_optional": {
+                          "_number": [
+                            "min"
+                          ]
+                        }
+                      },
+                      "spanCount": {
+                        "_number": [
+                          "int",
+                          "min"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "source": "_string",
+                "target": "_string",
+                "type": {
+                  "_enum": [
+                    "CALLS",
+                    "CONFIGURED_BY",
+                    "CONNECTS_TO",
+                    "CONSUMES_FROM",
+                    "DEPENDS_ON",
+                    "PUBLISHES_TO",
+                    "RUNS_ON"
+                  ]
+                }
+              }
+            },
+            "reason": "_string",
+            "recommendation": "_string",
+            "source": "_string",
+            "target": "_string",
+            "type": {
+              "_literal": "missing-observed"
+            }
+          }
+        },
+        "missing-extracted": {
+          "_object": {
+            "confidence": {
+              "_number": [
+                "max",
+                "min"
+              ]
+            },
+            "edgeType": {
+              "_enum": [
+                "CALLS",
+                "CONFIGURED_BY",
+                "CONNECTS_TO",
+                "CONSUMES_FROM",
+                "DEPENDS_ON",
+                "PUBLISHES_TO",
+                "RUNS_ON"
+              ]
+            },
+            "observed": {
+              "_object": {
+                "callCount": {
+                  "_optional": {
+                    "_number": [
+                      "int",
+                      "min"
+                    ]
+                  }
+                },
+                "confidence": {
+                  "_optional": {
+                    "_number": [
+                      "max",
+                      "min"
+                    ]
+                  }
+                },
+                "evidence": {
+                  "_optional": {
+                    "_object": {
+                      "file": "_string",
+                      "line": {
+                        "_number": [
+                          "int",
+                          "min"
+                        ]
+                      },
+                      "snippet": "_string"
+                    }
+                  }
+                },
+                "id": "_string",
+                "lastObserved": {
+                  "_optional": {
+                    "_string": [
+                      "datetime"
+                    ]
+                  }
+                },
+                "provenance": {
+                  "_enum": [
+                    "EXTRACTED",
+                    "FRONTIER",
+                    "INFERRED",
+                    "OBSERVED",
+                    "STALE"
+                  ]
+                },
+                "signal": {
+                  "_optional": {
+                    "_object": {
+                      "errorCount": {
+                        "_number": [
+                          "int",
+                          "min"
+                        ]
+                      },
+                      "lastObservedAgeMs": {
+                        "_optional": {
+                          "_number": [
+                            "min"
+                          ]
+                        }
+                      },
+                      "spanCount": {
+                        "_number": [
+                          "int",
+                          "min"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "source": "_string",
+                "target": "_string",
+                "type": {
+                  "_enum": [
+                    "CALLS",
+                    "CONFIGURED_BY",
+                    "CONNECTS_TO",
+                    "CONSUMES_FROM",
+                    "DEPENDS_ON",
+                    "PUBLISHES_TO",
+                    "RUNS_ON"
+                  ]
+                }
+              }
+            },
+            "reason": "_string",
+            "recommendation": "_string",
+            "source": "_string",
+            "target": "_string",
+            "type": {
+              "_literal": "missing-extracted"
+            }
+          }
+        },
+        "version-mismatch": {
+          "_object": {
+            "compatibility": {
+              "_enum": [
+                "deprecated",
+                "incompatible",
+                "unknown"
+              ]
+            },
+            "confidence": {
+              "_number": [
+                "max",
+                "min"
+              ]
+            },
+            "extractedVersion": "_string",
+            "observedVersion": "_string",
+            "reason": "_string",
+            "recommendation": "_string",
+            "source": "_string",
+            "target": "_string",
+            "type": {
+              "_literal": "version-mismatch"
+            }
+          }
+        },
+        "host-mismatch": {
+          "_object": {
+            "confidence": {
+              "_number": [
+                "max",
+                "min"
+              ]
+            },
+            "extractedHost": "_string",
+            "observedHost": "_string",
+            "reason": "_string",
+            "recommendation": "_string",
+            "source": "_string",
+            "target": "_string",
+            "type": {
+              "_literal": "host-mismatch"
+            }
+          }
+        },
+        "compat-violation": {
+          "_object": {
+            "confidence": {
+              "_number": [
+                "max",
+                "min"
+              ]
+            },
+            "observed": {
+              "_object": {
+                "callCount": {
+                  "_optional": {
+                    "_number": [
+                      "int",
+                      "min"
+                    ]
+                  }
+                },
+                "confidence": {
+                  "_optional": {
+                    "_number": [
+                      "max",
+                      "min"
+                    ]
+                  }
+                },
+                "evidence": {
+                  "_optional": {
+                    "_object": {
+                      "file": "_string",
+                      "line": {
+                        "_number": [
+                          "int",
+                          "min"
+                        ]
+                      },
+                      "snippet": "_string"
+                    }
+                  }
+                },
+                "id": "_string",
+                "lastObserved": {
+                  "_optional": {
+                    "_string": [
+                      "datetime"
+                    ]
+                  }
+                },
+                "provenance": {
+                  "_enum": [
+                    "EXTRACTED",
+                    "FRONTIER",
+                    "INFERRED",
+                    "OBSERVED",
+                    "STALE"
+                  ]
+                },
+                "signal": {
+                  "_optional": {
+                    "_object": {
+                      "errorCount": {
+                        "_number": [
+                          "int",
+                          "min"
+                        ]
+                      },
+                      "lastObservedAgeMs": {
+                        "_optional": {
+                          "_number": [
+                            "min"
+                          ]
+                        }
+                      },
+                      "spanCount": {
+                        "_number": [
+                          "int",
+                          "min"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "source": "_string",
+                "target": "_string",
+                "type": {
+                  "_enum": [
+                    "CALLS",
+                    "CONFIGURED_BY",
+                    "CONNECTS_TO",
+                    "CONSUMES_FROM",
+                    "DEPENDS_ON",
+                    "PUBLISHES_TO",
+                    "RUNS_ON"
+                  ]
+                }
+              }
+            },
+            "reason": "_string",
+            "recommendation": "_string",
+            "rule": {
+              "_object": {
+                "driver": {
+                  "_optional": "_string"
+                },
+                "engine": {
+                  "_optional": "_string"
+                },
+                "kind": "_string",
+                "package": {
+                  "_optional": "_string"
+                },
+                "reason": "_string"
+              }
+            },
+            "source": "_string",
+            "target": "_string",
+            "type": {
+              "_literal": "compat-violation"
+            }
+          }
+        }
+      }
+    }
+  },
   "EdgeTypeSchema": {
     "_enum": [
       "CALLS",
