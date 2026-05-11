@@ -5674,20 +5674,99 @@ describe('Divergence query (ADR-060)', () => {
 //
 // Each flips from todo to live as the implementation agent ships the fix.
 describe('REST API canonicalization (ADR-061)', () => {
+  const API_TS = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+  const REST_CONTRACT = readFileSync(
+    join(__dirname, '../../../../docs/contracts/rest-api.md'),
+    'utf8',
+  )
+
+  // Routes registered in api.ts. scope.get / scope.post are dual-mounted;
+  // app.get / app.post mount only at the root. Picks up both signatures
+  // (single-line and the `>('/path', ...` continuation form).
+  const declaredPaths = new Set<string>()
+  for (const m of API_TS.matchAll(/\b(?:scope|app)\.(?:get|post)(?:<[^>]*>)?\(\s*['"]([^'"]+)['"]/g)) {
+    declaredPaths.add(m[1])
+  }
+  // Also pick up the `>('/path',` continuation form where the type
+  // generic spans multiple lines.
+  for (const m of API_TS.matchAll(/\}>\(\s*['"]([^'"]+)['"]/g)) {
+    declaredPaths.add(m[1])
+  }
+  // The two-line form: `scope.get<{ ... }>(\n    '/path',`
+  for (const m of API_TS.matchAll(/\b(?:scope|app)\.(?:get|post)<[^>]*>\(\s*\n\s*['"]([^'"]+)['"]/g)) {
+    declaredPaths.add(m[1])
+  }
+
+  // Endpoint table in rest-api.md — paths in the first column, wrapped in
+  // backticks like `GET /health` or `GET /graph/node/:id`.
+  const documentedPaths = new Set<string>()
+  for (const m of REST_CONTRACT.matchAll(/`(?:GET|POST)\s+(\/[^`]+?)`/g)) {
+    // Strip query strings — the documented `?limit=N` is illustrative,
+    // not part of the route shape.
+    documentedPaths.add(m[1].split('?')[0])
+  }
+
   // ── Class A: path canonicalization ───────────────────────────────────
-  // Backend must declare each canonical path; drifted variants must be gone.
-  it.todo('api.ts declares `/graph/root-cause/:nodeId` (renamed from /traverse/root-cause) (ADR-061 #1)')
-  it.todo('api.ts declares `/graph/blast-radius/:nodeId` (renamed from /traverse/blast-radius) (ADR-061 #1)')
-  it.todo('api.ts declares `/stale-events` (renamed from /incidents/stale) (ADR-061 #1)')
-  it.todo('api.ts declares `/graph/dependencies/:nodeId` (renamed from /graph/node/:id/dependencies) (ADR-061 #1)')
-  it.todo('api.ts contains no references to drifted paths (/traverse/*, /incidents/stale, /graph/node/:id/dependencies) (ADR-061 #1)')
+  it('api.ts declares `/graph/root-cause/:nodeId` (renamed from /traverse/root-cause) (ADR-061 #1)', () => {
+    expect(declaredPaths).toContain('/graph/root-cause/:nodeId')
+  })
+  it('api.ts declares `/graph/blast-radius/:nodeId` (renamed from /traverse/blast-radius) (ADR-061 #1)', () => {
+    expect(declaredPaths).toContain('/graph/blast-radius/:nodeId')
+  })
+  it('api.ts declares `/stale-events` (renamed from /incidents/stale) (ADR-061 #1)', () => {
+    expect(declaredPaths).toContain('/stale-events')
+  })
+  it('api.ts declares `/graph/dependencies/:nodeId` (renamed from /graph/node/:id/dependencies) (ADR-061 #1)', () => {
+    expect(declaredPaths).toContain('/graph/dependencies/:nodeId')
+  })
+  it('api.ts contains no references to drifted paths (/traverse/*, /incidents/stale, /graph/node/:id/dependencies) (ADR-061 #1)', () => {
+    expect(API_TS).not.toMatch(/\/traverse\//)
+    expect(API_TS).not.toMatch(/\/incidents\/stale/)
+    expect(API_TS).not.toMatch(/\/graph\/node\/:id\/dependencies/)
+  })
 
   // ── Class B: response envelope rule ──────────────────────────────────
-  // Every GET handler returns a JSON object — never a bare array. Scans
-  // api.ts for `return events`, `return violations`, `return result_array`,
-  // etc. — flags bare-collection returns that violate ADR-061 #2.
-  it.todo('no GET handler in api.ts returns a bare array (ADR-061 #2 — envelope rule)')
-  it.todo('the documented /projects bare-array exception is the only bare-array GET return (ADR-061 #2)')
+  // Bare-collection returns inside scope.get handlers are a contract
+  // violation. Scans for `return events`, `return violations`, etc. —
+  // anything that returns a local variable named like a list.
+  it('no scope.get handler in api.ts returns a bare collection (ADR-061 #2 — envelope rule)', () => {
+    // Match `return <ident>` where ident is one of the list-shaped names
+    // that previously held bare arrays. After ADR-061 every list should
+    // be wrapped, so `return events` / `return violations` etc. inside a
+    // scope.get block is a smell.
+    const banned = ['events', 'violations', 'matches', 'incidents', 'dependencies']
+    const offenders: string[] = []
+    const lines = API_TS.split('\n')
+    let insideScopeGet = false
+    let depth = 0
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (/\bscope\.get\b/.test(line)) {
+        insideScopeGet = true
+        depth = 0
+      }
+      if (insideScopeGet) {
+        for (const ch of line) {
+          if (ch === '{') depth++
+          if (ch === '}') depth--
+        }
+        for (const name of banned) {
+          if (new RegExp(`\\breturn\\s+${name}\\s*$`).test(line.trim())) {
+            offenders.push(`api.ts:${i + 1}: ${line.trim()}`)
+          }
+        }
+        if (depth <= 0 && /\)\s*$/.test(line.trim())) insideScopeGet = false
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+  it('the documented /projects bare-array exception is the only bare-array GET return (ADR-061 #2)', () => {
+    // listRegistryProjects() returns Array<RegistryEntry>; api.ts hands
+    // it back directly from `app.get('/projects', ...)`. The contract
+    // documents this as the one allowed bare-array GET (rest-api.md §29
+    // table footnote).
+    expect(API_TS).toMatch(/app\.get\(['"]\/projects['"][\s\S]{0,200}return\s+await\s+listRegistryProjects/)
+  })
 
   // ── Class C: response shape via Zod schemas ──────────────────────────
   // Each endpoint's response parses through its declared schema. Live
@@ -5715,12 +5794,35 @@ describe('REST API canonicalization (ADR-061)', () => {
   // Every scope.get / scope.post path in api.ts must appear in
   // rest-api.md's canonical endpoint table. Catches future drift in
   // either direction (route exists but not documented; route documented
-  // but not implemented).
-  it.todo('every path registered in api.ts appears in rest-api.md endpoint table (ADR-061 #6)')
-  it.todo('every path in rest-api.md endpoint table is registered in api.ts (ADR-061 #6)')
+  // but not implemented). Routes registered for completeness but not part
+  // of the canonical endpoint table (the SSE stream is documented in a
+  // separate section, not the main table) are listed here.
+  const SSE_AND_INTERNAL = new Set(['/events'])
+
+  it('every path registered in api.ts appears in rest-api.md endpoint table (ADR-061 #6)', () => {
+    const undocumented: string[] = []
+    for (const p of declaredPaths) {
+      if (SSE_AND_INTERNAL.has(p)) continue
+      if (!documentedPaths.has(p)) undocumented.push(p)
+    }
+    expect(undocumented, `paths in api.ts missing from rest-api.md: ${undocumented.join(', ')}`).toEqual([])
+  })
+  it('every path in rest-api.md endpoint table is registered in api.ts (ADR-061 #6)', () => {
+    const unimplemented: string[] = []
+    for (const p of documentedPaths) {
+      if (!declaredPaths.has(p)) unimplemented.push(p)
+    }
+    expect(unimplemented, `paths in rest-api.md missing from api.ts: ${unimplemented.join(', ')}`).toEqual([])
+  })
 
   // ── Class E: coverage gaps now documented ────────────────────────────
-  it.todo('rest-api.md documents GET /incidents/:nodeId (ADR-061 #7)')
-  it.todo('rest-api.md documents GET /projects/:project (ADR-061 #7)')
-  it.todo('rest-api.md documents GET /graph/divergences (ADR-061 #7 — also ADR-060)')
+  it('rest-api.md documents GET /incidents/:nodeId (ADR-061 #7)', () => {
+    expect(documentedPaths).toContain('/incidents/:nodeId')
+  })
+  it('rest-api.md documents GET /projects/:project (ADR-061 #7)', () => {
+    expect(documentedPaths).toContain('/projects/:project')
+  })
+  it('rest-api.md documents GET /graph/divergences (ADR-061 #7 — also ADR-060)', () => {
+    expect(documentedPaths).toContain('/graph/divergences')
+  })
 })
