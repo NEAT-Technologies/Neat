@@ -1636,7 +1636,9 @@ This is the runtime corollary of ADR-026 (multi-project dual-mount). The backend
 - No hardcoded project names (`medusa`, `neat`, `demo`, etc.) in branching logic under `packages/web/app/components/` or `packages/web/lib/`.
 - Multi-project re-fetch test: render AppShell with project=A, change to B, assert all data-fetching hooks re-ran (uses Vitest + React Testing Library — a new-tooling addition for the web track).
 
-**Amendment (2026-05-11) — rule 2a, SSR-safe resolution chain.**
+**Amendment (2026-05-11) — rule 2a, SSR-safe resolution chain. Superseded by ADR-062 (2026-05-11).**
+
+> Retained for historical context. The bug this amendment described is real, but the chosen fix (constrain every web component to SSR/CSR byte-identicality) over-paid for chrome we don't render server-side anyway. ADR-062 removes the SSR boundary at AppShell, which makes the byte-identical requirement moot. Rule 2a no longer binds; rules 1-9 of ADR-057 otherwise stand.
 
 A live web-shell session against the medusa project surfaced a hydration error: `Text content did not match. Server: "default" Client: "Neat"`. Root cause was `AppShell.tsx` running rule 2's resolution chain *synchronously inside a `useState` lazy initializer and a `useRef` initial value*. SSR has no `window` → returned `'default'`; client first render had `localStorage` → returned the stored project. The two renders disagreed at the project-name text node; React 18 threw error 425 / 418 and the GraphCanvas's `useEffect` failed to mount cleanly against the recovery render — net effect: no graph visible.
 
@@ -1948,3 +1950,49 @@ The pre-v0.3.0 verification pass (`docs/plans/2026-05-10-pre-v0.3.0-verification
 - **The CLI / MCP surface.** Both already route through the canonical names via `client.ts`. No CLI or MCP changes needed for this ADR.
 
 **First application.** This ADR ships in v0.2.11. The implementation work is delegated to a fresh Implementation Agent per the role discipline; the handoff prompt is in the conversation.
+
+## ADR-062 — Web shell renders client-only; SSR disabled at the AppShell boundary
+
+**Date:** 2026-05-11
+**Status:** Active. Supersedes the ADR-057 "rule 2a" amendment (2026-05-11). Rules 1-9 of ADR-057 are retained.
+
+**Context.** ADR-057's "rule 2a" amendment landed earlier today to fix a hydration error: `Text content did not match. Server: "default" Client: "Neat"`. The fix mandated that every web component produce byte-identical HTML on SSR and first client render — concretely, `useState<string>('default')` on both, with the URL → localStorage → /projects → 'default' chain deferred to a `useEffect`.
+
+While reviewing the implementation patch (PR #226), the question that should have been asked at amendment time finally got asked: *why is the web shell server-rendering in the first place?*
+
+NEAT's web shell is an internal admin UI:
+
+- No SEO. Not public, not crawler-indexed, not link-previewable.
+- No first-paint requirement that real data be visible. Cytoscape, the graph canvas, the Inspector, the StatusBar — all boot client-side regardless of SSR, after their respective fetches resolve.
+- Served by `neatd start` on `localhost:6328` to a single operator session per machine (per ADR-059).
+- The graph, the project list, the incidents log — every payload is client-fetched after mount.
+
+SSR was contributing exactly one thing: ~50-150ms of static chrome (TopBar / Rail / StatusBar shells) emitted before client JS runs. In exchange, every interactive component had to be SSR/CSR byte-identical. The 2a amendment was the formalisation of that tax.
+
+The amendment also had a second-order cost that wasn't visible at amendment time: with `'default'` mandated as the SSR initial state, every `useEffect([project])` consumer in the tree — GraphCanvas, Inspector, StatusBar, Rail, the `/incidents` page — fires twice on every page load. Once against `'default'` (kicking off a fetch for the default project), then again against the resolved project (kicking off the real fetch). That's six-plus redundant round-trips per page load, plus a visible UI flicker as components swap their data mid-mount.
+
+Both costs come from the same source: we're paying an SSR tax for a benefit we don't use.
+
+**Decision.**
+
+1. **AppShell renders client-only.** `packages/web/app/page.tsx` mounts AppShell via `next/dynamic` with `{ ssr: false }`. The server emits the static HTML shell (head, fonts, CSS link, empty `<body>`); the entire React tree builds on the client.
+
+2. **Rule 2a is removed.** With no SSR pass over AppShell, the byte-identical-initial-state requirement no longer binds. AppShell may read `window.location.search` and `window.localStorage` synchronously during its render path. The pre-amendment lazy initializer pattern is restored: `useState<string>(() => readUrlProject() ?? readStoredProject() ?? 'default')`.
+
+3. **The /projects fetch step stays in useEffect.** It's async by nature and can't move into the initializer. It runs only when steps 1-2 of the resolution chain produced no value (i.e., the synchronous chain resolved to `'default'`).
+
+4. **Other routes keep SSR.** `/incidents` is a separate route, already SSR-safe via its useEffect-scoped browser reads. Layout, fonts, the `/api/*` route handlers — all stay server-rendered. The minimum-blast-radius rule (cross-cutting #11) says we don't expand the change beyond what's needed.
+
+5. **Trade-off accepted.** The user sees a blank `<div class="app">` for ~50-150ms before the chrome paints. Strictly faster-feeling than the 50ms `'default'`-flash the amendment introduced, because (a) the rendered project name is correct on first paint instead of switching mid-load and (b) downstream `useEffect([project])` consumers fire once against the resolved project rather than twice.
+
+6. **Future work — full static export.** A more thorough SSR-off shape is `next.config.js` `output: 'export'`, which makes the entire web shell a static client. That shape breaks the 11 `/api/*` route handlers under `packages/web/app/api/` — they'd need to migrate into the daemon's HTTP surface. That's a milestone-sized refactor and is out of scope for ADR-062. When the daemon HTTP surface absorbs the proxy layer (likely alongside or after MVP-success per ADR-027), full static export becomes the obvious next step.
+
+**Authority.** `packages/web/app/page.tsx` (the dynamic boundary), `packages/web/app/components/AppShell.tsx` (synchronous browser reads allowed again, lazy initializer restored).
+
+**Enforcement.** Replaces the two ADR-057 #2a regex scans in `contracts.test.ts`:
+
+- `app/page.tsx` imports `dynamic` from `next/dynamic` and instantiates AppShell with `{ ssr: false }`.
+
+The two SSR-safety scans (no `useState` lazy initializer / `useRef` initial value reads browser globals in web components) are removed — they were guarding a constraint that no longer applies.
+
+**Why a new ADR and not a third amendment to ADR-057.** Amendments are appropriate for tightening or clarifying an existing rule; ADR-062 removes a rule and adds a structurally different one (client-only render boundary vs SSR-safe execution discipline). Treating it as supersession leaves the trail readable for future sessions.
