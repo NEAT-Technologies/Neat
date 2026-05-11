@@ -63,7 +63,7 @@ export async function getRootCause(client: HttpClient, input: RootCauseInput): P
   const qs = input.errorId ? `?errorId=${encodeURIComponent(input.errorId)}` : ''
   const path = projectPath(
     input.project,
-    `/traverse/root-cause/${encodeURIComponent(input.errorNode)}${qs}`,
+    `/graph/root-cause/${encodeURIComponent(input.errorNode)}${qs}`,
   )
 
   return withMissingNodeFallback(async () => {
@@ -105,7 +105,7 @@ export async function getBlastRadius(
   const qs = input.depth !== undefined ? `?depth=${input.depth}` : ''
   const path = projectPath(
     input.project,
-    `/traverse/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`,
+    `/graph/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`,
   )
 
   return withMissingNodeFallback(async () => {
@@ -153,8 +153,8 @@ export interface DependenciesInput {
   project?: string
 }
 
-// Transitive get_dependencies (issue #144). Calls the new core endpoint
-// /graph/node/:id/dependencies?depth=N which BFS-walks outbound. The output
+// Transitive get_dependencies (issue #144). Calls the core endpoint
+// /graph/dependencies/:nodeId?depth=N which BFS-walks outbound. The output
 // groups results by hop so direct dependencies stand out from transitives —
 // agents asked "what does X depend on?" usually want the direct list with
 // transitives as context.
@@ -165,7 +165,7 @@ export async function getDependencies(
   const depth = input.depth ?? 3
   const path = projectPath(
     input.project,
-    `/graph/node/${encodeURIComponent(input.nodeId)}/dependencies?depth=${depth}`,
+    `/graph/dependencies/${encodeURIComponent(input.nodeId)}?depth=${depth}`,
   )
 
   return withMissingNodeFallback(async () => {
@@ -473,7 +473,7 @@ export async function getRecentStaleEdges(
 
   try {
     const events = await client.get<StaleEventResponse[]>(
-      projectPath(input.project, `/incidents/stale${qs}`),
+      projectPath(input.project, `/stale-events${qs}`),
     )
     if (events.length === 0) {
       return formatEmptyResponse(

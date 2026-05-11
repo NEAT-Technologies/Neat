@@ -148,7 +148,7 @@ export async function runRootCause(
   const qs = input.errorId ? `?errorId=${encodeURIComponent(input.errorId)}` : ''
   const path = projectPath(
     input.project,
-    `/traverse/root-cause/${encodeURIComponent(input.errorNode)}${qs}`,
+    `/graph/root-cause/${encodeURIComponent(input.errorNode)}${qs}`,
   )
   try {
     const result = await client.get<RootCauseResult>(path)
@@ -194,7 +194,7 @@ export async function runBlastRadius(
   const qs = input.depth !== undefined ? `?depth=${input.depth}` : ''
   const path = projectPath(
     input.project,
-    `/traverse/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`,
+    `/graph/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`,
   )
   try {
     const result = await client.get<BlastRadiusResult>(path)
@@ -244,7 +244,7 @@ export async function runDependencies(
   const depth = input.depth ?? 3
   const path = projectPath(
     input.project,
-    `/graph/node/${encodeURIComponent(input.nodeId)}/dependencies?depth=${depth}`,
+    `/graph/dependencies/${encodeURIComponent(input.nodeId)}?depth=${depth}`,
   )
   try {
     const result = await client.get<TransitiveDependenciesResult>(path)
@@ -542,7 +542,7 @@ export async function runStaleEdges(
   if (input.edgeType) params.set('edgeType', input.edgeType)
   const qs = params.size > 0 ? `?${params.toString()}` : ''
   const events = await client.get<StaleEventResponse[]>(
-    projectPath(input.project, `/incidents/stale${qs}`),
+    projectPath(input.project, `/stale-events${qs}`),
   )
   if (events.length === 0) {
     return {

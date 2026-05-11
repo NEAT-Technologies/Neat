@@ -200,14 +200,14 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
   // a flat list with distance + edgeType + provenance per dependency.
   // Default depth 3, max 10. The MCP get_dependencies tool calls this.
   scope.get<{
-    Params: { project?: string; id: string }
+    Params: { project?: string; nodeId: string }
     Querystring: { depth?: string }
-  }>('/graph/node/:id/dependencies', async (req, reply) => {
+  }>('/graph/dependencies/:nodeId', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
-    const { id } = req.params
-    if (!proj.graph.hasNode(id)) {
-      return reply.code(404).send({ error: 'node not found', id })
+    const { nodeId } = req.params
+    if (!proj.graph.hasNode(nodeId)) {
+      return reply.code(404).send({ error: 'node not found', id: nodeId })
     }
     const depth = req.query.depth ? Number(req.query.depth) : TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH
     if (!Number.isFinite(depth) || depth < 1 || depth > TRANSITIVE_DEPENDENCIES_MAX_DEPTH) {
@@ -215,7 +215,7 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
         error: `depth must be an integer in [1, ${TRANSITIVE_DEPENDENCIES_MAX_DEPTH}]`,
       })
     }
-    return getTransitiveDependencies(proj.graph, id, depth)
+    return getTransitiveDependencies(proj.graph, nodeId, depth)
   })
 
   // Divergence query — the thesis surface (ADR-060). Read-only, derived,
@@ -274,7 +274,7 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
   scope.get<{
     Params: { project?: string }
     Querystring: { limit?: string; edgeType?: string }
-  }>('/incidents/stale', async (req, reply) => {
+  }>('/stale-events', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
     const spath = staleEventsPathFor(proj)
@@ -310,7 +310,7 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
   scope.get<{
     Params: { project?: string; nodeId: string }
     Querystring: { errorId?: string }
-  }>('/traverse/root-cause/:nodeId', async (req, reply) => {
+  }>('/graph/root-cause/:nodeId', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
     const { nodeId } = req.params
@@ -336,7 +336,7 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
   scope.get<{
     Params: { project?: string; nodeId: string }
     Querystring: { depth?: string }
-  }>('/traverse/blast-radius/:nodeId', async (req, reply) => {
+  }>('/graph/blast-radius/:nodeId', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
     const { nodeId } = req.params
