@@ -17,3 +17,18 @@ export const ErrorEventSchema = z.object({
   affectedNode: z.string(),
 })
 export type ErrorEvent = z.infer<typeof ErrorEventSchema>
+
+// Appended one-per-line to stale-events.ndjson whenever ingest.ts demotes
+// an OBSERVED edge to STALE (per-edge-type thresholds, ADR-024). Surfaces
+// on GET /stale-events for incident triage.
+export const StaleEventSchema = z.object({
+  edgeId: z.string(),
+  source: z.string(),
+  target: z.string(),
+  edgeType: z.string(),
+  thresholdMs: z.number().nonnegative(),
+  ageMs: z.number().nonnegative(),
+  lastObserved: z.string(),
+  transitionedAt: z.string(),
+})
+export type StaleEvent = z.infer<typeof StaleEventSchema>
