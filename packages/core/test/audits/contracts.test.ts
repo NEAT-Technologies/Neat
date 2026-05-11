@@ -25,7 +25,7 @@ import {
   type GraphEdge,
   type GraphNode,
 } from '@neat.is/types'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { NeatGraph } from '../../src/graph.js'
 import { getBlastRadius, getRootCause } from '../../src/traverse.js'
@@ -4811,6 +4811,17 @@ describe('Web shell multi-project routing (ADR-057)', () => {
       }
     }
     expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  // ADR-057 enforcement bullet — the multi-project re-fetch test was flagged
+  // as needing Vitest + RTL tooling new to the web track. This assertion
+  // confirms the test file is in place; the test itself is owned by the web
+  // workspace's vitest run, not this one.
+  it('Multi-project re-fetch test exists in packages/web/test/ (ADR-057 §enforcement)', () => {
+    const testFile = join(WEB, 'test/multi-project-refetch.test.tsx')
+    expect(existsSync(testFile), `expected ${testFile} to exist`).toBe(true)
+    const src = readSrc(testFile)
+    expect(src).toMatch(/project change/i)
   })
 
   it('URL stays in sync — setProject(name) writes ?project=X (ADR-057 #4)', () => {
