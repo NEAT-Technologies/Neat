@@ -486,12 +486,14 @@ export function GraphCanvas({ project, selectedNodeId, onNodeSelect, onGraphLoad
       })
       sse.addEventListener('node-removed', (e) => {
         const { id } = JSON.parse(e.data) as { id: string }
-        cy.getElementById(id).remove()
+        const el = cy.getElementById(id)
+        if (el && el.length) el.remove()
         pushGraphUpdate()
       })
       sse.addEventListener('edge-removed', (e) => {
         const { id } = JSON.parse(e.data) as { id: string }
-        cy.getElementById(id).remove()
+        const el = cy.getElementById(id)
+        if (el && el.length) el.remove()
         pushGraphUpdate()
       })
       sse.addEventListener('error', () => {
