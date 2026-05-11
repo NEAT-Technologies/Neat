@@ -37,15 +37,14 @@ function readStoredProject(): string | null {
 export function AppShell() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [graphData, setGraphData] = useState<GraphData | null>(null)
-  // ADR-057 #2 — start with URL or localStorage (synchronous), then resolve
-  // against /projects on mount if neither was set.
-  const [project, setProjectState] = useState<string>(() => {
-    return readUrlProject() ?? readStoredProject() ?? 'default'
-  })
+  // ADR-057 #2a — SSR initial state is always 'default' on both server and
+  // client so the project-name text node is byte-identical at hydration time.
+  // The full resolution chain runs after mount in the useEffect below.
+  const [project, setProjectState] = useState<string>('default')
   const [debugOpen, setDebugOpen] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cyRef = useRef<any>(null)
-  const resolvedRef = useRef(readUrlProject() !== null || readStoredProject() !== null)
+  const resolvedRef = useRef(false)
 
   // ADR-057 #1, #4 — single source of truth + URL sync.
   function setProject(name: string): void {
@@ -61,20 +60,22 @@ export function AppShell() {
     window.history.replaceState({}, '', url)
   }
 
-  // ADR-057 #2.3, #2.4 — if neither URL nor localStorage gave us a project,
-  // fetch /projects and use the first entry; fall back to 'default' if empty.
+  // ADR-057 #2 + #2a — full resolution chain runs after mount.
+  // URL → localStorage → first /projects → 'default' (already the initial state).
+  // Browser-only globals are read here, never in the synchronous render path.
   useEffect(() => {
     if (resolvedRef.current) return
     resolvedRef.current = true
+    const fromUrl = readUrlProject()
+    if (fromUrl) { setProject(fromUrl); return }
+    const fromStorage = readStoredProject()
+    if (fromStorage) { setProject(fromStorage); return }
     fetch('/api/projects')
       .then((r) => (r.ok ? r.json() : []))
       .then((data: ProjectEntry[] | { projects?: ProjectEntry[] }) => {
         const list = Array.isArray(data) ? data : Array.isArray(data?.projects) ? data.projects : []
-        if (list.length > 0 && list[0]?.name) {
-          setProject(list[0].name)
-        } else {
-          setProject('default')
-        }
+        if (list.length > 0 && list[0]?.name) setProject(list[0].name)
+        // else: stay on 'default' — already the initial state
       })
       .catch(() => {
         /* registry unreachable — keep 'default' fallback */
