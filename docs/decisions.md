@@ -1996,3 +1996,9 @@ Both costs come from the same source: we're paying an SSR tax for a benefit we d
 The two SSR-safety scans (no `useState` lazy initializer / `useRef` initial value reads browser globals in web components) are removed — they were guarding a constraint that no longer applies.
 
 **Why a new ADR and not a third amendment to ADR-057.** Amendments are appropriate for tightening or clarifying an existing rule; ADR-062 removes a rule and adds a structurally different one (client-only render boundary vs SSR-safe execution discipline). Treating it as supersession leaves the trail readable for future sessions.
+
+**Amendment (2026-05-11) — §4 extended to /incidents.**
+
+The /incidents page had the same double-fetch shape AppShell did before ADR-062: `useState<string>('default')`, a `useEffect` that resolves the project from URL/localStorage, and a `useEffect([project])` that re-fires once the resolved value lands. Same root cause as the AppShell case — the SSR initial state has to be `'default'` to keep hydration byte-identical, which mandates the deferred resolution — and the same fix shape applies.
+
+§4 ("Other routes keep SSR") is amended: `/incidents/page.tsx` also mounts client-only via `dynamic({ ssr: false })`. Layout, `/api/**` routes, and any future routes default to SSR; an additional route opts out only by being added here. This keeps the minimum-blast-radius principle intact — every SSR-off opt-out is named explicitly, not opted into by default.

@@ -4890,11 +4890,17 @@ describe('Web shell multi-project routing (ADR-057)', () => {
   // byte-identical-initial-state constraint no longer binds, so guarding
   // useState lazy initializers and useRef initial values against browser-API
   // reads is moot. What we guard instead is the client-only boundary itself.
-  it('app/page.tsx mounts AppShell via next/dynamic with { ssr: false } (ADR-062)', () => {
-    const page = readSrc(join(WEB, 'app/page.tsx'))
-    expect(page).toMatch(/from\s+['"]next\/dynamic['"]/)
-    expect(page).toMatch(/\bdynamic\s*\(/)
-    expect(page).toMatch(/ssr\s*:\s*false/)
+  //
+  // 2026-05-11 amendment extends §4 to /incidents/page.tsx — same shape,
+  // same fix. The scan loops over every known client-only mount.
+  it('client-only page mounts use dynamic({ ssr: false }) (ADR-062 §4)', () => {
+    const paths = [join(WEB, 'app/page.tsx'), join(WEB, 'app/incidents/page.tsx')]
+    for (const p of paths) {
+      const src = readSrc(p)
+      expect(src, p).toMatch(/from\s+['"]next\/dynamic['"]/)
+      expect(src, p).toMatch(/\bdynamic\s*\(/)
+      expect(src, p).toMatch(/ssr\s*:\s*false/)
+    }
   })
 })
 
