@@ -4874,18 +4874,17 @@ describe('Web shell multi-project routing (ADR-057)', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 
-  // ADR-057 amendment rule 2a — SSR-safe execution of the resolution chain.
-  // No useState lazy initializer or useRef initial value in web components
-  // / pages may call browser-only globals during the render path. The
-  // 2026-05-11 hydration bug ("Text content did not match. Server: 'default'
-  // Client: 'Neat'") came from exactly this pattern. Implementation flips
-  // these from todo to live once the AppShell fix lands.
-  it.todo(
-    'no useState(...) lazy initializer in packages/web/app/components/** or packages/web/app/**/page.tsx reads window.* / localStorage.* / document.* / navigator.* (ADR-057 #2a — SSR safety)',
-  )
-  it.todo(
-    'no useRef(...) initial value in packages/web/app/components/** or packages/web/app/**/page.tsx reads window.* / localStorage.* / document.* / navigator.* (ADR-057 #2a — SSR safety)',
-  )
+  // ADR-062 — AppShell renders client-only. The two ADR-057 #2a SSR-safety
+  // todos this replaces are superseded; with no SSR pass over AppShell the
+  // byte-identical-initial-state constraint no longer binds, so guarding
+  // useState lazy initializers and useRef initial values against browser-API
+  // reads is moot. What we guard instead is the client-only boundary itself.
+  it('app/page.tsx mounts AppShell via next/dynamic with { ssr: false } (ADR-062)', () => {
+    const page = readSrc(join(WEB, 'app/page.tsx'))
+    expect(page).toMatch(/from\s+['"]next\/dynamic['"]/)
+    expect(page).toMatch(/\bdynamic\s*\(/)
+    expect(page).toMatch(/ssr\s*:\s*false/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────

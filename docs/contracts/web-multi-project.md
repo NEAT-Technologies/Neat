@@ -11,7 +11,7 @@ governs:
   - "packages/web/lib/proxy.ts"
   - "packages/web/lib/fixtures.ts"
   - "packages/web/app/api/**"
-adr: [ADR-057, ADR-026, ADR-051]
+adr: [ADR-057, ADR-062, ADR-026, ADR-051]
 ---
 
 # Web shell multi-project routing contract
@@ -37,19 +37,31 @@ In order, first non-empty wins:
 3. First entry from `GET /projects` if registry is non-empty
 4. `'default'` fallback (only allowed value of `'default'` in branching logic)
 
-### 2a. SSR-safe execution of the resolution chain (ADR-057 amendment)
+Steps 1-2 run synchronously inside the `useState` lazy initializer; step 3 is async and runs from a `useEffect` after mount only when steps 1-2 produced no value. AppShell is rendered client-only (see rule 2a below), so the synchronous reads are safe — no server-side execution to disagree with.
 
-`AppShell.tsx`'s `useState<string>('default')` is the contract surface. Both server and client render `'default'` as the initial state so server-rendered HTML and first-client-render HTML are byte-identical at the project-name text node.
+### 2a. AppShell renders client-only (ADR-062, supersedes the 2026-05-11 SSR-safety amendment)
 
-The four-step resolution chain in rule #2 runs entirely in a `useEffect` after mount — never during the synchronous render path. **Forbidden patterns:**
+`packages/web/app/page.tsx` mounts AppShell via `next/dynamic` with `{ ssr: false }`. The Next.js server emits the static HTML shell (head, fonts, CSS link, empty `<body>`); the entire AppShell tree builds on the client.
 
-- `useState(() => /* reads window.*, localStorage.*, document.*, navigator.* */)` lazy initializers
-- `useRef(/* reads any browser API */)` initial values
-- Any synchronous read of browser-only globals during a component's render path
+Required shape:
 
-These break Next.js hydration because the server has no DOM. The 2026-05-11 hydration bug (`Text content did not match. Server: "default" Client: "Neat"`) was caused by exactly this pattern; this rule mechanically prevents recurrence.
+```tsx
+// packages/web/app/page.tsx
+import dynamic from 'next/dynamic'
+const AppShell = dynamic(() => import('./components/AppShell').then((m) => m.AppShell), {
+  ssr: false,
+})
+```
 
-Same rule applies to every component under `packages/web/app/components/**` and every route under `packages/web/app/**/page.tsx`, not just `AppShell.tsx`.
+Consequences:
+
+- AppShell may read `window.*` / `localStorage.*` / `document.*` / `navigator.*` synchronously during its render path. The lazy-initializer pattern for rule 2 is the contract surface, not a workaround.
+- There is no server-side first render to keep byte-identical. The earlier ADR-057 "rule 2a — SSR-safe execution" amendment is superseded; its body is retained in `decisions.md` for historical context only.
+- Other routes (`/incidents`, `/api/**`) keep server-side rendering — only the AppShell subtree is client-only.
+
+Forbidden:
+
+- Removing `{ ssr: false }` from the `dynamic(...)` call without a superseding ADR. The two costs the SSR-safe amendment imposed (the `'default'`-flash and the double-fetch on every `useEffect([project])` consumer) re-appear immediately if AppShell starts SSR-ing again.
 
 ### 3. Project change triggers data refresh
 
@@ -97,7 +109,6 @@ Allowed locations for project-name string literals:
 - Every API proxy route under `packages/web/app/api/` forwards `project` query/path to the backend.
 - No hardcoded project names (`medusa`, `neat`, `demo`, etc.) in branching logic under `packages/web/app/components/` or `packages/web/lib/` (excluding fixtures.ts).
 - Multi-project re-fetch test: render AppShell with `project=A`, change to `B`, assert all data-fetching hooks re-ran. Requires Vitest + React Testing Library — new tooling for the web track. Flag in PR.
-- **SSR-safe: no `useState(...)` lazy initializer in `packages/web/app/components/**` or `packages/web/app/**/page.tsx` calls `window.*` / `localStorage.*` / `document.*` / `navigator.*` (ADR-057 #2a).**
-- **SSR-safe: no `useRef(...)` initial value in those files reads the same browser APIs (ADR-057 #2a).**
+- **Client-only boundary: `app/page.tsx` imports `dynamic` from `next/dynamic` and mounts AppShell with `{ ssr: false }` (ADR-062).**
 
-Full rationale: [ADR-057](../decisions.md#adr-057--web-shell-multi-project-routing).
+Full rationale: [ADR-057](../decisions.md#adr-057--web-shell-multi-project-routing), [ADR-062](../decisions.md#adr-062--web-shell-renders-client-only-ssr-disabled-at-the-appshell-boundary).

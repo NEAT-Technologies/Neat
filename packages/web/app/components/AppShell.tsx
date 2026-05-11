@@ -38,7 +38,8 @@ export function AppShell() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   // ADR-057 #2 — start with URL or localStorage (synchronous), then resolve
-  // against /projects on mount if neither was set.
+  // against /projects on mount if neither was set. Safe because AppShell
+  // mounts client-only via dynamic({ ssr: false }) in app/page.tsx (ADR-062).
   const [project, setProjectState] = useState<string>(() => {
     return readUrlProject() ?? readStoredProject() ?? 'default'
   })
