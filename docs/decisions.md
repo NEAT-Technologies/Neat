@@ -1636,6 +1636,25 @@ This is the runtime corollary of ADR-026 (multi-project dual-mount). The backend
 - No hardcoded project names (`medusa`, `neat`, `demo`, etc.) in branching logic under `packages/web/app/components/` or `packages/web/lib/`.
 - Multi-project re-fetch test: render AppShell with project=A, change to B, assert all data-fetching hooks re-ran (uses Vitest + React Testing Library — a new-tooling addition for the web track).
 
+**Amendment (2026-05-11) — rule 2a, SSR-safe resolution chain.**
+
+A live web-shell session against the medusa project surfaced a hydration error: `Text content did not match. Server: "default" Client: "Neat"`. Root cause was `AppShell.tsx` running rule 2's resolution chain *synchronously inside a `useState` lazy initializer and a `useRef` initial value*. SSR has no `window` → returned `'default'`; client first render had `localStorage` → returned the stored project. The two renders disagreed at the project-name text node; React 18 threw error 425 / 418 and the GraphCanvas's `useEffect` failed to mount cleanly against the recovery render — net effect: no graph visible.
+
+This was a contract violation of rule #7 (*"`'default'` is allowed only as the explicit fallback in `AppShell.tsx`'s state initializer"*) but the original ADR's rule #2 didn't make the SSR-safe execution explicit. This amendment closes that gap.
+
+2a. **Resolution chain runs client-only.** SSR initial state is always `'default'` on both server and client to make server-rendered HTML byte-identical to first-client-render HTML at the project-name text node. The four-step resolution chain in rule #2 runs entirely in `useEffect` after mount — never during the synchronous render path, never in a `useState` lazy initializer, never in a `useRef` initial value. This is the SSR-safe execution of rule #2's logical order and the explicit reading of rule #7's `'default'`-as-initial-state requirement.
+
+The same SSR-safety rule applies to every component under `packages/web/app/components/` and every route under `packages/web/app/**/page.tsx` — lazy initializers / ref initial values reading `window.*` / `localStorage.*` / `document.*` / `navigator.*` are forbidden across the surface, not just in `AppShell.tsx`.
+
+**Enforcement additions for the amendment.** Two new live regression scans in the ADR-057 describe block:
+
+- No `useState(...)` lazy initializer in `packages/web/app/components/**` (or `packages/web/app/**/page.tsx`) calls `window.*` / `localStorage.*` / `document.*` / `navigator.*`.
+- No `useRef(...)` initial value in those files calls the same browser APIs.
+
+Both fail closed — match → fail, no match → pass. They flip to live the moment the AppShell patch lands.
+
+**First application.** The implementation fix lands alongside this amendment (handoff prompt in conversation). Affected files: `AppShell.tsx` (primary patch), `incidents/page.tsx` (defense-in-depth guard), `GraphCanvas.tsx` (null-check on `cy.getElementById(id).remove()` — separate small defensive improvement on a file already being touched).
+
 ## ADR-058 — Web shell debugging surface
 
 **Date:** 2026-05-10

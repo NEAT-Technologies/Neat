@@ -37,6 +37,20 @@ In order, first non-empty wins:
 3. First entry from `GET /projects` if registry is non-empty
 4. `'default'` fallback (only allowed value of `'default'` in branching logic)
 
+### 2a. SSR-safe execution of the resolution chain (ADR-057 amendment)
+
+`AppShell.tsx`'s `useState<string>('default')` is the contract surface. Both server and client render `'default'` as the initial state so server-rendered HTML and first-client-render HTML are byte-identical at the project-name text node.
+
+The four-step resolution chain in rule #2 runs entirely in a `useEffect` after mount — never during the synchronous render path. **Forbidden patterns:**
+
+- `useState(() => /* reads window.*, localStorage.*, document.*, navigator.* */)` lazy initializers
+- `useRef(/* reads any browser API */)` initial values
+- Any synchronous read of browser-only globals during a component's render path
+
+These break Next.js hydration because the server has no DOM. The 2026-05-11 hydration bug (`Text content did not match. Server: "default" Client: "Neat"`) was caused by exactly this pattern; this rule mechanically prevents recurrence.
+
+Same rule applies to every component under `packages/web/app/components/**` and every route under `packages/web/app/**/page.tsx`, not just `AppShell.tsx`.
+
 ### 3. Project change triggers data refresh
 
 When `project` changes — switcher click, URL update, deep link — every component that depends on it re-fetches via `useEffect(..., [project])`. No stale data from the previous project carries over. GraphCanvas, Inspector, StatusBar, Incidents page — all of them.
@@ -83,5 +97,7 @@ Allowed locations for project-name string literals:
 - Every API proxy route under `packages/web/app/api/` forwards `project` query/path to the backend.
 - No hardcoded project names (`medusa`, `neat`, `demo`, etc.) in branching logic under `packages/web/app/components/` or `packages/web/lib/` (excluding fixtures.ts).
 - Multi-project re-fetch test: render AppShell with `project=A`, change to `B`, assert all data-fetching hooks re-ran. Requires Vitest + React Testing Library — new tooling for the web track. Flag in PR.
+- **SSR-safe: no `useState(...)` lazy initializer in `packages/web/app/components/**` or `packages/web/app/**/page.tsx` calls `window.*` / `localStorage.*` / `document.*` / `navigator.*` (ADR-057 #2a).**
+- **SSR-safe: no `useRef(...)` initial value in those files reads the same browser APIs (ADR-057 #2a).**
 
 Full rationale: [ADR-057](../decisions.md#adr-057--web-shell-multi-project-routing).
