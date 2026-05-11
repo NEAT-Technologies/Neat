@@ -4878,14 +4878,80 @@ describe('Web shell multi-project routing (ADR-057)', () => {
   // No useState lazy initializer or useRef initial value in web components
   // / pages may call browser-only globals during the render path. The
   // 2026-05-11 hydration bug ("Text content did not match. Server: 'default'
-  // Client: 'Neat'") came from exactly this pattern. Implementation flips
-  // these from todo to live once the AppShell fix lands.
-  it.todo(
-    'no useState(...) lazy initializer in packages/web/app/components/** or packages/web/app/**/page.tsx reads window.* / localStorage.* / document.* / navigator.* (ADR-057 #2a — SSR safety)',
-  )
-  it.todo(
-    'no useRef(...) initial value in packages/web/app/components/** or packages/web/app/**/page.tsx reads window.* / localStorage.* / document.* / navigator.* (ADR-057 #2a — SSR safety)',
-  )
+  // Client: 'Neat'") came from exactly this pattern.
+  //
+  // Allowed: references inside helper functions that guard with
+  // `typeof window === 'undefined'` — the scan only walks the argument
+  // expression of useState(...) / useRef(...), not the rest of the file.
+  function ssrTargetFiles(): string[] {
+    const APP = join(WEB, 'app')
+    const out: string[] = []
+    function walk(dir: string): void {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry)
+        const st = statSync(full)
+        if (st.isDirectory()) walk(full)
+        else if (entry.endsWith('.tsx')) out.push(full)
+      }
+    }
+    walk(APP)
+    return out.filter((f) => f.includes('/app/components/') || f.endsWith('/page.tsx'))
+  }
+  function extractCallArgs(src: string, name: string): string[] {
+    const args: string[] = []
+    const re = new RegExp(`\\b${name}\\s*(<[^()]*>)?\\s*\\(`, 'g')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(src)) !== null) {
+      let depth = 1
+      let i = m.index + m[0].length
+      const start = i
+      let inStr: string | null = null
+      while (i < src.length && depth > 0) {
+        const c = src[i]
+        if (inStr) {
+          if (c === inStr && src[i - 1] !== '\\') inStr = null
+        } else if (c === '"' || c === "'" || c === '`') {
+          inStr = c
+        } else if (c === '(') {
+          depth++
+        } else if (c === ')') {
+          depth--
+        }
+        i++
+      }
+      args.push(src.slice(start, i - 1))
+    }
+    return args
+  }
+  const BROWSER_API = /\b(?:window|localStorage|document|navigator)\./
+
+  it('no useState(...) lazy initializer in packages/web/app/components/** or packages/web/app/**/page.tsx reads window.* / localStorage.* / document.* / navigator.* (ADR-057 #2a — SSR safety)', () => {
+    const offenders: string[] = []
+    for (const f of ssrTargetFiles()) {
+      const src = readSrc(f)
+      for (const arg of extractCallArgs(src, 'useState')) {
+        const trimmed = arg.trimStart()
+        const isLazy = /^\(\s*\)\s*=>/.test(trimmed) || /^function\b/.test(trimmed)
+        if (isLazy && BROWSER_API.test(arg)) {
+          offenders.push(`${f}: useState(${arg.trim().slice(0, 80)}…)`)
+        }
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('no useRef(...) initial value in packages/web/app/components/** or packages/web/app/**/page.tsx reads window.* / localStorage.* / document.* / navigator.* (ADR-057 #2a — SSR safety)', () => {
+    const offenders: string[] = []
+    for (const f of ssrTargetFiles()) {
+      const src = readSrc(f)
+      for (const arg of extractCallArgs(src, 'useRef')) {
+        if (BROWSER_API.test(arg)) {
+          offenders.push(`${f}: useRef(${arg.trim().slice(0, 80)}…)`)
+        }
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
