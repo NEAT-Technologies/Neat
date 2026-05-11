@@ -4579,31 +4579,164 @@ describe('Publish system contract (ADR-052)', () => {
 // inventory. All scans flip from todo to live as Jed wires the thirteen
 // known stubs from packages/web/audit/09-gaps-and-stubs.md.
 describe('Web shell completeness (ADR-056)', () => {
-  it.todo(
-    'no empty onClick={() => {}} or onClick={undefined} in packages/web/app/components/** (ADR-056 #2)',
-  )
-  it.todo(
-    'no two files under packages/web/app/components/ export default components with the same name (ADR-056 #3)',
-  )
-  it.todo(
-    'every entry in audit/09-gaps-and-stubs.md "Stub buttons" tables corresponds to a button in source (ADR-056 #4)',
-  )
-  // Per-element todos — flip as each is wired or explicitly disabled.
-  it.todo('TopBar: History button wired or disabled (ADR-056 #1)')
-  it.todo('TopBar: Share button wired or disabled (ADR-056 #1)')
-  it.todo('Rail: Layers button wired or disabled (ADR-056 #1)')
-  it.todo('Rail: Find button wired or disabled (ADR-056 #1)')
-  it.todo('Rail: NeatScript button wired or disabled (ADR-056 #1)')
-  it.todo('Rail: Time travel button wired or disabled (ADR-056 #1)')
-  it.todo('Rail: Blast radius button wired or disabled (ADR-056 #1)')
-  it.todo('Rail: Diff button wired or disabled (ADR-056 #1)')
-  it.todo('Rail: Comments button wired or disabled (ADR-056 #1)')
-  it.todo('Rail: Agents button wired or disabled (ADR-056 #1)')
-  it.todo('Rail: Settings button wired or disabled (ADR-056 #1)')
-  it.todo('GraphCanvas toolbar: Layout: cose toggle wired or disabled (ADR-056 #1)')
-  it.todo('GraphCanvas toolbar: Locked toggle wired or disabled (ADR-056 #1)')
-  it.todo('Inspector: Owners tab wired or disabled (ADR-056 #1)')
-  it.todo('Inspector: History tab wired or disabled (ADR-056 #1)')
+  const REPO_ROOT = join(__dirname, '../../../..')
+  const WEB_COMPONENTS = join(REPO_ROOT, 'packages/web/app/components')
+  const AUDIT_DOC = join(REPO_ROOT, 'packages/web/audit/09-gaps-and-stubs.md')
+
+  function walkTsx(dir: string, files: string[] = []): string[] {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry)
+      const st = statSync(full)
+      if (st.isDirectory()) walkTsx(full, files)
+      else if (full.endsWith('.tsx') || full.endsWith('.ts')) files.push(full)
+    }
+    return files
+  }
+
+  function readComponent(name: string): string {
+    return readFileSync(join(WEB_COMPONENTS, `${name}.tsx`), 'utf8')
+  }
+
+  // Scans the source for every occurrence of a label and asserts that at
+  // least one sits inside a JSX context with a click handler or `disabled`
+  // attribute. Multiple-occurrence handling is intentional — a label string
+  // can appear in helper-function names, comments, or the visible text.
+  function assertWiredOrDisabled(source: string, label: string, file: string): void {
+    const occurrences: number[] = []
+    let from = 0
+    while (true) {
+      const i = source.indexOf(label, from)
+      if (i < 0) break
+      occurrences.push(i)
+      from = i + label.length
+    }
+    expect(occurrences.length, `${label} not found in ${file}`).toBeGreaterThan(0)
+
+    const wiredOrDisabled = occurrences.some((idx) => {
+      const window = source.slice(Math.max(0, idx - 800), idx + 400)
+      const lastTagOpen = Math.max(window.lastIndexOf('<button'), window.lastIndexOf('<div'), 0)
+      const tagWindow = window.slice(lastTagOpen)
+      return /onClick\s*=/.test(tagWindow) || /\bdisabled\b/.test(tagWindow) || /aria-disabled/.test(tagWindow)
+    })
+    expect(
+      wiredOrDisabled,
+      `${label} in ${file} is rendered without onClick or disabled attribute`,
+    ).toBe(true)
+  }
+
+  it('no empty onClick={() => {}} or onClick={undefined} in packages/web/app/components/** (ADR-056 #2)', () => {
+    const offenders: string[] = []
+    const empty = /onClick\s*=\s*\{(?:\(\s*\)\s*=>\s*\{\s*\}|undefined)\s*\}/
+    for (const f of walkTsx(WEB_COMPONENTS)) {
+      const content = readFileSync(f, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        if (empty.test(line)) offenders.push(`${f}:${i + 1}: ${line.trim()}`)
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('no two files under packages/web/app/components/ export default components with the same name (ADR-056 #3)', () => {
+    const byName = new Map<string, string[]>()
+    const decl = /export\s+(?:default\s+)?(?:function|const)\s+([A-Z][A-Za-z0-9_]*)/g
+    for (const f of walkTsx(WEB_COMPONENTS)) {
+      const content = readFileSync(f, 'utf8')
+      for (const m of content.matchAll(decl)) {
+        const name = m[1] as string
+        const list = byName.get(name) ?? []
+        list.push(f)
+        byName.set(name, list)
+      }
+    }
+    const dupes: string[] = []
+    for (const [name, files] of byName.entries()) {
+      if (files.length > 1) dupes.push(`${name}: ${files.join(', ')}`)
+    }
+    expect(dupes, dupes.join('\n')).toEqual([])
+  })
+
+  it('every entry in audit/09-gaps-and-stubs.md "Stub buttons" tables corresponds to a button in source (ADR-056 #4)', () => {
+    const audit = readFileSync(AUDIT_DOC, 'utf8')
+    const stubsHeading = audit.indexOf('## Stub buttons')
+    const featureGapsHeading = audit.indexOf('## Feature gaps')
+    expect(stubsHeading, 'audit doc missing "Stub buttons" section').toBeGreaterThan(-1)
+    const stubsSection = audit.slice(stubsHeading, featureGapsHeading > -1 ? featureGapsHeading : undefined)
+
+    const rows = stubsSection.match(/^\|[^\n]+\|/gm) ?? []
+    const labels = rows
+      .map((row) => row.split('|').map((c) => c.trim()).filter(Boolean)[0] ?? '')
+      .filter(
+        (s) =>
+          s &&
+          !/^-+$/.test(s) &&
+          !['Button', 'Tab', 'Status', 'Notes', 'Issue'].includes(s),
+      )
+
+    const allSrc = walkTsx(WEB_COMPONENTS)
+      .map((f) => readFileSync(f, 'utf8'))
+      .join('\n')
+
+    const missing = labels.filter((raw) => {
+      const stem = raw.replace(/\s*\([^)]*\)\s*$/, '')
+      return !allSrc.includes(stem)
+    })
+    expect(missing, `audit lists labels not present in source: ${missing.join(', ')}`).toEqual([])
+  })
+
+  it('TopBar: History button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('TopBar'), 'History', 'TopBar.tsx')
+  })
+  it('TopBar: Share button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('TopBar'), 'Share', 'TopBar.tsx')
+  })
+  it('Rail: Layers button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('Rail'), 'Layers', 'Rail.tsx')
+  })
+  it('Rail: Find button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('Rail'), 'Find', 'Rail.tsx')
+  })
+  it('Rail: NeatScript button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('Rail'), 'NeatScript', 'Rail.tsx')
+  })
+  it('Rail: Time travel button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('Rail'), 'Time travel', 'Rail.tsx')
+  })
+  it('Rail: Blast radius button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('Rail'), 'Blast radius', 'Rail.tsx')
+  })
+  it('Rail: Diff button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('Rail'), 'Diff', 'Rail.tsx')
+  })
+  it('Rail: Comments button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('Rail'), 'Comments', 'Rail.tsx')
+  })
+  it('Rail: Agents button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('Rail'), 'Agents', 'Rail.tsx')
+  })
+  it('Rail: Settings button wired or disabled (ADR-056 #1)', () => {
+    assertWiredOrDisabled(readComponent('Rail'), 'Settings', 'Rail.tsx')
+  })
+  it('GraphCanvas toolbar: Layout: cose toggle wired or disabled (ADR-056 #1)', () => {
+    const src = readComponent('GraphCanvas')
+    expect(src).toMatch(/Layout:/)
+    expect(src).toMatch(/onClick=\{\(\)\s*=>\s*cyRef\.current\?\.layout/)
+  })
+  it('GraphCanvas toolbar: Locked toggle wired or disabled (ADR-056 #1)', () => {
+    const src = readComponent('GraphCanvas')
+    expect(src).toMatch(/Locked/)
+    expect(src).toMatch(/autoungrabify/)
+  })
+  it('Inspector: Owners tab wired or disabled (ADR-056 #1)', () => {
+    const src = readComponent('Inspector')
+    expect(src).toMatch(/setActiveTab\(['"]owners['"]\)/)
+  })
+  it('Inspector: History tab wired or disabled (ADR-056 #1)', () => {
+    const src = readComponent('Inspector')
+    const idx = src.indexOf('History')
+    expect(idx).toBeGreaterThan(-1)
+    const window = src.slice(Math.max(0, idx - 400), idx + 100)
+    expect(window).toMatch(/aria-disabled=\{?true\}?|disabled/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4737,27 +4870,53 @@ describe('Web shell multi-project routing (ADR-057)', () => {
 // StatusBar shows daemon + SSE connection state. No silent API failures.
 // Debug panel keyboard-shortcut toggleable. Read-only.
 describe('Web shell debugging surface (ADR-058)', () => {
-  it.todo(
-    'StatusBar.tsx renders an element with data-connection-state attribute (ADR-058 #1)',
-  )
-  it.todo(
-    'StatusBar.tsx renders an element with data-sse-state attribute (ADR-058 #2)',
-  )
-  it.todo(
-    'proxy.ts emits a toast or banner on non-2xx response (ADR-058 #3)',
-  )
-  it.todo(
-    'A DebugPanel.tsx (or equivalent) component file exists in packages/web/app/components/ (ADR-058 #4)',
-  )
-  it.todo(
-    'Debug panel toggleable via Ctrl+Shift+D / Cmd+Shift+D keyboard shortcut (ADR-058 #4)',
-  )
-  it.todo(
-    'TopBar.tsx or StatusBar.tsx renders the daemon URL string (ADR-058 #5)',
-  )
-  it.todo(
-    'DebugPanel does not include POST/PUT/DELETE buttons — read-only enforcement (ADR-058 #6)',
-  )
+  const REPO_ROOT = join(__dirname, '../../../..')
+  const WEB = join(REPO_ROOT, 'packages/web')
+  const STATUSBAR = join(WEB, 'app/components/StatusBar.tsx')
+  const TOPBAR = join(WEB, 'app/components/TopBar.tsx')
+  const APP_SHELL = join(WEB, 'app/components/AppShell.tsx')
+  const DEBUG_PANEL = join(WEB, 'app/components/DebugPanel.tsx')
+  const PROXY_CLIENT = join(WEB, 'lib/proxy-client.ts')
+
+  function readSrc(p: string): string {
+    return readFileSync(p, 'utf8')
+  }
+
+  it('StatusBar.tsx renders an element with data-connection-state attribute (ADR-058 #1)', () => {
+    expect(readSrc(STATUSBAR)).toMatch(/data-connection-state=/)
+  })
+
+  it('StatusBar.tsx renders an element with data-sse-state attribute (ADR-058 #2)', () => {
+    expect(readSrc(STATUSBAR)).toMatch(/data-sse-state=/)
+  })
+
+  it('proxy.ts emits a toast or banner on non-2xx response (ADR-058 #3)', () => {
+    const src = readSrc(PROXY_CLIENT)
+    expect(src).toMatch(/toastBus\.emit/)
+    expect(src).toMatch(/!res\.ok/)
+  })
+
+  it('A DebugPanel.tsx (or equivalent) component file exists in packages/web/app/components/ (ADR-058 #4)', () => {
+    expect(statSync(DEBUG_PANEL).isFile()).toBe(true)
+  })
+
+  it('Debug panel toggleable via Ctrl+Shift+D / Cmd+Shift+D keyboard shortcut (ADR-058 #4)', () => {
+    const src = readSrc(APP_SHELL)
+    expect(src).toMatch(/ctrlKey[\s\S]*?metaKey[\s\S]*?shiftKey/)
+    expect(src).toMatch(/setDebugOpen/)
+  })
+
+  it('TopBar.tsx or StatusBar.tsx renders the daemon URL string (ADR-058 #5)', () => {
+    const top = readSrc(TOPBAR)
+    const bar = readSrc(STATUSBAR)
+    expect(top.includes('CORE_URL_PUBLIC') || bar.includes('CORE_URL_PUBLIC')).toBe(true)
+  })
+
+  it('DebugPanel does not include POST/PUT/DELETE buttons — read-only enforcement (ADR-058 #6)', () => {
+    const src = readSrc(DEBUG_PANEL)
+    expect(src).not.toMatch(/method\s*:\s*['"](POST|PUT|DELETE|PATCH)['"]/)
+    expect(src).not.toMatch(/fetch\([^)]*,\s*\{[^}]*method/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────

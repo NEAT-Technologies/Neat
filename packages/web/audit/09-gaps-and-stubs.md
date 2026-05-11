@@ -1,101 +1,110 @@
 # Gaps and Stubs
 
-Unimplemented elements, visual stubs, known missing behaviours, and improvement candidates.
+Inventory of stub UI, deferred features, and known gaps in the web shell.
+Per ADR-056 §4 this file is the canonical inventory the contract test reads.
+Each entry is in one of three states:
+
+- **wired** — handler implemented; element produces an observable change
+- **disabled** — element renders with `disabled` + affordance (lower opacity, "coming in v0.3.x" tooltip)
+- **deferred** — feature not yet rendered at all (no UI surface to wire/disable)
+
+When code state changes, this file changes in lockstep.
 
 ---
 
-## Stub buttons — no action wired
-
-These buttons render correctly but do nothing when clicked.
+## Stub buttons — current state
 
 ### TopBar
 
-| Button | Location | What it should do |
-|--------|----------|-------------------|
-| History | `TopBar` top-right | Time-travel panel or graph history view |
-| Share | `TopBar` top-right | Share current graph state / URL copy |
-| Layout: cose | `GraphCanvas` canvas-toolbar | Trigger re-layout (different algorithms) |
-| Locked | `GraphCanvas` canvas-toolbar | Toggle node dragging (`autoungrabify`) |
+| Button | Status | Notes |
+|--------|--------|-------|
+| History | disabled | Tooltip: "History — coming in v0.3.x". |
+| Share | wired | Copies `window.location.href` to clipboard. |
+| Layout | wired | Re-runs cose layout via `cy.layout(...).run()`. |
+| Lock | wired | Toggles `cy.autoungrabify(...)`. |
+
+### GraphCanvas toolbar
+
+| Button | Status | Notes |
+|--------|--------|-------|
+| Layout | wired | Same handler as TopBar Layout — re-runs cose layout. (Renders as "Layout: cose".) |
+| Locked | wired | Toggles `cy.autoungrabify(...)`. |
 
 ### Rail
 
-| Button | Keyboard hint | What it should do |
-|--------|--------------|-------------------|
-| Layers | `L` | Open layered view / group by layer |
-| Find | `F` | Open find panel or focus search bar |
-| NeatScript | `N` | Open NeatScript query editor |
-| Time travel | `T` | Open time-travel scrubber panel |
-| Blast radius | `B` | Open blast-radius analysis panel |
-| Diff | `D` | Open graph diff view |
-| Comments | `C` | Open comments sidebar |
-| Agents | `A` | Open agent control panel |
-| Settings | _(none)_ | Open settings panel |
+| Button | Status | Notes |
+|--------|--------|-------|
+| Graph (G) | wired | Active route — primary view. |
+| Layers (L) | disabled | Tooltip: "Layers — coming in v0.3.x". |
+| Find (F) | wired | Focuses TopBar search input. |
+| NeatScript (N) | disabled | Tooltip: "NeatScript — coming in v0.3.x". |
+| Time travel (T) | disabled | Tooltip: "Time travel — coming in v0.3.x". |
+| Blast radius (B) | disabled | Tooltip: "Blast radius — coming in v0.3.x". (Counter badge stays live.) |
+| Diff (D) | disabled | Tooltip: "Diff — coming in v0.3.x". |
+| Comments (C) | disabled | Tooltip: "Comments — coming in v0.3.x". |
+| Incidents | wired | Routes to `/incidents`; badge from `/api/incidents`. |
+| Agents (A) | disabled | Tooltip: "Agents — coming in v0.3.x". |
+| Settings | disabled | Tooltip: "Settings — coming in v0.3.x". |
 
 ### Inspector
 
-| Tab | What it should do |
-|-----|------------------|
-| Owners | Show code owners / team responsible for the node |
-| History | Show graph change history for this specific node |
+| Tab | Status | Notes |
+|-----|--------|-------|
+| Inspect | wired | Default tab — node detail. |
+| Edges | wired | All in/out edges with provenance. |
+| Owners | wired | Renders `ServiceNode.owner` per ADR-054, or "no owner declared" hint. |
+| History | disabled | Tooltip: "History — coming in v0.3.x". |
 
 ---
 
-## Feature gaps
+## Feature gaps (not stubs — not yet rendered)
 
 ### Search — no result navigation
 
-Clicking a search result clears the query and closes the dropdown but does **not**:
-- Select the node in the graph
-- Pan/zoom the canvas to the node
-- Open the inspector for the node
+Clicking a search result selects the node via `onNodeSelect` but does not currently
+pan/zoom the canvas. The selection useEffect in `GraphCanvas.tsx` does pan to the
+node when `selectedNodeId` changes, so this is largely covered today.
 
-The `SearchResult` type has `node.id` which could be used to call `onNodeSelect` and `cy.getElementById(id).select()`.
+### Incidents — back-link to graph node
 
-### Incidents — no stacktrace display
+`Link` in the incidents row points to `/?node=<id>&project=<X>`, and AppShell
+reads the `?node=` param on mount and pre-selects it. Wired.
 
-`Incident.stacktrace` is in the TypeScript interface and returned by the API, but the table never renders it. No expand/collapse row or detail view.
+### Incidents — badge count on rail
 
-### Incidents — no back-link to graph node
-
-Each incident row has `nodeId` but there's no link to select that node in the graph. The `/incidents` page is a dead-end; navigating back goes to `/` but the node is not pre-selected.
-
-### Incidents — no badge count on rail
-
-The "⚠ Incidents" rail button has no badge (unlike Blast radius which shows violation count). Could show `incidents.count` or unresolved count.
+Rail fetches `/api/incidents?limit=1&project=X` and renders the count. Wired.
 
 ### StatusBar scrubber — not interactive
 
-The time scrubber (`.scrub`) is purely decorative:
-- Fill is always 100% (always "now")
-- No drag/click to time-travel
-- Playhead is permanently at the right edge
+The time scrubber (`.scrub`) is decorative. Time-travel is deferred (`Rail: Time travel`
+is in the disabled list above). Replacing the decoration with a real seek control
+is a v0.3.x concern.
 
-### SSE live updates — no visual feedback
+### SSE live updates — toast/pulse feedback
 
-When `node-added` / `edge-added` events arrive:
-- Node/edge is added to the graph silently
-- Status bar counts are **not** updated (they come from the initial `graphData` state which is never mutated)
-- No toast / pulse / notification
+ADR-058 #3 routed non-2xx fetch errors through the toast surface. SSE successes
+(node-added / edge-added) are recorded into the debug-panel event log without
+user-visible toasts — keeps the surface quiet on healthy days. This is by design.
 
-### Multi-project — graph not re-fetched on project change
+### Multi-project — project change re-fetches
 
-`AppShell` passes `project` prop to `GraphCanvas`, but `GraphCanvas`'s `useEffect` has an empty dependency array (`[]`). Changing the project in the dropdown does not trigger a re-fetch or re-render of the graph.
-
-Fix: add `project` to the `useEffect` dependency array and prepend project to the API URL (e.g. `/api/projects/${project}/graph` or pass as `?project=` param).
+Resolved in ADR-057 (this batch): GraphCanvas, Inspector, StatusBar, Rail, and
+the Incidents page all re-fetch on `project` change.
 
 ### Metrics — fully synthetic
 
-All three metric values (req/s, p99, err%) use `Math.random()` on every render. They will flicker on re-renders and don't represent real data. No metrics API exists yet.
-
-### `GraphView.tsx` — orphan file
-
-`packages/web/app/components/GraphView.tsx` is the old v0.1.3 component. It's no longer imported anywhere (replaced by `AppShell` + `GraphCanvas`). Should be deleted.
+The three Inspector metrics (req/s, p99, err%) still come from `Math.random()`,
+re-randomised per node. No real metrics API yet. Deferred — surfaces as numbers
+that don't change while you stare at one node.
 
 ---
 
-## Keyboard shortcuts — declared but not wired
+## Keyboard shortcuts
 
-The rail tooltips advertise keyboard shortcuts (`G`, `L`, `F`, `N`, `T`, `B`, `D`, `C`, `A`) but there is no `keydown` event listener anywhere in the codebase. The `⌘K` hint in the search bar is also visual-only (no global hotkey handler).
+The Rail tooltips advertise letter shortcuts. Only `F` (Find) and the global
+`Ctrl/Cmd+Shift+D` (debug panel toggle, ADR-058) and `⌘K` (focus search) are
+wired today. Wiring `G/L/N/T/B/D/C/A` is a v0.3.x concern; the tooltip hints
+remain because they document the future surface.
 
 ---
 
@@ -103,12 +112,12 @@ The rail tooltips advertise keyboard shortcuts (`G`, `L`, `F`, `N`, `T`, `B`, `D
 
 | Element | Issue |
 |---------|-------|
-| Rail buttons | No `aria-label` — only visible via hover tooltip |
-| Inspector tabs | No `role="tablist"` / `role="tab"` / `aria-selected` |
-| Canvas | `#cy` has no `aria-label` or `role` |
-| Search input | No `aria-label`, no `aria-expanded` on dropdown |
-| Search dropdown | No `role="listbox"` / `role="option"` |
-| Metrics | Random values re-announced on every render for screen readers |
+| Rail buttons | `aria-label` set on every button. Tooltip via title. |
+| Inspector tabs | `role="tab"` / `aria-selected` set; `aria-disabled` on deferred tabs. |
+| Canvas | `#cy` has `aria-label="Service dependency graph"` and `role="img"`. |
+| Search input | `aria-label`, `aria-expanded` set. |
+| Search dropdown | `role="listbox"` / `role="option"` set. |
+| Metrics | Random values re-announced on every render — known issue, deferred until real metrics. |
 
 ---
 
@@ -116,7 +125,6 @@ The rail tooltips advertise keyboard shortcuts (`G`, `L`, `F`, `N`, `T`, `B`, `D
 
 | Item | Note |
 |------|------|
-| `--n-stream` and `--n-queue` | Same hex (`#b8b0c8`) — may be intentional but duplicated |
-| `cloud` compound type | Uses hardcoded `#1d1d22` instead of a CSS token |
-| Incidents topbar | Uses inline `style` on the Link element instead of a CSS class |
-| `GraphCanvas` `project` prop | Accepted and named `_project` (underscore-prefixed) indicating it's unused |
+| `--n-stream` and `--n-queue` | Same hex (`#b8b0c8`) — may be intentional but duplicated. |
+| `cloud` compound type | Uses hardcoded `#1d1d22` instead of a CSS token. |
+| Incidents topbar | Inline `style` on the Link element instead of a CSS class. |

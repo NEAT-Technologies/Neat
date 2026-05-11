@@ -31,10 +31,23 @@ export function Rail({ project }: RailProps) {
       .catch(() => {})
   }, [project])
 
+  // ADR-056 — Find is wired: dispatches a custom event TopBar's search input listens for.
+  // ADR-056 — Layers / NeatScript / Time travel / Diff / Comments / Agents / Settings
+  // are deferred features; rendered with `disabled` + tooltip affordance so the user
+  // perceives them as unavailable, not broken.
+  function focusFind(): void {
+    const input = document.querySelector<HTMLInputElement>('.top-search input')
+    input?.focus()
+  }
+
+  function disabledTip(label: string): string {
+    return `${label} — coming in v0.3.x`
+  }
+
   return (
     <nav className="rail">
       <div className="rail-group">
-        <button className="rail-btn active" aria-label="Graph view">
+        <button className="rail-btn active" aria-label="Graph view" title="Graph view">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <circle cx="6" cy="6" r="2.5" /><circle cx="18" cy="6" r="2.5" />
             <circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="18" r="2.5" />
@@ -42,13 +55,13 @@ export function Rail({ project }: RailProps) {
           </svg>
           <span className="rail-tip">Graph<span className="k">G</span></span>
         </button>
-        <button className="rail-btn" aria-label="Layers view">
+        <button className="rail-btn" aria-label="Layers (coming soon)" disabled title={disabledTip('Layers')} style={{ opacity: 0.35, cursor: 'not-allowed' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path d="M4 7h16M4 12h10M4 17h16" />
           </svg>
           <span className="rail-tip">Layers<span className="k">L</span></span>
         </button>
-        <button className="rail-btn" aria-label="Find node">
+        <button className="rail-btn" aria-label="Find node" onClick={focusFind} title="Find — focus search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <circle cx="11" cy="11" r="6" /><path d="m20 20-4-4" />
           </svg>
@@ -57,19 +70,19 @@ export function Rail({ project }: RailProps) {
       </div>
 
       <div className="rail-group">
-        <button className="rail-btn" aria-label="NeatScript editor">
+        <button className="rail-btn" aria-label="NeatScript editor (coming soon)" disabled title={disabledTip('NeatScript')} style={{ opacity: 0.35, cursor: 'not-allowed' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" />
           </svg>
           <span className="rail-tip">NeatScript<span className="k">N</span></span>
         </button>
-        <button className="rail-btn" aria-label="Time travel">
+        <button className="rail-btn" aria-label="Time travel (coming soon)" disabled title={disabledTip('Time travel')} style={{ opacity: 0.35, cursor: 'not-allowed' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
           </svg>
           <span className="rail-tip">Time travel<span className="k">T</span></span>
         </button>
-        <button className="rail-btn" aria-label="Blast radius analysis">
+        <button className="rail-btn" aria-label="Blast radius (coming soon)" disabled title={disabledTip('Blast radius')} style={{ opacity: 0.35, cursor: 'not-allowed' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <circle cx="12" cy="12" r="3" /><circle cx="12" cy="12" r="7" />
             <path d="M12 3v2M12 19v2M3 12h2M19 12h2" />
@@ -77,7 +90,7 @@ export function Rail({ project }: RailProps) {
           <span className="rail-tip">Blast radius<span className="k">B</span></span>
           {blastBadge > 0 && <span className="badge">{blastBadge}</span>}
         </button>
-        <button className="rail-btn" aria-label="Graph diff">
+        <button className="rail-btn" aria-label="Graph diff (coming soon)" disabled title={disabledTip('Diff')} style={{ opacity: 0.35, cursor: 'not-allowed' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path d="M8 4 4 8l4 4M16 12l4 4-4 4M14 4l-4 16" />
           </svg>
@@ -86,7 +99,7 @@ export function Rail({ project }: RailProps) {
       </div>
 
       <div className="rail-group">
-        <button className="rail-btn" aria-label="Comments">
+        <button className="rail-btn" aria-label="Comments (coming soon)" disabled title={disabledTip('Comments')} style={{ opacity: 0.35, cursor: 'not-allowed' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path d="M4 6c0-1 1-2 2-2h12c1 0 2 1 2 2v9c0 1-1 2-2 2h-7l-4 4v-4H6c-1 0-2-1-2-2z" />
           </svg>
@@ -99,7 +112,7 @@ export function Rail({ project }: RailProps) {
           <span className="rail-tip">Incidents</span>
           {incidentBadge > 0 && <span className="badge">{incidentBadge}</span>}
         </Link>
-        <button className="rail-btn" aria-label="Agent control panel">
+        <button className="rail-btn" aria-label="Agents (coming soon)" disabled title={disabledTip('Agents')} style={{ opacity: 0.35, cursor: 'not-allowed' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path d="M12 3v3M12 18v3M5 12H2M22 12h-3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2" />
             <circle cx="12" cy="12" r="3" />
@@ -111,7 +124,7 @@ export function Rail({ project }: RailProps) {
       <div className="rail-spacer" />
 
       <div className="rail-group" style={{ borderTop: '1px solid var(--rule)' }}>
-        <button className="rail-btn" aria-label="Settings">
+        <button className="rail-btn" aria-label="Settings (coming soon)" disabled title={disabledTip('Settings')} style={{ opacity: 0.35, cursor: 'not-allowed' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <circle cx="12" cy="12" r="3" />
             <path d="M19 12a7 7 0 0 1-.4 2.3l2 1.5-2 3.4-2.3-1a7 7 0 0 1-4 2.3l-.4 2.5h-4l-.4-2.5a7 7 0 0 1-4-2.3l-2.3 1-2-3.4 2-1.5A7 7 0 0 1 5 12a7 7 0 0 1 .4-2.3l-2-1.5 2-3.4 2.3 1a7 7 0 0 1 4-2.3L12 1h4l.4 2.5a7 7 0 0 1 4 2.3l2.3-1 2 3.4-2 1.5" />
