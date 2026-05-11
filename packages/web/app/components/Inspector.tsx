@@ -62,7 +62,7 @@ interface InspectorProps {
 export function Inspector({ project, selectedNodeId, graphData }: InspectorProps) {
   const [node, setNode] = useState<GraphNode | null>(null)
   const [rootCause, setRootCause] = useState<RootCauseResult | null>(null)
-  const [activeTab, setActiveTab] = useState<'inspect' | 'edges'>('inspect')
+  const [activeTab, setActiveTab] = useState<'inspect' | 'edges' | 'owners' | 'history'>('inspect')
 
   // Stable synthetic metrics — re-randomised per node, not per render
   const metrics = useMemo(() => ({
@@ -99,8 +99,10 @@ export function Inspector({ project, selectedNodeId, graphData }: InspectorProps
         <div className="inspect-tabs" role="tablist">
           <div className="inspect-tab on" role="tab" aria-selected={true}>Inspect</div>
           <div className="inspect-tab" role="tab" aria-selected={false}>Edges</div>
-          <div className="inspect-tab" role="tab" aria-selected={false}>Owners</div>
-          <div className="inspect-tab" role="tab" aria-selected={false}>History</div>
+          {/* ADR-056 — Owners deferred: explicit disabled affordance. */}
+          <div className="inspect-tab disabled" role="tab" aria-selected={false} aria-disabled={true} title="Owners — coming in v0.3.x" style={{ opacity: 0.4, cursor: 'not-allowed' }}>Owners</div>
+          {/* ADR-056 — History deferred: explicit disabled affordance. */}
+          <div className="inspect-tab disabled" role="tab" aria-selected={false} aria-disabled={true} title="History — coming in v0.3.x" style={{ opacity: 0.4, cursor: 'not-allowed' }}>History</div>
         </div>
         <div className="insp-section" style={{ paddingTop: 32 }}>
           <div style={{ fontFamily: 'Spectral, serif', fontStyle: 'italic', color: 'var(--paper-3)', textAlign: 'center' }}>
@@ -156,6 +158,7 @@ export function Inspector({ project, selectedNodeId, graphData }: InspectorProps
   const showMetrics = !['ConfigNode', 'FrontierNode'].includes(node.type)
   const p99Num = parseFloat(metrics.p99)
   const errNum = parseFloat(metrics.err)
+  const owner = (node as unknown as { owner?: string }).owner
 
   return (
     <aside className="inspect" id="inspect">
@@ -176,8 +179,26 @@ export function Inspector({ project, selectedNodeId, graphData }: InspectorProps
         >
           Edges<span className="ct">{edgeCount}</span>
         </div>
-        <div className="inspect-tab" role="tab" aria-selected={false}>Owners</div>
-        <div className="inspect-tab" role="tab" aria-selected={false}>History</div>
+        {/* ADR-056 — Owners wired: shows ServiceNode.owner when available (ADR-054). */}
+        <div
+          className={`inspect-tab${activeTab === 'owners' ? ' on' : ''}`}
+          role="tab"
+          aria-selected={activeTab === 'owners'}
+          onClick={() => setActiveTab('owners')}
+        >
+          Owners
+        </div>
+        {/* ADR-056 — History deferred: explicit disabled affordance. */}
+        <div
+          className="inspect-tab disabled"
+          role="tab"
+          aria-selected={false}
+          aria-disabled={true}
+          title="History — coming in v0.3.x"
+          style={{ opacity: 0.4, cursor: 'not-allowed' }}
+        >
+          History
+        </div>
       </div>
 
       <div id="inspect-body">
@@ -323,6 +344,21 @@ export function Inspector({ project, selectedNodeId, graphData }: InspectorProps
           </section>
         )}
 
+        {activeTab === 'owners' && (
+          <section className="insp-section">
+            <div className="insp-h">Owners</div>
+            {owner ? (
+              <dl className="kv">
+                <dt>owner</dt>
+                <dd>{escapeHtml(owner)}</dd>
+              </dl>
+            ) : (
+              <div style={{ color: 'var(--paper-3)', fontStyle: 'italic', fontFamily: 'Spectral, serif', fontSize: 12 }}>
+                no owner declared in package.json or pyproject.toml (ADR-054)
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </aside>
   )
