@@ -4880,27 +4880,53 @@ describe('Web shell multi-project routing (ADR-057)', () => {
 // StatusBar shows daemon + SSE connection state. No silent API failures.
 // Debug panel keyboard-shortcut toggleable. Read-only.
 describe('Web shell debugging surface (ADR-058)', () => {
-  it.todo(
-    'StatusBar.tsx renders an element with data-connection-state attribute (ADR-058 #1)',
-  )
-  it.todo(
-    'StatusBar.tsx renders an element with data-sse-state attribute (ADR-058 #2)',
-  )
-  it.todo(
-    'proxy.ts emits a toast or banner on non-2xx response (ADR-058 #3)',
-  )
-  it.todo(
-    'A DebugPanel.tsx (or equivalent) component file exists in packages/web/app/components/ (ADR-058 #4)',
-  )
-  it.todo(
-    'Debug panel toggleable via Ctrl+Shift+D / Cmd+Shift+D keyboard shortcut (ADR-058 #4)',
-  )
-  it.todo(
-    'TopBar.tsx or StatusBar.tsx renders the daemon URL string (ADR-058 #5)',
-  )
-  it.todo(
-    'DebugPanel does not include POST/PUT/DELETE buttons — read-only enforcement (ADR-058 #6)',
-  )
+  const REPO_ROOT = join(__dirname, '../../../..')
+  const WEB = join(REPO_ROOT, 'packages/web')
+  const STATUSBAR = join(WEB, 'app/components/StatusBar.tsx')
+  const TOPBAR = join(WEB, 'app/components/TopBar.tsx')
+  const APP_SHELL = join(WEB, 'app/components/AppShell.tsx')
+  const DEBUG_PANEL = join(WEB, 'app/components/DebugPanel.tsx')
+  const PROXY_CLIENT = join(WEB, 'lib/proxy-client.ts')
+
+  function readSrc(p: string): string {
+    return readFileSync(p, 'utf8')
+  }
+
+  it('StatusBar.tsx renders an element with data-connection-state attribute (ADR-058 #1)', () => {
+    expect(readSrc(STATUSBAR)).toMatch(/data-connection-state=/)
+  })
+
+  it('StatusBar.tsx renders an element with data-sse-state attribute (ADR-058 #2)', () => {
+    expect(readSrc(STATUSBAR)).toMatch(/data-sse-state=/)
+  })
+
+  it('proxy.ts emits a toast or banner on non-2xx response (ADR-058 #3)', () => {
+    const src = readSrc(PROXY_CLIENT)
+    expect(src).toMatch(/toastBus\.emit/)
+    expect(src).toMatch(/!res\.ok/)
+  })
+
+  it('A DebugPanel.tsx (or equivalent) component file exists in packages/web/app/components/ (ADR-058 #4)', () => {
+    expect(statSync(DEBUG_PANEL).isFile()).toBe(true)
+  })
+
+  it('Debug panel toggleable via Ctrl+Shift+D / Cmd+Shift+D keyboard shortcut (ADR-058 #4)', () => {
+    const src = readSrc(APP_SHELL)
+    expect(src).toMatch(/ctrlKey[\s\S]*?metaKey[\s\S]*?shiftKey/)
+    expect(src).toMatch(/setDebugOpen/)
+  })
+
+  it('TopBar.tsx or StatusBar.tsx renders the daemon URL string (ADR-058 #5)', () => {
+    const top = readSrc(TOPBAR)
+    const bar = readSrc(STATUSBAR)
+    expect(top.includes('CORE_URL_PUBLIC') || bar.includes('CORE_URL_PUBLIC')).toBe(true)
+  })
+
+  it('DebugPanel does not include POST/PUT/DELETE buttons — read-only enforcement (ADR-058 #6)', () => {
+    const src = readSrc(DEBUG_PANEL)
+    expect(src).not.toMatch(/method\s*:\s*['"](POST|PUT|DELETE|PATCH)['"]/)
+    expect(src).not.toMatch(/fetch\([^)]*,\s*\{[^}]*method/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────

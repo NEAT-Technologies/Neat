@@ -2,11 +2,21 @@
 
 import { useEffect, useState } from 'react'
 import type { GraphData } from './AppShell'
+import {
+  CORE_URL_PUBLIC,
+  connectionBus,
+  sseEventBus,
+  type ConnectionEvent,
+  type SseEvent,
+} from '../../lib/proxy-client'
 
 interface StatusBarProps {
   project: string
   graphData: GraphData | null
 }
+
+type ConnState = 'ok' | 'slow' | 'down'
+type SseState = 'connected' | 'reconnecting' | 'disconnected'
 
 function formatTime(d: Date): string {
   return d.toTimeString().slice(0, 8) + ' ' + d.toTimeString().slice(9, 12)
@@ -14,6 +24,11 @@ function formatTime(d: Date): string {
 
 export function StatusBar({ project, graphData }: StatusBarProps) {
   const [now, setNow] = useState(() => formatTime(new Date()))
+  // ADR-058 #1 — daemon connection state visible. Tracks /health latency
+  // and consecutive failures.
+  const [connState, setConnState] = useState<ConnState>('down')
+  // ADR-058 #2 — SSE state visible.
+  const [sseState, setSseState] = useState<SseState>('disconnected')
   const [healthy, setHealthy] = useState<boolean | null>(null)
 
   useEffect(() => {
@@ -21,27 +36,111 @@ export function StatusBar({ project, graphData }: StatusBarProps) {
     return () => clearInterval(id)
   }, [])
 
-  // ADR-057 #3 — re-check health when project changes so the indicator
-  // reflects the active project's daemon state.
+  // ADR-058 #1 — heartbeat every 5s; classify latency.
   useEffect(() => {
-    const check = () =>
-      fetch(`/api/health?project=${encodeURIComponent(project)}`)
-        .then((r) => r.json())
-        .then((d: { ok: boolean }) => setHealthy(d.ok === true))
-        .catch(() => setHealthy(false))
-    check()
-    const id = setInterval(check, 15_000)
+    let consecutiveFailures = 0
+    const SLOW_MS = 800
+    const DOWN_FAILS = 2
+
+    async function check(): Promise<void> {
+      const start = performance.now()
+      try {
+        const r = await fetch('/api/health', { cache: 'no-store' })
+        const rtt = Math.round(performance.now() - start)
+        const ok = r.ok
+        if (!ok) {
+          consecutiveFailures += 1
+          const next: ConnState = consecutiveFailures >= DOWN_FAILS ? 'down' : 'slow'
+          setConnState(next)
+          setHealthy(false)
+          connectionBus.emit({ state: next, rttMs: rtt, timestamp: Date.now() })
+          return
+        }
+        consecutiveFailures = 0
+        const next: ConnState = rtt > SLOW_MS ? 'slow' : 'ok'
+        setConnState(next)
+        setHealthy(true)
+        connectionBus.emit({ state: next, rttMs: rtt, timestamp: Date.now() })
+      } catch {
+        consecutiveFailures += 1
+        const next: ConnState = consecutiveFailures >= DOWN_FAILS ? 'down' : 'slow'
+        setConnState(next)
+        setHealthy(false)
+        connectionBus.emit({ state: next, timestamp: Date.now() })
+      }
+    }
+
+    void check()
+    const id = setInterval(() => void check(), 5_000)
     return () => clearInterval(id)
   }, [project])
+
+  // ADR-058 #2 — track SSE connection state. EventSource auto-reconnects
+  // per spec; we surface the state transitions.
+  useEffect(() => {
+    const sse = new EventSource('/api/events')
+    setSseState('reconnecting')
+
+    sse.onopen = () => {
+      setSseState('connected')
+    }
+    sse.onerror = () => {
+      // EventSource toggles readyState; readyState 0 = CONNECTING (reconnect),
+      // 2 = CLOSED.
+      setSseState(sse.readyState === EventSource.CLOSED ? 'disconnected' : 'reconnecting')
+    }
+
+    function record(type: string): (e: MessageEvent) => void {
+      return () => {
+        sseEventBus.emit({ type, timestamp: Date.now() })
+      }
+    }
+    sse.addEventListener('node-added', record('node-added'))
+    sse.addEventListener('edge-added', record('edge-added'))
+    sse.addEventListener('node-removed', record('node-removed'))
+    sse.addEventListener('edge-removed', record('edge-removed'))
+
+    return () => sse.close()
+  }, [])
 
   const nodeCount = graphData?.nodes.length ?? '—'
   const edgeCount = graphData?.edges.length ?? '—'
 
+  // ADR-058 #1 — `data-connection-state` is a stable attribute the contract
+  // test asserts. The colour classes follow.
+  const connColor: Record<ConnState, string> = {
+    ok: 'var(--prov-observed)',
+    slow: '#d3a847',
+    down: '#e87a7a',
+  }
+  const sseColor: Record<SseState, string> = {
+    connected: 'var(--prov-observed)',
+    reconnecting: '#d3a847',
+    disconnected: '#e87a7a',
+  }
+
+  // Suppress unused-var warnings for buses imported above so we keep the
+  // module-side effect (event subscriptions in DebugPanel are wired).
+  void connectionBus
+  void sseEventBus
+  type _typecheck = ConnectionEvent | SseEvent
+  void (null as unknown as _typecheck)
+
   return (
     <footer className="status">
-      <div className={`st-item${healthy ? ' live' : ' live-dead'}`}>
+      <div
+        className="st-item"
+        data-connection-state={connState}
+        title={`daemon @ ${CORE_URL_PUBLIC} — ${connState}`}
+      >
+        <span className="dot" style={{ background: connColor[connState] }} />
         <span className="k">neat</span>
         <span className="v">{project}</span>
+      </div>
+      <div className="st-item" data-sse-state={sseState} title={`live updates: ${sseState}`}>
+        <span className="dot" style={{ background: sseColor[sseState] }} />
+        <span className="k">sse</span>
+        <span className="v">{sseState}</span>
       </div>
       <div className="st-item">
         <span className="k">nodes</span>

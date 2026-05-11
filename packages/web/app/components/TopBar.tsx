@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { CORE_URL_PUBLIC } from '../../lib/proxy-client'
 
 interface Project {
   name: string
@@ -189,6 +190,8 @@ export function TopBar({ project, onProjectChange, onNodeSelect, onRelayout, onT
       </div>
 
       <div className="top-actions">
+        {/* ADR-058 #5 — daemon URL visible. */}
+        <span className="daemon-url" title="NEAT daemon URL">{CORE_URL_PUBLIC}</span>
         <button className="top-btn" aria-label={isLive ? 'Core connected' : 'Core offline'}>
           <span className={`dot${isLive ? ' live' : ''}`} />
           {isLive ? 'Live' : 'Offline'}
