@@ -53,7 +53,7 @@ function errorClient(err: Error): HttpClient {
 describe('getRootCause', () => {
   it('formats RootCauseResult as natural language with arrow path', async () => {
     const { client, capture } = clientFor({
-      '/traverse/root-cause/database:payments-db': {
+      '/graph/root-cause/database:payments-db': {
         rootCauseNode: 'service:service-b',
         rootCauseReason:
           'PostgreSQL 14+ requires scram-sha-256; pg < 8.0.0 only speaks md5.',
@@ -73,12 +73,12 @@ describe('getRootCause', () => {
     expect(text).toContain('Recommended fix: Upgrade service-b pg driver to >= 8.0.0')
     // Footer: confidence as decimal, provenance unique values.
     expect(text).toMatch(/confidence: 1\.00 · provenance: OBSERVED/)
-    expect(capture.paths).toEqual(['/traverse/root-cause/database%3Apayments-db'])
+    expect(capture.paths).toEqual(['/graph/root-cause/database%3Apayments-db'])
   })
 
   it('threads errorId through as a query parameter', async () => {
     const { client, capture } = clientFor({
-      '/traverse/root-cause/database:payments-db?errorId=trace-1%3Aspan-b': {
+      '/graph/root-cause/database:payments-db?errorId=trace-1%3Aspan-b': {
         rootCauseNode: 'service:service-b',
         rootCauseReason: 'reason',
         traversalPath: ['database:payments-db', 'service:service-b'],
@@ -88,7 +88,7 @@ describe('getRootCause', () => {
     })
     await getRootCause(client, { errorNode: 'database:payments-db', errorId: 'trace-1:span-b' })
     expect(capture.paths[0]).toBe(
-      '/traverse/root-cause/database%3Apayments-db?errorId=trace-1%3Aspan-b',
+      '/graph/root-cause/database%3Apayments-db?errorId=trace-1%3Aspan-b',
     )
   })
 
@@ -111,7 +111,7 @@ describe('getRootCause', () => {
 describe('getBlastRadius', () => {
   it('lists affected nodes sorted by distance with provenance tags', async () => {
     const { client } = clientFor({
-      '/traverse/blast-radius/service:service-a': {
+      '/graph/blast-radius/service:service-a': {
         origin: 'service:service-a',
         totalAffected: 2,
         affectedNodes: [
@@ -142,7 +142,7 @@ describe('getBlastRadius', () => {
 
   it('flags STALE edges explicitly', async () => {
     const { client } = clientFor({
-      '/traverse/blast-radius/service:service-a': {
+      '/graph/blast-radius/service:service-a': {
         origin: 'service:service-a',
         totalAffected: 1,
         affectedNodes: [
@@ -160,7 +160,7 @@ describe('getBlastRadius', () => {
 
   it('handles a node with no downstream nodes', async () => {
     const { client } = clientFor({
-      '/traverse/blast-radius/database:payments-db': {
+      '/graph/blast-radius/database:payments-db': {
         origin: 'database:payments-db',
         totalAffected: 0,
         affectedNodes: [],
@@ -172,21 +172,21 @@ describe('getBlastRadius', () => {
 
   it('passes depth as a query parameter', async () => {
     const { client, capture } = clientFor({
-      '/traverse/blast-radius/service:service-a?depth=1': {
+      '/graph/blast-radius/service:service-a?depth=1': {
         origin: 'service:service-a',
         totalAffected: 0,
         affectedNodes: [],
       },
     })
     await getBlastRadius(client, { nodeId: 'service:service-a', depth: 1 })
-    expect(capture.paths[0]).toBe('/traverse/blast-radius/service%3Aservice-a?depth=1')
+    expect(capture.paths[0]).toBe('/graph/blast-radius/service%3Aservice-a?depth=1')
   })
 })
 
 describe('getDependencies', () => {
   it('returns transitive dependencies grouped by distance with best provenance per pair (#144)', async () => {
     const { client } = clientFor({
-      '/graph/node/service:service-a/dependencies?depth=3': {
+      '/graph/dependencies/service:service-a?depth=3': {
         origin: 'service:service-a',
         depth: 3,
         total: 2,
@@ -218,7 +218,7 @@ describe('getDependencies', () => {
 
   it('returns a friendly message when there are no dependencies', async () => {
     const { client } = clientFor({
-      '/graph/node/database:payments-db/dependencies?depth=3': {
+      '/graph/dependencies/database:payments-db?depth=3': {
         origin: 'database:payments-db',
         depth: 3,
         total: 0,
@@ -231,7 +231,7 @@ describe('getDependencies', () => {
 
   it('depth=1 returns direct dependencies only', async () => {
     const { client, capture } = clientFor({
-      '/graph/node/service:service-a/dependencies?depth=1': {
+      '/graph/dependencies/service:service-a?depth=1': {
         origin: 'service:service-a',
         depth: 1,
         total: 1,
@@ -246,7 +246,7 @@ describe('getDependencies', () => {
       },
     })
     const res = await getDependencies(client, { nodeId: 'service:service-a', depth: 1 })
-    expect(capture.paths[0]).toBe('/graph/node/service%3Aservice-a/dependencies?depth=1')
+    expect(capture.paths[0]).toBe('/graph/dependencies/service%3Aservice-a?depth=1')
     expect(res.content[0].text).toContain('service:service-a has 1 direct dependency')
   })
 })
@@ -308,26 +308,30 @@ describe('getObservedDependencies', () => {
 describe('getIncidentHistory', () => {
   it('returns events newest first with trace and span ids', async () => {
     const { client } = clientFor({
-      '/incidents/database:payments-db': [
-        {
-          id: 'trace-1:span-1',
-          timestamp: '2026-05-01T15:00:00.000Z',
-          service: 'service-b',
-          traceId: 'trace-1',
-          spanId: 'span-1',
-          errorMessage: 'older',
-          affectedNode: 'database:payments-db',
-        },
-        {
-          id: 'trace-2:span-2',
-          timestamp: '2026-05-01T15:30:00.000Z',
-          service: 'service-b',
-          traceId: 'trace-2',
-          spanId: 'span-2',
-          errorMessage: 'SCRAM-SERVER-FIRST-MESSAGE',
-          affectedNode: 'database:payments-db',
-        },
-      ],
+      '/incidents/database:payments-db': {
+        count: 2,
+        total: 2,
+        events: [
+          {
+            id: 'trace-1:span-1',
+            timestamp: '2026-05-01T15:00:00.000Z',
+            service: 'service-b',
+            traceId: 'trace-1',
+            spanId: 'span-1',
+            errorMessage: 'older',
+            affectedNode: 'database:payments-db',
+          },
+          {
+            id: 'trace-2:span-2',
+            timestamp: '2026-05-01T15:30:00.000Z',
+            service: 'service-b',
+            traceId: 'trace-2',
+            spanId: 'span-2',
+            errorMessage: 'SCRAM-SERVER-FIRST-MESSAGE',
+            affectedNode: 'database:payments-db',
+          },
+        ],
+      },
     })
     const res = await getIncidentHistory(client, { nodeId: 'database:payments-db' })
     const text = res.content[0].text
@@ -350,14 +354,18 @@ describe('getIncidentHistory', () => {
       errorMessage: `e${i}`,
       affectedNode: 'database:payments-db',
     }))
-    const { client } = clientFor({ '/incidents/database:payments-db': events })
+    const { client } = clientFor({
+      '/incidents/database:payments-db': { count: 5, total: 5, events },
+    })
     const res = await getIncidentHistory(client, { nodeId: 'database:payments-db', limit: 2 })
     expect(res.content[0].text).toContain('has 5 recorded incidents')
     expect(res.content[0].text).toContain('showing the 2 most recent')
   })
 
   it('returns a friendly message for an empty list', async () => {
-    const { client } = clientFor({ '/incidents/service:service-a': [] })
+    const { client } = clientFor({
+      '/incidents/service:service-a': { count: 0, total: 0, events: [] },
+    })
     const res = await getIncidentHistory(client, { nodeId: 'service:service-a' })
     expect(res.content[0].text).toContain('No incidents recorded')
   })
@@ -493,28 +501,32 @@ describe('getGraphDiff', () => {
 describe('getRecentStaleEdges', () => {
   it('formats a list of stale-edge transitions newest-first', async () => {
     const { client, capture } = clientFor({
-      '/incidents/stale': [
-        {
-          edgeId: 'CONNECTS_TO:OBSERVED:service:b->database:c',
-          source: 'service:b',
-          target: 'database:c',
-          edgeType: 'CONNECTS_TO',
-          thresholdMs: 14400000,
-          ageMs: 15000000,
-          lastObserved: '2026-05-02T07:00:00.000Z',
-          transitionedAt: '2026-05-02T11:10:00.000Z',
-        },
-        {
-          edgeId: 'CALLS:OBSERVED:service:a->service:b',
-          source: 'service:a',
-          target: 'service:b',
-          edgeType: 'CALLS',
-          thresholdMs: 3600000,
-          ageMs: 5400000,
-          lastObserved: '2026-05-02T10:00:00.000Z',
-          transitionedAt: '2026-05-02T11:30:00.000Z',
-        },
-      ],
+      '/stale-events': {
+        count: 2,
+        total: 2,
+        events: [
+          {
+            edgeId: 'CONNECTS_TO:OBSERVED:service:b->database:c',
+            source: 'service:b',
+            target: 'database:c',
+            edgeType: 'CONNECTS_TO',
+            thresholdMs: 14400000,
+            ageMs: 15000000,
+            lastObserved: '2026-05-02T07:00:00.000Z',
+            transitionedAt: '2026-05-02T11:10:00.000Z',
+          },
+          {
+            edgeId: 'CALLS:OBSERVED:service:a->service:b',
+            source: 'service:a',
+            target: 'service:b',
+            edgeType: 'CALLS',
+            thresholdMs: 3600000,
+            ageMs: 5400000,
+            lastObserved: '2026-05-02T10:00:00.000Z',
+            transitionedAt: '2026-05-02T11:30:00.000Z',
+          },
+        ],
+      },
     })
     const res = await getRecentStaleEdges(client, {})
     const out = res.content[0].text
@@ -522,18 +534,20 @@ describe('getRecentStaleEdges', () => {
     expect(out).toContain('service:b -[CONNECTS_TO]-> database:c')
     expect(out).toContain('service:a -[CALLS]-> service:b')
     expect(out).toMatch(/provenance: STALE/)
-    expect(capture.paths[0]).toBe('/incidents/stale')
+    expect(capture.paths[0]).toBe('/stale-events')
   })
 
   it('returns a friendly empty message', async () => {
-    const { client } = clientFor({ '/incidents/stale': [] })
+    const { client } = clientFor({
+      '/stale-events': { count: 0, total: 0, events: [] },
+    })
     const res = await getRecentStaleEdges(client, {})
     expect(res.content[0].text).toContain('No stale-edge transitions')
   })
 
   it('passes edgeType + limit query params', async () => {
     const { client, capture } = clientFor({
-      '/incidents/stale?limit=10&edgeType=CALLS': [],
+      '/stale-events?limit=10&edgeType=CALLS': { count: 0, total: 0, events: [] },
     })
     await getRecentStaleEdges(client, { limit: 10, edgeType: 'CALLS' })
     expect(capture.paths[0]).toContain('limit=10')
@@ -544,26 +558,26 @@ describe('getRecentStaleEdges', () => {
 describe('project routing', () => {
   it('threads project through every tool URL when set', async () => {
     const { client, capture } = clientFor({
-      '/projects/alpha/traverse/root-cause/database:payments-db': {
+      '/projects/alpha/graph/root-cause/database:payments-db': {
         rootCauseNode: 'service:service-b',
         rootCauseReason: 'reason',
         traversalPath: ['database:payments-db', 'service:service-b'],
         edgeProvenances: [Provenance.OBSERVED],
         confidence: 0.9,
       },
-      '/projects/alpha/traverse/blast-radius/service:a': {
+      '/projects/alpha/graph/blast-radius/service:a': {
         origin: 'service:a',
         totalAffected: 0,
         affectedNodes: [],
       },
       '/projects/alpha/graph/edges/service:a': { inbound: [], outbound: [] },
-      '/projects/alpha/graph/node/service:a/dependencies?depth=3': {
+      '/projects/alpha/graph/dependencies/service:a?depth=3': {
         origin: 'service:a',
         depth: 3,
         total: 0,
         dependencies: [],
       },
-      '/projects/alpha/incidents/service:a': [],
+      '/projects/alpha/incidents/service:a': { count: 0, total: 0, events: [] },
       '/projects/alpha/search?q=foo': { query: 'foo', provider: 'substring', matches: [] },
       '/projects/alpha/graph/diff?against=snap.json': {
         base: { exportedAt: '2026-01-01' },
@@ -572,7 +586,7 @@ describe('project routing', () => {
         removed: { nodes: [], edges: [] },
         changed: { nodes: [], edges: [] },
       },
-      '/projects/alpha/incidents/stale': [],
+      '/projects/alpha/stale-events': { count: 0, total: 0, events: [] },
     })
 
     await getRootCause(client, { errorNode: 'database:payments-db', project: 'alpha' })
@@ -591,7 +605,7 @@ describe('project routing', () => {
 
   it('falls back to legacy unprefixed URLs when project is omitted', async () => {
     const { client, capture } = clientFor({
-      '/traverse/root-cause/database:payments-db': {
+      '/graph/root-cause/database:payments-db': {
         rootCauseNode: 'service:b',
         rootCauseReason: 'r',
         traversalPath: ['database:payments-db'],
@@ -600,6 +614,6 @@ describe('project routing', () => {
       },
     })
     await getRootCause(client, { errorNode: 'database:payments-db' })
-    expect(capture.paths[0]).toBe('/traverse/root-cause/database%3Apayments-db')
+    expect(capture.paths[0]).toBe('/graph/root-cause/database%3Apayments-db')
   })
 })

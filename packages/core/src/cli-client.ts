@@ -148,7 +148,7 @@ export async function runRootCause(
   const qs = input.errorId ? `?errorId=${encodeURIComponent(input.errorId)}` : ''
   const path = projectPath(
     input.project,
-    `/traverse/root-cause/${encodeURIComponent(input.errorNode)}${qs}`,
+    `/graph/root-cause/${encodeURIComponent(input.errorNode)}${qs}`,
   )
   try {
     const result = await client.get<RootCauseResult>(path)
@@ -194,7 +194,7 @@ export async function runBlastRadius(
   const qs = input.depth !== undefined ? `?depth=${input.depth}` : ''
   const path = projectPath(
     input.project,
-    `/traverse/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`,
+    `/graph/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`,
   )
   try {
     const result = await client.get<BlastRadiusResult>(path)
@@ -244,7 +244,7 @@ export async function runDependencies(
   const depth = input.depth ?? 3
   const path = projectPath(
     input.project,
-    `/graph/node/${encodeURIComponent(input.nodeId)}/dependencies?depth=${depth}`,
+    `/graph/dependencies/${encodeURIComponent(input.nodeId)}?depth=${depth}`,
   )
   try {
     const result = await client.get<TransitiveDependenciesResult>(path)
@@ -363,7 +363,8 @@ export async function runIncidents(
     ? projectPath(input.project, `/incidents/${encodeURIComponent(input.nodeId)}`)
     : projectPath(input.project, '/incidents')
   try {
-    const events = await client.get<ErrorEvent[]>(path)
+    const body = await client.get<{ count: number; total: number; events: ErrorEvent[] }>(path)
+    const events = body.events
     if (events.length === 0) {
       return {
         summary: input.nodeId
@@ -379,7 +380,7 @@ export async function runIncidents(
     }
     const target = input.nodeId ?? 'the project'
     return {
-      summary: `${target} has ${events.length} recorded incident${events.length === 1 ? '' : 's'}; showing the ${ordered.length} most recent.`,
+      summary: `${target} has ${body.total} recorded incident${body.total === 1 ? '' : 's'}; showing the ${ordered.length} most recent.`,
       block: blockLines.join('\n'),
       provenance: Provenance.OBSERVED,
     }
@@ -541,9 +542,10 @@ export async function runStaleEdges(
   if (input.limit !== undefined) params.set('limit', String(input.limit))
   if (input.edgeType) params.set('edgeType', input.edgeType)
   const qs = params.size > 0 ? `?${params.toString()}` : ''
-  const events = await client.get<StaleEventResponse[]>(
-    projectPath(input.project, `/incidents/stale${qs}`),
+  const body = await client.get<{ count: number; total: number; events: StaleEventResponse[] }>(
+    projectPath(input.project, `/stale-events${qs}`),
   )
+  const events = body.events
   if (events.length === 0) {
     return {
       summary: input.edgeType
@@ -599,9 +601,10 @@ export async function runPolicies(
     const params = new URLSearchParams()
     if (input.policyId) params.set('policyId', input.policyId)
     const qs = params.size > 0 ? `?${params.toString()}` : ''
-    violations = await client.get<PolicyViolation[]>(
+    const body = await client.get<{ violations: PolicyViolation[] }>(
       projectPath(input.project, `/policies/violations${qs}`),
     )
+    violations = body.violations
     allowed = violations.every((v) => v.onViolation !== 'block')
   }
 

@@ -63,7 +63,7 @@ export async function getRootCause(client: HttpClient, input: RootCauseInput): P
   const qs = input.errorId ? `?errorId=${encodeURIComponent(input.errorId)}` : ''
   const path = projectPath(
     input.project,
-    `/traverse/root-cause/${encodeURIComponent(input.errorNode)}${qs}`,
+    `/graph/root-cause/${encodeURIComponent(input.errorNode)}${qs}`,
   )
 
   return withMissingNodeFallback(async () => {
@@ -105,7 +105,7 @@ export async function getBlastRadius(
   const qs = input.depth !== undefined ? `?depth=${input.depth}` : ''
   const path = projectPath(
     input.project,
-    `/traverse/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`,
+    `/graph/blast-radius/${encodeURIComponent(input.nodeId)}${qs}`,
   )
 
   return withMissingNodeFallback(async () => {
@@ -153,8 +153,8 @@ export interface DependenciesInput {
   project?: string
 }
 
-// Transitive get_dependencies (issue #144). Calls the new core endpoint
-// /graph/node/:id/dependencies?depth=N which BFS-walks outbound. The output
+// Transitive get_dependencies (issue #144). Calls the core endpoint
+// /graph/dependencies/:nodeId?depth=N which BFS-walks outbound. The output
 // groups results by hop so direct dependencies stand out from transitives —
 // agents asked "what does X depend on?" usually want the direct list with
 // transitives as context.
@@ -165,7 +165,7 @@ export async function getDependencies(
   const depth = input.depth ?? 3
   const path = projectPath(
     input.project,
-    `/graph/node/${encodeURIComponent(input.nodeId)}/dependencies?depth=${depth}`,
+    `/graph/dependencies/${encodeURIComponent(input.nodeId)}?depth=${depth}`,
   )
 
   return withMissingNodeFallback(async () => {
@@ -271,9 +271,10 @@ export async function getIncidentHistory(
   input: IncidentHistoryInput,
 ): Promise<ToolResponse> {
   return withMissingNodeFallback(async () => {
-    const events = await client.get<ErrorEvent[]>(
+    const body = await client.get<{ count: number; total: number; events: ErrorEvent[] }>(
       projectPath(input.project, `/incidents/${encodeURIComponent(input.nodeId)}`),
     )
+    const events = body.events
     if (events.length === 0) {
       return formatEmptyResponse(`No incidents recorded against ${input.nodeId}.`)
     }
@@ -286,7 +287,7 @@ export async function getIncidentHistory(
       blockLines.push(`    trace=${ev.traceId} span=${ev.spanId}`)
     }
     return formatToolResponse({
-      summary: `${input.nodeId} has ${events.length} recorded incident${events.length === 1 ? '' : 's'}; showing the ${ordered.length} most recent.`,
+      summary: `${input.nodeId} has ${body.total} recorded incident${body.total === 1 ? '' : 's'}; showing the ${ordered.length} most recent.`,
       block: blockLines.join('\n'),
       // ErrorEvents are observation records, not graph edges — provenance is
       // OBSERVED by definition (the OTel span happened).
@@ -472,9 +473,10 @@ export async function getRecentStaleEdges(
   const qs = params.size > 0 ? `?${params.toString()}` : ''
 
   try {
-    const events = await client.get<StaleEventResponse[]>(
-      projectPath(input.project, `/incidents/stale${qs}`),
+    const body = await client.get<{ count: number; total: number; events: StaleEventResponse[] }>(
+      projectPath(input.project, `/stale-events${qs}`),
     )
+    const events = body.events
     if (events.length === 0) {
       return formatEmptyResponse(
         input.edgeType
@@ -545,9 +547,10 @@ export async function checkPolicies(
         qsParams.set('policyId', input.scope.policyId)
       }
       const qs = qsParams.size > 0 ? `?${qsParams.toString()}` : ''
-      violations = await client.get<PolicyViolation[]>(
+      const body = await client.get<{ violations: PolicyViolation[] }>(
         projectPath(input.project, `/policies/violations${qs}`),
       )
+      violations = body.violations
       allowed = violations.every((v) => v.onViolation !== 'block')
     }
 

@@ -26,8 +26,11 @@ describe('REST API (fastify.inject)', () => {
     const res = await app.inject({ method: 'GET', url: '/health' })
     expect(res.statusCode).toBe(200)
     const body = res.json()
+    // ADR-061 canonical triple plus legacy extras (passthrough).
     expect(body).toMatchObject({
-      uptime: expect.any(Number),
+      ok: true,
+      project: expect.any(String),
+      uptimeMs: expect.any(Number),
       nodeCount: expect.any(Number),
       edgeCount: expect.any(Number),
       lastUpdated: expect.any(String),
@@ -55,7 +58,7 @@ describe('REST API (fastify.inject)', () => {
   it('GET /graph/node/:id returns a single node', async () => {
     const res = await app.inject({ method: 'GET', url: '/graph/node/service:service-b' })
     expect(res.statusCode).toBe(200)
-    expect(res.json().dependencies.pg).toBe('7.4.0')
+    expect(res.json().node.dependencies.pg).toBe('7.4.0')
   })
 
   it('GET /graph/node/:id returns 404 for an unknown node', async () => {
@@ -71,19 +74,19 @@ describe('REST API (fastify.inject)', () => {
     expect(body.outbound.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('GET /incidents returns an empty array (M2 fills this in)', async () => {
+  it('GET /incidents returns a wrapped empty list when no log is configured', async () => {
     const res = await app.inject({ method: 'GET', url: '/incidents' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual([])
+    expect(res.json()).toEqual({ count: 0, total: 0, events: [] })
   })
 
-  it('GET /incidents/:nodeId returns [] for a known node', async () => {
+  it('GET /incidents/:nodeId returns a wrapped empty list for a known node', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/incidents/service:service-b',
     })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual([])
+    expect(res.json()).toEqual({ count: 0, total: 0, events: [] })
   })
 
   it('GET /search?q=service-b finds the matching node', async () => {
@@ -118,10 +121,10 @@ describe('REST API (fastify.inject)', () => {
     expect(res.statusCode).toBe(409)
   })
 
-  it('GET /traverse/root-cause/:nodeId returns the demo pg incompatibility', async () => {
+  it('GET /graph/root-cause/:nodeId returns the demo pg incompatibility', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/traverse/root-cause/database:payments-db',
+      url: '/graph/root-cause/database:payments-db',
     })
     expect(res.statusCode).toBe(200)
     const body = res.json()
@@ -137,27 +140,27 @@ describe('REST API (fastify.inject)', () => {
     expect(body.fixRecommendation).toMatch(/8\.0\.0/)
   })
 
-  it('GET /traverse/root-cause/:nodeId returns 404 for an unknown node', async () => {
+  it('GET /graph/root-cause/:nodeId returns 404 for an unknown node', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/traverse/root-cause/database:nope',
+      url: '/graph/root-cause/database:nope',
     })
     expect(res.statusCode).toBe(404)
   })
 
-  it('GET /traverse/root-cause/:nodeId returns 404 when no root cause is found', async () => {
+  it('GET /graph/root-cause/:nodeId returns 404 when no root cause is found', async () => {
     // service:service-a is a service node, not a database — getRootCause bails out.
     const res = await app.inject({
       method: 'GET',
-      url: '/traverse/root-cause/service:service-a',
+      url: '/graph/root-cause/service:service-a',
     })
     expect(res.statusCode).toBe(404)
   })
 
-  it('GET /traverse/blast-radius/:nodeId returns downstream nodes with distances', async () => {
+  it('GET /graph/blast-radius/:nodeId returns downstream nodes with distances', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/traverse/blast-radius/service:service-a',
+      url: '/graph/blast-radius/service:service-a',
     })
     expect(res.statusCode).toBe(200)
     const body = res.json()
@@ -185,32 +188,32 @@ describe('REST API (fastify.inject)', () => {
     ])
   })
 
-  it('GET /traverse/blast-radius/:nodeId returns 404 for an unknown node', async () => {
+  it('GET /graph/blast-radius/:nodeId returns 404 for an unknown node', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/traverse/blast-radius/service:nope',
+      url: '/graph/blast-radius/service:nope',
     })
     expect(res.statusCode).toBe(404)
   })
 
-  it('GET /traverse/blast-radius/:nodeId rejects a negative depth', async () => {
+  it('GET /graph/blast-radius/:nodeId rejects a negative depth', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/traverse/blast-radius/service:service-a?depth=-1',
+      url: '/graph/blast-radius/service:service-a?depth=-1',
     })
     expect(res.statusCode).toBe(400)
   })
 
-  it('GET /incidents/stale returns [] when no stale-events log is configured', async () => {
-    const res = await app.inject({ method: 'GET', url: '/incidents/stale' })
+  it('GET /stale-events returns a wrapped empty list when no log is configured', async () => {
+    const res = await app.inject({ method: 'GET', url: '/stale-events' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual([])
+    expect(res.json()).toEqual({ count: 0, total: 0, events: [] })
   })
 
-  it('GET /traverse/blast-radius/:nodeId honours a custom depth', async () => {
+  it('GET /graph/blast-radius/:nodeId honours a custom depth', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/traverse/blast-radius/service:service-a?depth=1',
+      url: '/graph/blast-radius/service:service-a?depth=1',
     })
     expect(res.statusCode).toBe(200)
     const body = res.json()
@@ -282,7 +285,7 @@ describe('GET /graph/diff', () => {
   })
 })
 
-describe('GET /incidents/stale (with log)', () => {
+describe('GET /stale-events (with log)', () => {
   let app: FastifyInstance
   let tmpDir: string
   let staleEventsPath: string
@@ -332,26 +335,27 @@ describe('GET /incidents/stale (with log)', () => {
   })
 
   it('returns the events newest-first', async () => {
-    const res = await app.inject({ method: 'GET', url: '/incidents/stale' })
+    const res = await app.inject({ method: 'GET', url: '/stale-events' })
     expect(res.statusCode).toBe(200)
     const body = res.json()
-    expect(body).toHaveLength(2)
-    expect(body[0].edgeType).toBe('CONNECTS_TO')
-    expect(body[1].edgeType).toBe('CALLS')
+    expect(body.total).toBe(2)
+    expect(body.events).toHaveLength(2)
+    expect(body.events[0].edgeType).toBe('CONNECTS_TO')
+    expect(body.events[1].edgeType).toBe('CALLS')
   })
 
   it('filters by edgeType', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/incidents/stale?edgeType=CALLS',
+      url: '/stale-events?edgeType=CALLS',
     })
     const body = res.json()
-    expect(body).toHaveLength(1)
-    expect(body[0].edgeType).toBe('CALLS')
+    expect(body.events).toHaveLength(1)
+    expect(body.events[0].edgeType).toBe('CALLS')
   })
 
   it('honours limit', async () => {
-    const res = await app.inject({ method: 'GET', url: '/incidents/stale?limit=1' })
-    expect(res.json()).toHaveLength(1)
+    const res = await app.inject({ method: 'GET', url: '/stale-events?limit=1' })
+    expect(res.json().events).toHaveLength(1)
   })
 })

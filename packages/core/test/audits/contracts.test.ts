@@ -10,7 +10,7 @@
  * Only relax a test if /docs/contracts.md and the relevant ADR change first.
  */
 
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { MultiDirectedGraph } from 'graphology'
 import {
   EdgeType,
@@ -1989,9 +1989,9 @@ describe('MCP tool surface contract (ADR-039)', () => {
     // Empty-result footer reads n/a / n/a per the contract.
     expect(content).toMatch(/n\/a/)
   })
-  it('get_dependencies is transitive — calls /graph/node/:id/dependencies?depth=N (issue #144)', () => {
+  it('get_dependencies is transitive — calls /graph/dependencies/:nodeId?depth=N (issue #144, ADR-061 path canonicalization)', () => {
     const tools = readFileSync(join(MCP_SRC, 'tools.ts'), 'utf8')
-    expect(tools).toMatch(/\/graph\/node\/[^`'"\s]*dependencies\?depth=/)
+    expect(tools).toMatch(/\/graph\/dependencies\/[^`'"\s]*\?depth=/)
     // The old direct-only path is gone — getDependencies must not call
     // /graph/edges/:id anymore.
     expect(tools).not.toMatch(/getDependencies[\s\S]{0,500}\/graph\/edges/)
@@ -2015,11 +2015,13 @@ describe('REST API contract (ADR-040)', () => {
     const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
     expect(api).toMatch(/registerRoutes\(app, routeCtx\)/)
     expect(api).toMatch(/prefix:\s*['"]\/projects\/:project['"]/)
-    // No bare app.get / app.post outside the discovery /projects route.
+    // No bare app.get / app.post outside the documented exceptions.
     const bareGet = api.match(/\bapp\.(get|post)\s*</g) ?? []
-    // The /projects discovery endpoint at the top level is the only allowed
-    // direct app.get; everything else routes through registerRoutes.
-    expect(bareGet.length).toBeLessThanOrEqual(1)
+    // Documented exceptions to dual-mount routing:
+    //  1. /projects — machine registry list (ADR-051 #4)
+    //  2. /projects/:project — singular registry lookup (ADR-061 #7)
+    // Everything else routes through registerRoutes.
+    expect(bareGet.length).toBeLessThanOrEqual(2)
   })
 
   it('error responses are JSON-shaped { error, status, details? }', () => {
@@ -2038,9 +2040,9 @@ describe('REST API contract (ADR-040)', () => {
     })
     expect(offenders, offenders.join('\n')).toEqual([])
   })
-  it('GET /graph/node/:id/dependencies?depth=N exists (issue #144)', () => {
+  it('GET /graph/dependencies/:nodeId?depth=N exists (issue #144, ADR-061 path canonicalization)', () => {
     const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
-    expect(api).toMatch(/['"]\/graph\/node\/:id\/dependencies['"]/)
+    expect(api).toMatch(/['"]\/graph\/dependencies\/:nodeId['"]/)
     // Default 3, max 10 per the contract.
     expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH/)
     expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_MAX_DEPTH/)
@@ -5672,53 +5674,272 @@ describe('Divergence query (ADR-060)', () => {
 //
 // Each flips from todo to live as the implementation agent ships the fix.
 describe('REST API canonicalization (ADR-061)', () => {
+  const API_TS = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
+  const REST_CONTRACT = readFileSync(
+    join(__dirname, '../../../../docs/contracts/rest-api.md'),
+    'utf8',
+  )
+
+  // Routes registered in api.ts. scope.get / scope.post are dual-mounted;
+  // app.get / app.post mount only at the root. Picks up both signatures
+  // (single-line and the `>('/path', ...` continuation form).
+  const declaredPaths = new Set<string>()
+  for (const m of API_TS.matchAll(/\b(?:scope|app)\.(?:get|post)(?:<[^>]*>)?\(\s*['"]([^'"]+)['"]/g)) {
+    declaredPaths.add(m[1])
+  }
+  // Also pick up the `>('/path',` continuation form where the type
+  // generic spans multiple lines.
+  for (const m of API_TS.matchAll(/\}>\(\s*['"]([^'"]+)['"]/g)) {
+    declaredPaths.add(m[1])
+  }
+  // The two-line form: `scope.get<{ ... }>(\n    '/path',`
+  for (const m of API_TS.matchAll(/\b(?:scope|app)\.(?:get|post)<[^>]*>\(\s*\n\s*['"]([^'"]+)['"]/g)) {
+    declaredPaths.add(m[1])
+  }
+
+  // Endpoint table in rest-api.md — paths in the first column, wrapped in
+  // backticks like `GET /health` or `GET /graph/node/:id`.
+  const documentedPaths = new Set<string>()
+  for (const m of REST_CONTRACT.matchAll(/`(?:GET|POST)\s+(\/[^`]+?)`/g)) {
+    // Strip query strings — the documented `?limit=N` is illustrative,
+    // not part of the route shape.
+    documentedPaths.add(m[1].split('?')[0])
+  }
+
   // ── Class A: path canonicalization ───────────────────────────────────
-  // Backend must declare each canonical path; drifted variants must be gone.
-  it.todo('api.ts declares `/graph/root-cause/:nodeId` (renamed from /traverse/root-cause) (ADR-061 #1)')
-  it.todo('api.ts declares `/graph/blast-radius/:nodeId` (renamed from /traverse/blast-radius) (ADR-061 #1)')
-  it.todo('api.ts declares `/stale-events` (renamed from /incidents/stale) (ADR-061 #1)')
-  it.todo('api.ts declares `/graph/dependencies/:nodeId` (renamed from /graph/node/:id/dependencies) (ADR-061 #1)')
-  it.todo('api.ts contains no references to drifted paths (/traverse/*, /incidents/stale, /graph/node/:id/dependencies) (ADR-061 #1)')
+  it('api.ts declares `/graph/root-cause/:nodeId` (renamed from /traverse/root-cause) (ADR-061 #1)', () => {
+    expect(declaredPaths).toContain('/graph/root-cause/:nodeId')
+  })
+  it('api.ts declares `/graph/blast-radius/:nodeId` (renamed from /traverse/blast-radius) (ADR-061 #1)', () => {
+    expect(declaredPaths).toContain('/graph/blast-radius/:nodeId')
+  })
+  it('api.ts declares `/stale-events` (renamed from /incidents/stale) (ADR-061 #1)', () => {
+    expect(declaredPaths).toContain('/stale-events')
+  })
+  it('api.ts declares `/graph/dependencies/:nodeId` (renamed from /graph/node/:id/dependencies) (ADR-061 #1)', () => {
+    expect(declaredPaths).toContain('/graph/dependencies/:nodeId')
+  })
+  it('api.ts contains no references to drifted paths (/traverse/*, /incidents/stale, /graph/node/:id/dependencies) (ADR-061 #1)', () => {
+    expect(API_TS).not.toMatch(/\/traverse\//)
+    expect(API_TS).not.toMatch(/\/incidents\/stale/)
+    expect(API_TS).not.toMatch(/\/graph\/node\/:id\/dependencies/)
+  })
 
   // ── Class B: response envelope rule ──────────────────────────────────
-  // Every GET handler returns a JSON object — never a bare array. Scans
-  // api.ts for `return events`, `return violations`, `return result_array`,
-  // etc. — flags bare-collection returns that violate ADR-061 #2.
-  it.todo('no GET handler in api.ts returns a bare array (ADR-061 #2 — envelope rule)')
-  it.todo('the documented /projects bare-array exception is the only bare-array GET return (ADR-061 #2)')
+  // Bare-collection returns inside scope.get handlers are a contract
+  // violation. Scans for `return events`, `return violations`, etc. —
+  // anything that returns a local variable named like a list.
+  it('no scope.get handler in api.ts returns a bare collection (ADR-061 #2 — envelope rule)', () => {
+    // Match `return <ident>` where ident is one of the list-shaped names
+    // that previously held bare arrays. After ADR-061 every list should
+    // be wrapped, so `return events` / `return violations` etc. inside a
+    // scope.get block is a smell.
+    const banned = ['events', 'violations', 'matches', 'incidents', 'dependencies']
+    const offenders: string[] = []
+    const lines = API_TS.split('\n')
+    let insideScopeGet = false
+    let depth = 0
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (/\bscope\.get\b/.test(line)) {
+        insideScopeGet = true
+        depth = 0
+      }
+      if (insideScopeGet) {
+        for (const ch of line) {
+          if (ch === '{') depth++
+          if (ch === '}') depth--
+        }
+        for (const name of banned) {
+          if (new RegExp(`\\breturn\\s+${name}\\s*$`).test(line.trim())) {
+            offenders.push(`api.ts:${i + 1}: ${line.trim()}`)
+          }
+        }
+        if (depth <= 0 && /\)\s*$/.test(line.trim())) insideScopeGet = false
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+  it('the documented /projects bare-array exception is the only bare-array GET return (ADR-061 #2)', () => {
+    // listRegistryProjects() returns Array<RegistryEntry>; api.ts hands
+    // it back directly from `app.get('/projects', ...)`. The contract
+    // documents this as the one allowed bare-array GET (rest-api.md §29
+    // table footnote).
+    expect(API_TS).toMatch(/app\.get\(['"]\/projects['"][\s\S]{0,200}return\s+await\s+listRegistryProjects/)
+  })
 
   // ── Class C: response shape via Zod schemas ──────────────────────────
-  // Each endpoint's response parses through its declared schema. Live
-  // runtime assertions against fixture data; require buildApi() + supertest
-  // (or equivalent in-process HTTP test client). Fixtures live alongside.
-  it.todo('GET /incidents response parses through IncidentsResponseSchema (ADR-061 #3)')
-  it.todo('GET /incidents/:nodeId response parses through IncidentsResponseSchema (ADR-061 #3)')
-  it.todo('GET /stale-events response parses through StaleEventsResponseSchema (ADR-061 #3)')
-  it.todo('GET /policies/violations response parses through PoliciesViolationsResponseSchema (ADR-061 #3)')
-  it.todo('GET /graph/node/:id response parses through GraphNodeResponseSchema (ADR-061 #3)')
-  it.todo('GET /graph/edges/:id response parses through GraphEdgesResponseSchema (ADR-061 #3)')
-  it.todo('GET /health response parses through HealthResponseSchema (ADR-061 #3)')
-  it.todo('GET /projects/:project response parses through SingleProjectResponseSchema (ADR-061 #3)')
-  it.todo('GET /search response parses through SearchResponseSchema (ADR-061 #3)')
-  // For endpoints with existing typed results, assertion uses the existing schema:
-  it.todo('GET /graph/root-cause/:nodeId response parses through RootCauseResultSchema (ADR-061 #3)')
-  it.todo('GET /graph/blast-radius/:nodeId response parses through BlastRadiusResultSchema (ADR-061 #3)')
-  it.todo('GET /graph/dependencies/:nodeId response parses through TransitiveDependenciesResultSchema (ADR-061 #3)')
-  it.todo('GET /graph/divergences response parses through DivergenceResultSchema (ADR-061 #3)')
-  it.todo('GET /policies response parses through PolicyFileSchema (ADR-061 #3)')
-  it.todo('GET /graph response parses through SerializedGraphSchema (ADR-061 #3)')
-  it.todo('GET /graph/diff response parses through GraphDiffResultSchema (ADR-061 #3)')
+  // Each endpoint's response parses through its declared schema. The
+  // fixture is the demo graph loaded by extractFromDirectory — the same
+  // shape api.test.ts uses — wired up once and reused per assertion.
+  describe('response shapes parse through their declared schema (ADR-061 #3)', () => {
+    // Schemas + buildApi() load via dynamic imports inside beforeAll so
+    // the static-scan tests above don't pull the runtime machinery into
+    // module init. The fixture graph is the demo dir — same shape
+    // api.test.ts uses — and the registry is redirected via NEAT_HOME
+    // so /projects/:project has something to look up.
+    let app: import('fastify').FastifyInstance
+    let tmpDir: string
+    let diffPath: string
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let schemas: Record<string, import('zod').ZodTypeAny>
+
+    beforeAll(async () => {
+      const path = await import('node:path')
+      const { promises: fs } = await import('node:fs')
+      const os = await import('node:os')
+      const types = await import('@neat.is/types')
+      const { buildApi } = await import('../../src/api.js')
+      const { extractFromDirectory } = await import('../../src/extract.js')
+      const { resetGraph, getGraph } = await import('../../src/graph.js')
+      const { saveGraphToDisk } = await import('../../src/persist.js')
+      const { writeAtomically } = await import('../../src/registry.js')
+
+      const DEMO_PATH = path.resolve(__dirname, '../../../../demo')
+      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-adr061-shapes-'))
+      diffPath = path.join(tmpDir, 'base.json')
+      const registryHome = path.join(tmpDir, 'neat-home')
+
+      process.env.NEAT_HOME = registryHome
+      const registry = {
+        version: 1 as const,
+        projects: [
+          {
+            name: 'default',
+            path: DEMO_PATH,
+            registeredAt: '2026-05-11T00:00:00.000Z',
+            languages: ['javascript'],
+            status: 'active' as const,
+          },
+        ],
+      }
+      await writeAtomically(path.join(registryHome, 'projects.json'), JSON.stringify(registry))
+
+      resetGraph()
+      const graph = getGraph()
+      await extractFromDirectory(graph, DEMO_PATH)
+      await saveGraphToDisk(graph, diffPath)
+
+      app = await buildApi({ graph, scanPath: DEMO_PATH })
+
+      schemas = {
+        Incidents: types.IncidentsResponseSchema,
+        StaleEvents: types.StaleEventsResponseSchema,
+        PoliciesViolations: types.PoliciesViolationsResponseSchema,
+        GraphNode: types.GraphNodeResponseSchema,
+        GraphEdges: types.GraphEdgesResponseSchema,
+        Health: types.HealthResponseSchema,
+        SingleProject: types.SingleProjectResponseSchema,
+        Search: types.SearchResponseSchema,
+        SerializedGraph: types.SerializedGraphSchema,
+        GraphDiff: types.GraphDiffResultSchema,
+        RootCause: types.RootCauseResultSchema,
+        BlastRadius: types.BlastRadiusResultSchema,
+        TransitiveDependencies: types.TransitiveDependenciesResultSchema,
+        Divergence: types.DivergenceResultSchema,
+        PolicyFile: types.PolicyFileSchema,
+      }
+    })
+
+    afterAll(async () => {
+      const { promises: fs } = await import('node:fs')
+      if (app) await app.close()
+      if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true })
+      delete process.env.NEAT_HOME
+    })
+
+    // Helper: hit `path`, expect 200, parse through `schema`, surface the
+    // Zod error on failure so a regression points at the offending field.
+    async function expectShape(url: string, schema: import('zod').ZodTypeAny): Promise<void> {
+      const reply = await app.inject({ method: 'GET', url })
+      expect(reply.statusCode, `${url}: ${reply.body}`).toBe(200)
+      const parsed = schema.safeParse(reply.json())
+      expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.format(), null, 2)).toBe(true)
+    }
+
+    it('GET /incidents response parses through IncidentsResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/incidents', schemas.Incidents)
+    })
+    it('GET /incidents/:nodeId response parses through IncidentsResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/incidents/service:service-b', schemas.Incidents)
+    })
+    it('GET /stale-events response parses through StaleEventsResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/stale-events', schemas.StaleEvents)
+    })
+    it('GET /policies/violations response parses through PoliciesViolationsResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/policies/violations', schemas.PoliciesViolations)
+    })
+    it('GET /graph/node/:id response parses through GraphNodeResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/node/service:service-b', schemas.GraphNode)
+    })
+    it('GET /graph/edges/:id response parses through GraphEdgesResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/edges/service:service-b', schemas.GraphEdges)
+    })
+    it('GET /health response parses through HealthResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/health', schemas.Health)
+    })
+    it('GET /projects/:project response parses through SingleProjectResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/projects/default', schemas.SingleProject)
+    })
+    it('GET /search response parses through SearchResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/search?q=service-b', schemas.Search)
+    })
+    it('GET /graph/root-cause/:nodeId response parses through RootCauseResultSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/root-cause/database:payments-db', schemas.RootCause)
+    })
+    it('GET /graph/blast-radius/:nodeId response parses through BlastRadiusResultSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/blast-radius/service:service-a', schemas.BlastRadius)
+    })
+    it('GET /graph/dependencies/:nodeId response parses through TransitiveDependenciesResultSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/dependencies/service:service-a', schemas.TransitiveDependencies)
+    })
+    it('GET /graph/divergences response parses through DivergenceResultSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/divergences', schemas.Divergence)
+    })
+    it('GET /policies response parses through PolicyFileSchema (ADR-061 #3)', async () => {
+      await expectShape('/policies', schemas.PolicyFile)
+    })
+    it('GET /graph response parses through SerializedGraphSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph', schemas.SerializedGraph)
+    })
+    it('GET /graph/diff response parses through GraphDiffResultSchema (ADR-061 #3)', async () => {
+      await expectShape(`/graph/diff?against=${encodeURIComponent(diffPath)}`, schemas.GraphDiff)
+    })
+  })
 
   // ── Class D: path consistency scan ───────────────────────────────────
   // Every scope.get / scope.post path in api.ts must appear in
   // rest-api.md's canonical endpoint table. Catches future drift in
   // either direction (route exists but not documented; route documented
-  // but not implemented).
-  it.todo('every path registered in api.ts appears in rest-api.md endpoint table (ADR-061 #6)')
-  it.todo('every path in rest-api.md endpoint table is registered in api.ts (ADR-061 #6)')
+  // but not implemented). Routes registered for completeness but not part
+  // of the canonical endpoint table (the SSE stream is documented in a
+  // separate section, not the main table) are listed here.
+  const SSE_AND_INTERNAL = new Set(['/events'])
+
+  it('every path registered in api.ts appears in rest-api.md endpoint table (ADR-061 #6)', () => {
+    const undocumented: string[] = []
+    for (const p of declaredPaths) {
+      if (SSE_AND_INTERNAL.has(p)) continue
+      if (!documentedPaths.has(p)) undocumented.push(p)
+    }
+    expect(undocumented, `paths in api.ts missing from rest-api.md: ${undocumented.join(', ')}`).toEqual([])
+  })
+  it('every path in rest-api.md endpoint table is registered in api.ts (ADR-061 #6)', () => {
+    const unimplemented: string[] = []
+    for (const p of documentedPaths) {
+      if (!declaredPaths.has(p)) unimplemented.push(p)
+    }
+    expect(unimplemented, `paths in rest-api.md missing from api.ts: ${unimplemented.join(', ')}`).toEqual([])
+  })
 
   // ── Class E: coverage gaps now documented ────────────────────────────
-  it.todo('rest-api.md documents GET /incidents/:nodeId (ADR-061 #7)')
-  it.todo('rest-api.md documents GET /projects/:project (ADR-061 #7)')
-  it.todo('rest-api.md documents GET /graph/divergences (ADR-061 #7 — also ADR-060)')
+  it('rest-api.md documents GET /incidents/:nodeId (ADR-061 #7)', () => {
+    expect(documentedPaths).toContain('/incidents/:nodeId')
+  })
+  it('rest-api.md documents GET /projects/:project (ADR-061 #7)', () => {
+    expect(documentedPaths).toContain('/projects/:project')
+  })
+  it('rest-api.md documents GET /graph/divergences (ADR-061 #7 — also ADR-060)', () => {
+    expect(documentedPaths).toContain('/graph/divergences')
+  })
 })

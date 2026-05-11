@@ -7,6 +7,7 @@ import type {
   GraphEdge,
   Policy,
   ServiceNode,
+  StaleEvent,
 } from '@neat.is/types'
 import type { EvaluationContext as PolicyEvaluationContext } from './policy.js'
 import { canPromoteFrontier } from './policy.js'
@@ -746,16 +747,7 @@ export function makeSpanHandler(ctx: IngestContext): (span: ParsedSpan) => Promi
   return (span) => handleSpan(ctx, span)
 }
 
-export interface StaleEvent {
-  edgeId: string
-  source: string
-  target: string
-  edgeType: string
-  thresholdMs: number
-  ageMs: number
-  lastObserved: string
-  transitionedAt: string
-}
+export type { StaleEvent }
 
 export interface MarkStaleOptions {
   // Per-edge-type override map. Defaults to DEFAULT_STALE_THRESHOLDS, merged

@@ -19,10 +19,16 @@ export const EdgeTypeSchema = z.enum([
   EdgeType.RUNS_ON,
 ])
 
+// Static-extraction evidence for an EXTRACTED edge (ADR-029, contract #5).
+// `file` is required — retire.ts keys ghost-edge cleanup off it. `line` and
+// `snippet` are optional because the existing extractors (configs.ts,
+// docker-compose.ts) record file-level evidence only; loosening lets those
+// edges through ADR-061's response-shape validation without forcing the
+// extractors to fabricate line numbers.
 export const EdgeEvidenceSchema = z.object({
   file: z.string(),
-  line: z.number().int().nonnegative(),
-  snippet: z.string(),
+  line: z.number().int().nonnegative().optional(),
+  snippet: z.string().optional(),
 })
 export type EdgeEvidence = z.infer<typeof EdgeEvidenceSchema>
 

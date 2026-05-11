@@ -34,7 +34,7 @@ import { computeGraphDiff, loadSnapshotForDiff } from './diff.js'
 import type { SearchIndex } from './search.js'
 import type { Projects, ProjectContext } from './projects.js'
 import { Projects as ProjectsClass, pathsForProject } from './projects.js'
-import { listProjects as listRegistryProjects } from './registry.js'
+import { getProject as getRegistryProject, listProjects as listRegistryProjects } from './registry.js'
 import { handleSse } from './streaming.js'
 
 export interface BuildApiOptions {
@@ -149,9 +149,15 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
   scope.get<{ Params: { project?: string } }>('/health', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
+    const uptimeMs = Date.now() - startedAt
     return {
-      uptime: Math.floor((Date.now() - startedAt) / 1000),
+      ok: true,
       project: proj.name,
+      uptimeMs,
+      // Legacy fields kept additively. The web shell's StatusBar reads
+      // nodeCount / edgeCount; ADR-061's HealthResponseSchema validates
+      // the canonical triple and lets the extras pass through.
+      uptime: Math.floor(uptimeMs / 1000),
       nodeCount: proj.graph.order,
       edgeCount: proj.graph.size,
       lastUpdated: new Date().toISOString(),
@@ -173,7 +179,7 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
       if (!proj.graph.hasNode(id)) {
         return reply.code(404).send({ error: 'node not found', id })
       }
-      return proj.graph.getNodeAttributes(id) as GraphNode
+      return { node: proj.graph.getNodeAttributes(id) as GraphNode }
     },
   )
 
@@ -200,14 +206,14 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
   // a flat list with distance + edgeType + provenance per dependency.
   // Default depth 3, max 10. The MCP get_dependencies tool calls this.
   scope.get<{
-    Params: { project?: string; id: string }
+    Params: { project?: string; nodeId: string }
     Querystring: { depth?: string }
-  }>('/graph/node/:id/dependencies', async (req, reply) => {
+  }>('/graph/dependencies/:nodeId', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
-    const { id } = req.params
-    if (!proj.graph.hasNode(id)) {
-      return reply.code(404).send({ error: 'node not found', id })
+    const { nodeId } = req.params
+    if (!proj.graph.hasNode(nodeId)) {
+      return reply.code(404).send({ error: 'node not found', id: nodeId })
     }
     const depth = req.query.depth ? Number(req.query.depth) : TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH
     if (!Number.isFinite(depth) || depth < 1 || depth > TRANSITIVE_DEPENDENCIES_MAX_DEPTH) {
@@ -215,7 +221,7 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
         error: `depth must be an integer in [1, ${TRANSITIVE_DEPENDENCIES_MAX_DEPTH}]`,
       })
     }
-    return getTransitiveDependencies(proj.graph, id, depth)
+    return getTransitiveDependencies(proj.graph, nodeId, depth)
   })
 
   // Divergence query — the thesis surface (ADR-060). Read-only, derived,
@@ -263,29 +269,43 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
     })
   })
 
-  scope.get<{ Params: { project?: string } }>('/incidents', async (req, reply) => {
+  // ADR-061 envelope rule: list endpoints return { count, total, events }.
+  // `total` is the size of the underlying collection; `count` is the size of
+  // the slice we're handing back. The web shell counts on both.
+  scope.get<{
+    Params: { project?: string }
+    Querystring: { limit?: string }
+  }>('/incidents', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
     const epath = errorsPathFor(proj)
-    if (!epath) return []
-    return readErrorEvents(epath)
+    if (!epath) return { count: 0, total: 0, events: [] }
+    const events = await readErrorEvents(epath)
+    const total = events.length
+    const limit = req.query.limit ? Number(req.query.limit) : 50
+    const safeLimit =
+      Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 50
+    const sliced = events.slice(0, safeLimit)
+    return { count: sliced.length, total, events: sliced }
   })
 
   scope.get<{
     Params: { project?: string }
     Querystring: { limit?: string; edgeType?: string }
-  }>('/incidents/stale', async (req, reply) => {
+  }>('/stale-events', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
     const spath = staleEventsPathFor(proj)
-    if (!spath) return []
+    if (!spath) return { count: 0, total: 0, events: [] }
     const events = await readStaleEvents(spath)
     const filtered = req.query.edgeType
       ? events.filter((e) => e.edgeType === req.query.edgeType)
       : events
     const ordered = [...filtered].reverse()
+    const total = ordered.length
     const limit = req.query.limit ? Number(req.query.limit) : 50
-    return ordered.slice(0, Number.isFinite(limit) && limit > 0 ? limit : 50)
+    const sliced = ordered.slice(0, Number.isFinite(limit) && limit > 0 ? limit : 50)
+    return { count: sliced.length, total, events: sliced }
   })
 
   scope.get<{ Params: { project?: string; nodeId: string } }>(
@@ -298,19 +318,20 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
         return reply.code(404).send({ error: 'node not found', id: nodeId })
       }
       const epath = errorsPathFor(proj)
-      if (!epath) return []
+      if (!epath) return { count: 0, total: 0, events: [] }
       const events = await readErrorEvents(epath)
-      return events.filter(
+      const filtered = events.filter(
         (e) =>
           e.affectedNode === nodeId || e.service === nodeId.replace(/^service:/, ''),
       )
+      return { count: filtered.length, total: filtered.length, events: filtered }
     },
   )
 
   scope.get<{
     Params: { project?: string; nodeId: string }
     Querystring: { errorId?: string }
-  }>('/traverse/root-cause/:nodeId', async (req, reply) => {
+  }>('/graph/root-cause/:nodeId', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
     const { nodeId } = req.params
@@ -336,7 +357,7 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
   scope.get<{
     Params: { project?: string; nodeId: string }
     Querystring: { depth?: string }
-  }>('/traverse/blast-radius/:nodeId', async (req, reply) => {
+  }>('/graph/blast-radius/:nodeId', async (req, reply) => {
     const proj = resolveProject(registry, req, reply)
     if (!proj) return
     const { nodeId } = req.params
@@ -467,7 +488,7 @@ function registerRoutes(scope: FastifyInstance, ctx: RouteContext): void {
     if (req.query.policyId) {
       violations = violations.filter((v) => v.policyId === req.query.policyId)
     }
-    return violations
+    return { violations }
   })
 
   scope.post<{
@@ -567,6 +588,26 @@ export async function buildApi(opts: BuildApiOptions): Promise<FastifyInstance> 
   app.get('/projects', async (_req, reply) => {
     try {
       return await listRegistryProjects()
+    } catch (err) {
+      return reply.code(500).send({
+        error: 'failed to read project registry',
+        details: (err as Error).message,
+      })
+    }
+  })
+
+  // Singular project lookup (ADR-061 #7). Distinct route from the
+  // `/projects/:project/...` dual-mount prefix because Fastify matches on
+  // the full path; the trailing-segment-less request lands here.
+  app.get<{ Params: { project: string } }>('/projects/:project', async (req, reply) => {
+    try {
+      const entry = await getRegistryProject(req.params.project)
+      if (!entry) {
+        return reply
+          .code(404)
+          .send({ error: 'project not found', project: req.params.project })
+      }
+      return { project: entry }
     } catch (err) {
       return reply.code(500).send({
         error: 'failed to read project registry',
