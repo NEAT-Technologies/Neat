@@ -6,6 +6,8 @@ import { Rail } from './Rail'
 import { GraphCanvas } from './GraphCanvas'
 import { Inspector } from './Inspector'
 import { StatusBar } from './StatusBar'
+import { DebugPanel } from './DebugPanel'
+import { Toaster } from './Toaster'
 import type { GraphNode, GraphEdge } from '@neat.is/types'
 
 export interface GraphData {
@@ -40,6 +42,7 @@ export function AppShell() {
   const [project, setProjectState] = useState<string>(() => {
     return readUrlProject() ?? readStoredProject() ?? 'default'
   })
+  const [debugOpen, setDebugOpen] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cyRef = useRef<any>(null)
   const resolvedRef = useRef(readUrlProject() !== null || readStoredProject() !== null)
@@ -85,6 +88,18 @@ export function AppShell() {
     if (nodeId) setSelectedNodeId(nodeId)
   }, [])
 
+  // ADR-058 #4 — Ctrl+Shift+D / Cmd+Shift+D toggles the debug panel.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        e.preventDefault()
+        setDebugOpen((v) => !v)
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
+
   return (
     <div className="app">
       <TopBar
@@ -104,6 +119,8 @@ export function AppShell() {
       />
       <Inspector project={project} selectedNodeId={selectedNodeId} graphData={graphData} />
       <StatusBar project={project} graphData={graphData} />
+      <Toaster />
+      {debugOpen && <DebugPanel project={project} onClose={() => setDebugOpen(false)} />}
     </div>
   )
 }

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { CORE_URL_PUBLIC } from '../../lib/proxy-client'
 
 interface Project {
   name: string
@@ -189,9 +190,35 @@ export function TopBar({ project, onProjectChange, onNodeSelect, onRelayout, onT
       </div>
 
       <div className="top-actions">
+        {/* ADR-058 #5 — daemon URL visible. */}
+        <span className="daemon-url" title="NEAT daemon URL">{CORE_URL_PUBLIC}</span>
         <button className="top-btn" aria-label={isLive ? 'Core connected' : 'Core offline'}>
           <span className={`dot${isLive ? ' live' : ''}`} />
           {isLive ? 'Live' : 'Offline'}
+        </button>
+        {/* ADR-056 — History deferred; explicitly disabled with affordance. */}
+        <button className="top-btn" disabled title="History — coming in v0.3.x" aria-label="History (coming soon)" style={{ opacity: 0.4, cursor: 'not-allowed' }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+          </svg>
+          History
+        </button>
+        {/* ADR-056 — Share wired: copies the deep-link URL to clipboard. */}
+        <button
+          className="top-btn"
+          title="Copy current view URL"
+          aria-label="Share — copy URL"
+          onClick={() => {
+            if (typeof navigator !== 'undefined' && navigator.clipboard) {
+              void navigator.clipboard.writeText(window.location.href)
+            }
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="6" r="2.5" /><circle cx="18" cy="18" r="2.5" />
+            <path d="m8 11 8-4M8 13l8 4" />
+          </svg>
+          Share
         </button>
         <button className="top-btn" title="Re-run cose layout" onClick={onRelayout}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
