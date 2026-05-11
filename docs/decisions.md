@@ -1828,3 +1828,104 @@ The MVP-success-PR experiment (ADR-027) was the gate forcing the synthesis. The 
 - **Cross-project divergences.** Per ADR-026, each project is its own graph. Divergence list is per-project. Cross-codebase joins remain explicitly out of MVP.
 - **Persistence of divergence history.** No `divergences.ndjson` sidecar. The graph snapshot is the audit trail; if the operator wants divergence history, they diff snapshot N against snapshot N+1.
 - **SSE push for new divergences.** ADR-051's locked taxonomy is eight types; expanding to nine for `divergence-detected` would be a successor ADR if Jed's track surfaces the demand. For MVP, polling `/graph/divergences` works.
+
+## ADR-061 — REST API path canonicalization + response envelope rule
+
+**Date:** 2026-05-11
+**Status:** Active. Amends ADR-040.
+
+**Context.** The web shell shipped against an API surface that doesn't match the backend. The user hit it on the Incidents page first: `TypeError: can't access property "length", data.events is undefined`. Tracing it revealed a class of bugs, not one bug.
+
+The audit at `docs/plans/2026-05-11-rest-audit.md` (referenced inline below; not a separate file because the findings live here) surfaced two kinds of drift:
+
+**Path drift** — backend has routes at paths the contract doesn't specify and frontend doesn't call:
+- `/traverse/blast-radius/:nodeId` (contract + frontend say `/graph/blast-radius/:nodeId`)
+- `/traverse/root-cause/:nodeId` (contract + frontend say `/graph/root-cause/:nodeId`)
+- `/incidents/stale` (contract + frontend say `/stale-events`)
+- `/graph/node/:id/dependencies` (contract says `/graph/dependencies/:nodeId`)
+
+**Shape drift** — backend returns bare arrays / bare values where the contract + frontend expect wrapped envelopes:
+- `/incidents` returns `ErrorEvent[]`; frontend expects `{ count, total, events }`
+- `/policies/violations` returns `PolicyViolation[]`; frontend expects `{ violations }`
+- `/stale-events` (at any path) returns `StaleEvent[]`; frontend expects `{ count, total, events }`
+- `/graph/node/:id` returns `GraphNode`; contract says `{ node }`
+- `/incidents/:nodeId` (per-node filter) returns bare filtered array; same wrap expected
+
+Neither drift class was caught by existing regression tests. ADR-040's contract scan asserts:
+- Routes exist
+- Routes dual-mount per ADR-026
+- JSON error envelope on failures
+- POST bodies parse via Zod
+
+It does *not* assert response body schemas, and the path-level scan happily accepts whatever path the backend declares without checking it matches the canonical contract list.
+
+The result: every web shell call to a blast-radius, root-cause, stale-events, or incidents view either 404s or hits the wrong shape. ADRs 056-060 shipped on a backend the frontend couldn't actually talk to for several of its surfaces.
+
+**Decision.**
+
+1. **Path canonicalization — backend renames to match the contract.** The `rest-api.md` contract is the authoritative artifact (per ADR-005 process discipline); implementation aligns. Four renames in `packages/core/src/api.ts`:
+   - `/traverse/root-cause/:nodeId` → `/graph/root-cause/:nodeId`
+   - `/traverse/blast-radius/:nodeId` → `/graph/blast-radius/:nodeId`
+   - `/incidents/stale` → `/stale-events`
+   - `/graph/node/:id/dependencies` → `/graph/dependencies/:nodeId`
+
+   No backward-compat aliases. The drifted paths were never on the public contract; the frontend never called them; external consumers (MCP, CLI) route through `client.ts` which uses the canonical names. Renaming straight is the safest option.
+
+2. **Response envelope rule.** Every GET response from the REST API is a JSON object (never a bare array, never a bare value). The object's top-level keys describe the resource being returned:
+   - **List endpoints** wrap their list in a plural-noun field plus a count: `{ count: N, total: M, events: [...] }`, `{ violations: [...] }`, etc. `count` is the length of the returned array; `total` is the size of the underlying collection before filtering / limiting.
+   - **Single-item endpoints** wrap the item in a singular field: `{ node }`, `{ edge }`.
+   - **Structured-result endpoints** (root cause, blast radius, divergences, diff) return their result type as the top-level object — already objects by virtue of their schema.
+
+   Bare arrays from REST endpoints are a contract violation going forward. The rule is for the consumer's benefit: a JSON object can grow new top-level fields without breaking parsers; a bare array can't.
+
+3. **Required wraps (the specific fixes):**
+   - `/incidents` and `/incidents/:nodeId` → `{ count, total, events: ErrorEvent[] }`
+   - `/stale-events` → `{ count, total, events: StaleEvent[] }`
+   - `/policies/violations` → `{ violations: PolicyViolation[] }`
+   - `/graph/node/:id` → `{ node: GraphNode }`
+
+4. **New schemas in `@neat.is/types` for the response shapes.** Each wrap gets a Zod schema:
+   - `IncidentsResponseSchema`
+   - `StaleEventsResponseSchema`
+   - `PoliciesViolationsResponseSchema`
+   - `GraphNodeResponseSchema`
+
+   Per ADR-031, these are schema growth (commit-and-go; snapshot fixture regenerates).
+
+5. **Contract test class — response shape assertions.** Extend the ADR-040 describe block in `contracts.test.ts`: for each documented REST endpoint, hit the route against a fixture graph and parse the response through its declared schema. Failure to parse fails the test. This catches Class B drift mechanically going forward.
+
+6. **Path consistency assertion.** Add a regression scan: every `scope.get` / `scope.post` path in `api.ts` must appear in `docs/contracts/rest-api.md`'s endpoint table. Drift in either direction (route exists in code but not in contract; route documented but not implemented) fails the test.
+
+7. **Coverage gaps — endpoints backend has but contract doesn't.** Add to `rest-api.md`:
+   - `GET /incidents/:nodeId` — per-node incident filter
+   - `GET /projects/:project` — singular project lookup
+   - `GET /graph/divergences` — already part of ADR-060's surface
+
+**Authority.** `packages/core/src/api.ts` (the implementation), `docs/contracts/rest-api.md` (the canonical paths and shapes), `packages/types/src/index.ts` (the response schemas).
+
+**Enforcement.** New describe block in `contracts.test.ts` for ADR-061. Live + `it.todo` assertions:
+
+- For each Class A rename, the backend handler is registered at the canonical path (regex scan of `api.ts` against the contract's endpoint list).
+- For each Class B wrap, the response parses through its declared Zod schema (live runtime assertion, requires fixture data).
+- Path consistency: every `scope.get` / `scope.post` path appears in the contract's endpoint table.
+- No backend handler returns a bare array from a GET endpoint (scan for `return events` / `return violations` / similar bare-collection returns).
+
+**Why we didn't catch this earlier.**
+
+Three independent layers should have flagged this and didn't:
+
+1. **The audit-doc trail.** The 2026-05-04 verification pass didn't audit REST response shapes — it audited graph correctness. Subsystem audits in `docs/audits/NEAT-audit-*.md` similarly didn't grade the REST layer's response bodies.
+2. **The contracts.test.ts surface.** As covered above — assertions stopped at "route exists" / "dual-mounted" / "JSON error envelope." Body schemas weren't checked.
+3. **The API reference doc.** `docs/api-reference.md` documented the canonical shapes correctly. But the doc isn't enforced as a contract today — it's a reference for consumers, not a binding rule on producers. This ADR makes the doc-implementation linkage testable.
+
+The pre-v0.3.0 verification pass (`docs/plans/2026-05-10-pre-v0.3.0-verification.md`, Finding 9 / NOTE 9.2) flagged that per-subsystem audits should be re-graded before public release. That re-grade would have caught Class A; it's still queued.
+
+**Out of scope.**
+
+- **Versioning the REST API.** No `/v1/` prefix, no `Accept-Version` header. MVP is single-version; if NEAT ever needs multi-version support, that's a successor ADR.
+- **HATEOAS / hypermedia.** Out for MVP. Bare JSON.
+- **GraphQL / tRPC.** Speculative; not earned by current consumer demand.
+- **Backward-compatibility aliases for the renamed paths.** As noted in decision #1, none of the drifted paths were on the contract or called by any non-test consumer. Renaming clean is the right call.
+- **The CLI / MCP surface.** Both already route through the canonical names via `client.ts`. No CLI or MCP changes needed for this ADR.
+
+**First application.** This ADR ships in v0.2.11. The implementation work is delegated to a fresh Implementation Agent per the role discipline; the handoff prompt is in the conversation.

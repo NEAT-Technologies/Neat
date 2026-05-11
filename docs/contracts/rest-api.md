@@ -1,14 +1,14 @@
 ---
 name: rest-api
-description: Routes dual-mount at /X and /projects/:project/X per ADR-026. JSON errors. Live graphology only — no graph.json reads at request time. Inbound bodies are Zod-validated.
+description: Routes dual-mount at /X and /projects/:project/X per ADR-026. JSON errors. Live graphology only — no graph.json reads at request time. Inbound bodies are Zod-validated. Outbound responses are always JSON objects (never bare arrays) per ADR-061's envelope rule.
 governs:
   - "packages/core/src/api.ts"
-adr: [ADR-040, ADR-026]
+adr: [ADR-040, ADR-026, ADR-061]
 ---
 
 # REST API contract
 
-Governs `packages/core/src/api.ts`.
+Governs `packages/core/src/api.ts`. Amended 2026-05-11 by ADR-061 (path canonicalization + response envelope rule); paths and shapes in this doc are the canonical source of truth.
 
 ## Dual-mount per ADR-026
 
@@ -16,32 +16,50 @@ Every route mounts at both `/X` and `/projects/:project/X`. `registerRoutes(scop
 
 `:project` defaults to `'default'` when missing.
 
-## Read-side endpoints (locked)
+## Response envelope rule (ADR-061)
 
-| Path | Returns |
-|------|---------|
-| `GET /health` | receiver health + project name |
-| `GET /graph` | full snapshot (live graphology serialized) |
-| `GET /graph/node/:id` | single node by id |
-| `GET /graph/edges/:id` | outbound edges from a node |
-| `GET /graph/dependencies/:nodeId?depth=N` | transitive outbound walk (#144 — default 3, max 10) |
-| `GET /graph/blast-radius/:nodeId?depth=N` | BFS outbound (default 10, max 20) |
-| `GET /graph/root-cause/:nodeId` | getRootCause result |
-| `GET /graph/diff?against=path` | snapshot diff |
-| `GET /search?q=...` | semantic search via ADR-025 embedder chain |
-| `GET /incidents` | recent ErrorEvents |
-| `GET /stale-events` | recent STALE transitions |
-| `GET /policies` | parsed `policy.json` (v0.2.4 #117) |
-| `GET /policies/violations` | current violations, filterable by `?severity=` and `?policyId=` (v0.2.4) |
+Every GET response is a JSON object. Never a bare array, never a bare value. The object's top-level keys describe the resource:
+
+- **List endpoints** wrap in plural-noun fields plus a count: `{ count, total, events: [...] }`, `{ violations: [...] }`. `count` is the length of the returned array; `total` is the size of the underlying collection before filtering / limiting.
+- **Single-item endpoints** wrap the item in a singular field: `{ node }`, `{ edge }`.
+- **Structured-result endpoints** (root cause, blast radius, divergences, diff) return their result type as the top-level object — already objects by virtue of their schema.
+
+Bare arrays from REST endpoints are a contract violation. Why: an object can grow new top-level fields without breaking parsers; a bare array can't.
+
+## Read-side endpoints (canonical paths + shapes)
+
+| Path | Returns | Response shape |
+|------|---------|----------------|
+| `GET /health` | receiver health + project name | `{ ok, project, uptimeMs }` |
+| `GET /graph` | full snapshot (live graphology serialized) | `{ nodes, edges }` |
+| `GET /graph/node/:id` | single node by id | `{ node: GraphNode }` |
+| `GET /graph/edges/:id` | inbound + outbound edges from a node | `{ inbound: GraphEdge[], outbound: GraphEdge[] }` |
+| `GET /graph/dependencies/:nodeId?depth=N` | transitive outbound walk (default 3, max 10) | `TransitiveDependenciesResult` |
+| `GET /graph/blast-radius/:nodeId?depth=N` | BFS outbound (default 10, max 20) | `BlastRadiusResult` |
+| `GET /graph/root-cause/:nodeId` | getRootCause result | `RootCauseResult` |
+| `GET /graph/diff?against=path` | snapshot diff | `GraphDiffResult` |
+| `GET /graph/divergences` | EXTRACTED-vs-OBSERVED divergences (ADR-060) | `DivergenceResult` |
+| `GET /search?q=...&limit=N` | semantic search via ADR-025 embedder chain | `{ query, provider, matches: SearchMatch[] }` |
+| `GET /incidents?limit=N` | recent ErrorEvents | `{ count, total, events: ErrorEvent[] }` |
+| `GET /incidents/:nodeId` | recent ErrorEvents filtered to a node | `{ count, total, events: ErrorEvent[] }` |
+| `GET /stale-events?limit=N&edgeType=X` | recent STALE transitions | `{ count, total, events: StaleEvent[] }` |
+| `GET /policies` | parsed `policy.json` | `{ version, policies: Policy[] }` |
+| `GET /policies/violations?severity=X&policyId=X` | current violations, filterable | `{ violations: PolicyViolation[] }` |
+| `GET /projects` | machine-registered projects (single-mount; not dual-mounted) | `Array<RegistryEntry>` *(the one bare-array exception — `/projects` is the switcher entry-point and its consumers (web, MCP) treat it as a list primitive)* |
+| `GET /projects/:project` | singular project lookup | `{ project: RegistryEntry }` |
 
 ## Write-side endpoints
 
-| Path | Effect |
-|------|--------|
-| `POST /graph/scan` | re-runs static-extraction pass |
-| `POST /policies/check` | dry-run policy evaluation; body `{ hypotheticalAction }` (v0.2.4) |
+| Path | Effect | Response shape |
+|------|--------|----------------|
+| `POST /graph/scan` | re-runs static-extraction pass | `{ nodesAdded, edgesAdded, durationMs }` |
+| `POST /policies/check` | dry-run policy evaluation; body `{ hypotheticalAction? }` | `{ allowed, violations: PolicyViolation[] }` |
 
 The OTLP receiver lives on its own port (`:4318`) — not part of the REST API.
+
+## SSE endpoint
+
+`GET /events` — Server-Sent Events stream per ADR-051 (frontend-facing API contract). Eight-type event taxonomy locked; see [`frontend-api.md`](./frontend-api.md).
 
 ## Error responses
 
@@ -51,12 +69,35 @@ JSON shape: `{ error: string, status: number, details?: unknown }`. `400` for ba
 
 Every `app.post` body parses via Zod schemas from `@neat.is/types`. Failure → 400 with the Zod error in `details`.
 
+Every GET response also parses through its declared schema (per ADR-061's enforcement). Schemas added in this contract:
+
+- `IncidentsResponseSchema`
+- `StaleEventsResponseSchema`
+- `PoliciesViolationsResponseSchema`
+- `GraphNodeResponseSchema`
+- `GraphEdgesResponseSchema`
+- `HealthResponseSchema`
+- `SingleProjectResponseSchema`
+
+Existing typed results (`RootCauseResult`, `BlastRadiusResult`, `TransitiveDependenciesResult`, `DivergenceResult`, `Policy`) already serve as their endpoint's response schemas.
+
 ## Live graphology, never `graph.json`
 
 Every read endpoint reads `proj.graph` (live in-memory). Already enforced by Rule 6.
+
+## Path canonicalization (ADR-061 amendment)
+
+Four paths were renamed from drifted backend variants to match the canonical table above:
+
+- `/traverse/root-cause/:nodeId` → `/graph/root-cause/:nodeId`
+- `/traverse/blast-radius/:nodeId` → `/graph/blast-radius/:nodeId`
+- `/incidents/stale` → `/stale-events`
+- `/graph/node/:id/dependencies` → `/graph/dependencies/:nodeId`
+
+No backward-compat aliases. The drifted paths were never on the contract; no non-test consumer called them.
 
 ## Authority
 
 Mostly read-only. Two write-side endpoints (`/graph/scan`, `/policies/check`) trigger producers but don't mutate the graph directly.
 
-Full rationale: [ADR-040](../decisions.md#adr-040--rest-api-contract).
+Full rationale: [ADR-040](../decisions.md#adr-040--rest-api-contract). Amendment rationale: [ADR-061](../decisions.md#adr-061--rest-api-path-canonicalization--response-envelope-rule).

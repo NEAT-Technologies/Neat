@@ -5654,3 +5654,71 @@ describe('Divergence query (ADR-060)', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 })
+
+// ──────────────────────────────────────────────────────────────────────────
+// REST API path canonicalization + response envelope rule (ADR-061)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Amends ADR-040 / docs/contracts/rest-api.md after the 2026-05-11 audit
+// found path drift (4 endpoints) and shape drift (5 endpoints) between
+// backend and contract. Canonical paths and shapes are in rest-api.md.
+//
+// Three classes of assertion:
+// 1. Canonical paths — drifted paths must NOT appear in api.ts; canonical
+//    paths MUST appear.
+// 2. Response envelope rule — every GET handler returns a JSON object,
+//    never a bare array (with the documented /projects exception).
+// 3. Response shape — runtime parse through Zod schema for each endpoint.
+//
+// Each flips from todo to live as the implementation agent ships the fix.
+describe('REST API canonicalization (ADR-061)', () => {
+  // ── Class A: path canonicalization ───────────────────────────────────
+  // Backend must declare each canonical path; drifted variants must be gone.
+  it.todo('api.ts declares `/graph/root-cause/:nodeId` (renamed from /traverse/root-cause) (ADR-061 #1)')
+  it.todo('api.ts declares `/graph/blast-radius/:nodeId` (renamed from /traverse/blast-radius) (ADR-061 #1)')
+  it.todo('api.ts declares `/stale-events` (renamed from /incidents/stale) (ADR-061 #1)')
+  it.todo('api.ts declares `/graph/dependencies/:nodeId` (renamed from /graph/node/:id/dependencies) (ADR-061 #1)')
+  it.todo('api.ts contains no references to drifted paths (/traverse/*, /incidents/stale, /graph/node/:id/dependencies) (ADR-061 #1)')
+
+  // ── Class B: response envelope rule ──────────────────────────────────
+  // Every GET handler returns a JSON object — never a bare array. Scans
+  // api.ts for `return events`, `return violations`, `return result_array`,
+  // etc. — flags bare-collection returns that violate ADR-061 #2.
+  it.todo('no GET handler in api.ts returns a bare array (ADR-061 #2 — envelope rule)')
+  it.todo('the documented /projects bare-array exception is the only bare-array GET return (ADR-061 #2)')
+
+  // ── Class C: response shape via Zod schemas ──────────────────────────
+  // Each endpoint's response parses through its declared schema. Live
+  // runtime assertions against fixture data; require buildApi() + supertest
+  // (or equivalent in-process HTTP test client). Fixtures live alongside.
+  it.todo('GET /incidents response parses through IncidentsResponseSchema (ADR-061 #3)')
+  it.todo('GET /incidents/:nodeId response parses through IncidentsResponseSchema (ADR-061 #3)')
+  it.todo('GET /stale-events response parses through StaleEventsResponseSchema (ADR-061 #3)')
+  it.todo('GET /policies/violations response parses through PoliciesViolationsResponseSchema (ADR-061 #3)')
+  it.todo('GET /graph/node/:id response parses through GraphNodeResponseSchema (ADR-061 #3)')
+  it.todo('GET /graph/edges/:id response parses through GraphEdgesResponseSchema (ADR-061 #3)')
+  it.todo('GET /health response parses through HealthResponseSchema (ADR-061 #3)')
+  it.todo('GET /projects/:project response parses through SingleProjectResponseSchema (ADR-061 #3)')
+  it.todo('GET /search response parses through SearchResponseSchema (ADR-061 #3)')
+  // For endpoints with existing typed results, assertion uses the existing schema:
+  it.todo('GET /graph/root-cause/:nodeId response parses through RootCauseResultSchema (ADR-061 #3)')
+  it.todo('GET /graph/blast-radius/:nodeId response parses through BlastRadiusResultSchema (ADR-061 #3)')
+  it.todo('GET /graph/dependencies/:nodeId response parses through TransitiveDependenciesResultSchema (ADR-061 #3)')
+  it.todo('GET /graph/divergences response parses through DivergenceResultSchema (ADR-061 #3)')
+  it.todo('GET /policies response parses through PolicyFileSchema (ADR-061 #3)')
+  it.todo('GET /graph response parses through SerializedGraphSchema (ADR-061 #3)')
+  it.todo('GET /graph/diff response parses through GraphDiffResultSchema (ADR-061 #3)')
+
+  // ── Class D: path consistency scan ───────────────────────────────────
+  // Every scope.get / scope.post path in api.ts must appear in
+  // rest-api.md's canonical endpoint table. Catches future drift in
+  // either direction (route exists but not documented; route documented
+  // but not implemented).
+  it.todo('every path registered in api.ts appears in rest-api.md endpoint table (ADR-061 #6)')
+  it.todo('every path in rest-api.md endpoint table is registered in api.ts (ADR-061 #6)')
+
+  // ── Class E: coverage gaps now documented ────────────────────────────
+  it.todo('rest-api.md documents GET /incidents/:nodeId (ADR-061 #7)')
+  it.todo('rest-api.md documents GET /projects/:project (ADR-061 #7)')
+  it.todo('rest-api.md documents GET /graph/divergences (ADR-061 #7 — also ADR-060)')
+})
