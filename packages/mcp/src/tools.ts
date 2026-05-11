@@ -271,9 +271,10 @@ export async function getIncidentHistory(
   input: IncidentHistoryInput,
 ): Promise<ToolResponse> {
   return withMissingNodeFallback(async () => {
-    const events = await client.get<ErrorEvent[]>(
+    const body = await client.get<{ count: number; total: number; events: ErrorEvent[] }>(
       projectPath(input.project, `/incidents/${encodeURIComponent(input.nodeId)}`),
     )
+    const events = body.events
     if (events.length === 0) {
       return formatEmptyResponse(`No incidents recorded against ${input.nodeId}.`)
     }
@@ -286,7 +287,7 @@ export async function getIncidentHistory(
       blockLines.push(`    trace=${ev.traceId} span=${ev.spanId}`)
     }
     return formatToolResponse({
-      summary: `${input.nodeId} has ${events.length} recorded incident${events.length === 1 ? '' : 's'}; showing the ${ordered.length} most recent.`,
+      summary: `${input.nodeId} has ${body.total} recorded incident${body.total === 1 ? '' : 's'}; showing the ${ordered.length} most recent.`,
       block: blockLines.join('\n'),
       // ErrorEvents are observation records, not graph edges — provenance is
       // OBSERVED by definition (the OTel span happened).
@@ -472,9 +473,10 @@ export async function getRecentStaleEdges(
   const qs = params.size > 0 ? `?${params.toString()}` : ''
 
   try {
-    const events = await client.get<StaleEventResponse[]>(
+    const body = await client.get<{ count: number; total: number; events: StaleEventResponse[] }>(
       projectPath(input.project, `/stale-events${qs}`),
     )
+    const events = body.events
     if (events.length === 0) {
       return formatEmptyResponse(
         input.edgeType
@@ -545,9 +547,10 @@ export async function checkPolicies(
         qsParams.set('policyId', input.scope.policyId)
       }
       const qs = qsParams.size > 0 ? `?${qsParams.toString()}` : ''
-      violations = await client.get<PolicyViolation[]>(
+      const body = await client.get<{ violations: PolicyViolation[] }>(
         projectPath(input.project, `/policies/violations${qs}`),
       )
+      violations = body.violations
       allowed = violations.every((v) => v.onViolation !== 'block')
     }
 

@@ -66,11 +66,13 @@ describe('readNodeResource', () => {
   it('returns node attrs and outbound edges as JSON', async () => {
     const { client, capture } = clientFor({
       '/graph/node/service:service-b': {
-        id: 'service:service-b',
-        type: NodeType.ServiceNode,
-        name: 'service-b',
-        language: 'javascript',
-        dependencies: { pg: '7.4.0' },
+        node: {
+          id: 'service:service-b',
+          type: NodeType.ServiceNode,
+          name: 'service-b',
+          language: 'javascript',
+          dependencies: { pg: '7.4.0' },
+        },
       },
       '/graph/edges/service:service-b': {
         inbound: [],
@@ -128,7 +130,9 @@ describe('readRecentIncidentsResource', () => {
         errorMessage: 'scram failure',
       },
     ]
-    const { client } = clientFor({ '/incidents': events })
+    const { client } = clientFor({
+      '/incidents': { count: events.length, total: events.length, events },
+    })
     const result = await readRecentIncidentsResource(client)
     expect(result.contents).toHaveLength(1)
     const body = JSON.parse(result.contents[0].text as string)
@@ -148,7 +152,9 @@ describe('readRecentIncidentsResource', () => {
       spanId: 's',
       errorMessage: 'boom',
     }))
-    const { client } = clientFor({ '/incidents': events })
+    const { client } = clientFor({
+      '/incidents': { count: events.length, total: events.length, events },
+    })
     const result = await readRecentIncidentsResource(client, 5)
     const body = JSON.parse(result.contents[0].text as string)
     expect(body.count).toBe(5)

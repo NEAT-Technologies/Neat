@@ -75,12 +75,12 @@ export async function readNodeResource(
   const uri = nodeUri(id)
   const prefix = corePrefix(project)
   try {
-    const [attrs, edges] = await Promise.all([
-      client.get<GraphNode>(`${prefix}/graph/node/${encodeURIComponent(id)}`),
+    const [nodeBody, edges] = await Promise.all([
+      client.get<{ node: GraphNode }>(`${prefix}/graph/node/${encodeURIComponent(id)}`),
       client.get<EdgesResponse>(`${prefix}/graph/edges/${encodeURIComponent(id)}`),
     ])
     const body = {
-      node: attrs,
+      node: nodeBody.node,
       // Outbound only — the issue spec says "attrs + outbound edges". Inbound
       // edges are still reachable via the other endpoint and would double the
       // payload for hub nodes (e.g. a shared database).
@@ -116,9 +116,10 @@ export async function readPolicyViolationsResource(
   limit: number = POLICY_VIOLATIONS_DEFAULT_LIMIT,
   project?: string,
 ): Promise<ReadResourceResult> {
-  const violations = await client.get<PolicyViolation[]>(
+  const body = await client.get<{ violations: PolicyViolation[] }>(
     `${corePrefix(project)}/policies/violations`,
   )
+  const violations = body.violations
   // Latest first; cap at limit so an exploding violations log doesn't blow
   // up the resource read. The full file is still on disk for forensic use.
   const ordered = [...violations].reverse().slice(0, limit)
@@ -142,7 +143,10 @@ export async function readRecentIncidentsResource(
   limit: number = INCIDENTS_DEFAULT_LIMIT,
   project?: string,
 ): Promise<ReadResourceResult> {
-  const events = await client.get<ErrorEvent[]>(`${corePrefix(project)}/incidents`)
+  const body = await client.get<{ count: number; total: number; events: ErrorEvent[] }>(
+    `${corePrefix(project)}/incidents`,
+  )
+  const events = body.events
   // ndjson order is append-time = oldest first. Reverse so most-recent leads.
   const ordered = [...events].reverse().slice(0, limit)
   return {
@@ -256,9 +260,12 @@ export function registerResources(
     if (stopped) return
     // Incidents poll.
     try {
-      const events = await client.get<ErrorEvent[]>(`${corePrefix(project)}/incidents`)
+      const incidents = await client.get<{ count: number; total: number; events: ErrorEvent[] }>(
+        `${corePrefix(project)}/incidents`,
+      )
+      const events = incidents.events
       const next = {
-        total: events.length,
+        total: incidents.total,
         lastId: events.length > 0 ? events[events.length - 1].id : undefined,
       }
       if (incidentsChanged(lastIncidents, next)) {
@@ -272,9 +279,10 @@ export function registerResources(
     // resources/updated for neat://policies/violations subscribers per
     // ADR-044 §alert. Same change-detection shape as incidents.
     try {
-      const violations = await client.get<PolicyViolation[]>(
+      const polBody = await client.get<{ violations: PolicyViolation[] }>(
         `${corePrefix(project)}/policies/violations`,
       )
+      const violations = polBody.violations
       const next = {
         total: violations.length,
         lastId:

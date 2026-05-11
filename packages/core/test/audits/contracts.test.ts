@@ -1989,9 +1989,9 @@ describe('MCP tool surface contract (ADR-039)', () => {
     // Empty-result footer reads n/a / n/a per the contract.
     expect(content).toMatch(/n\/a/)
   })
-  it('get_dependencies is transitive — calls /graph/node/:id/dependencies?depth=N (issue #144)', () => {
+  it('get_dependencies is transitive — calls /graph/dependencies/:nodeId?depth=N (issue #144, ADR-061 path canonicalization)', () => {
     const tools = readFileSync(join(MCP_SRC, 'tools.ts'), 'utf8')
-    expect(tools).toMatch(/\/graph\/node\/[^`'"\s]*dependencies\?depth=/)
+    expect(tools).toMatch(/\/graph\/dependencies\/[^`'"\s]*\?depth=/)
     // The old direct-only path is gone — getDependencies must not call
     // /graph/edges/:id anymore.
     expect(tools).not.toMatch(/getDependencies[\s\S]{0,500}\/graph\/edges/)
@@ -2015,11 +2015,13 @@ describe('REST API contract (ADR-040)', () => {
     const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
     expect(api).toMatch(/registerRoutes\(app, routeCtx\)/)
     expect(api).toMatch(/prefix:\s*['"]\/projects\/:project['"]/)
-    // No bare app.get / app.post outside the discovery /projects route.
+    // No bare app.get / app.post outside the documented exceptions.
     const bareGet = api.match(/\bapp\.(get|post)\s*</g) ?? []
-    // The /projects discovery endpoint at the top level is the only allowed
-    // direct app.get; everything else routes through registerRoutes.
-    expect(bareGet.length).toBeLessThanOrEqual(1)
+    // Documented exceptions to dual-mount routing:
+    //  1. /projects — machine registry list (ADR-051 #4)
+    //  2. /projects/:project — singular registry lookup (ADR-061 #7)
+    // Everything else routes through registerRoutes.
+    expect(bareGet.length).toBeLessThanOrEqual(2)
   })
 
   it('error responses are JSON-shaped { error, status, details? }', () => {
@@ -2038,9 +2040,9 @@ describe('REST API contract (ADR-040)', () => {
     })
     expect(offenders, offenders.join('\n')).toEqual([])
   })
-  it('GET /graph/node/:id/dependencies?depth=N exists (issue #144)', () => {
+  it('GET /graph/dependencies/:nodeId?depth=N exists (issue #144, ADR-061 path canonicalization)', () => {
     const api = readFileSync(join(CORE_SRC, 'api.ts'), 'utf8')
-    expect(api).toMatch(/['"]\/graph\/node\/:id\/dependencies['"]/)
+    expect(api).toMatch(/['"]\/graph\/dependencies\/:nodeId['"]/)
     // Default 3, max 10 per the contract.
     expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_DEFAULT_DEPTH/)
     expect(api).toMatch(/TRANSITIVE_DEPENDENCIES_MAX_DEPTH/)

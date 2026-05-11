@@ -26,8 +26,11 @@ describe('REST API (fastify.inject)', () => {
     const res = await app.inject({ method: 'GET', url: '/health' })
     expect(res.statusCode).toBe(200)
     const body = res.json()
+    // ADR-061 canonical triple plus legacy extras (passthrough).
     expect(body).toMatchObject({
-      uptime: expect.any(Number),
+      ok: true,
+      project: expect.any(String),
+      uptimeMs: expect.any(Number),
       nodeCount: expect.any(Number),
       edgeCount: expect.any(Number),
       lastUpdated: expect.any(String),
@@ -55,7 +58,7 @@ describe('REST API (fastify.inject)', () => {
   it('GET /graph/node/:id returns a single node', async () => {
     const res = await app.inject({ method: 'GET', url: '/graph/node/service:service-b' })
     expect(res.statusCode).toBe(200)
-    expect(res.json().dependencies.pg).toBe('7.4.0')
+    expect(res.json().node.dependencies.pg).toBe('7.4.0')
   })
 
   it('GET /graph/node/:id returns 404 for an unknown node', async () => {
@@ -71,19 +74,19 @@ describe('REST API (fastify.inject)', () => {
     expect(body.outbound.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('GET /incidents returns an empty array (M2 fills this in)', async () => {
+  it('GET /incidents returns a wrapped empty list when no log is configured', async () => {
     const res = await app.inject({ method: 'GET', url: '/incidents' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual([])
+    expect(res.json()).toEqual({ count: 0, total: 0, events: [] })
   })
 
-  it('GET /incidents/:nodeId returns [] for a known node', async () => {
+  it('GET /incidents/:nodeId returns a wrapped empty list for a known node', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/incidents/service:service-b',
     })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual([])
+    expect(res.json()).toEqual({ count: 0, total: 0, events: [] })
   })
 
   it('GET /search?q=service-b finds the matching node', async () => {
@@ -201,10 +204,10 @@ describe('REST API (fastify.inject)', () => {
     expect(res.statusCode).toBe(400)
   })
 
-  it('GET /stale-events returns [] when no stale-events log is configured', async () => {
+  it('GET /stale-events returns a wrapped empty list when no log is configured', async () => {
     const res = await app.inject({ method: 'GET', url: '/stale-events' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual([])
+    expect(res.json()).toEqual({ count: 0, total: 0, events: [] })
   })
 
   it('GET /graph/blast-radius/:nodeId honours a custom depth', async () => {
@@ -335,9 +338,10 @@ describe('GET /stale-events (with log)', () => {
     const res = await app.inject({ method: 'GET', url: '/stale-events' })
     expect(res.statusCode).toBe(200)
     const body = res.json()
-    expect(body).toHaveLength(2)
-    expect(body[0].edgeType).toBe('CONNECTS_TO')
-    expect(body[1].edgeType).toBe('CALLS')
+    expect(body.total).toBe(2)
+    expect(body.events).toHaveLength(2)
+    expect(body.events[0].edgeType).toBe('CONNECTS_TO')
+    expect(body.events[1].edgeType).toBe('CALLS')
   })
 
   it('filters by edgeType', async () => {
@@ -346,12 +350,12 @@ describe('GET /stale-events (with log)', () => {
       url: '/stale-events?edgeType=CALLS',
     })
     const body = res.json()
-    expect(body).toHaveLength(1)
-    expect(body[0].edgeType).toBe('CALLS')
+    expect(body.events).toHaveLength(1)
+    expect(body.events[0].edgeType).toBe('CALLS')
   })
 
   it('honours limit', async () => {
     const res = await app.inject({ method: 'GET', url: '/stale-events?limit=1' })
-    expect(res.json()).toHaveLength(1)
+    expect(res.json().events).toHaveLength(1)
   })
 })

@@ -308,26 +308,30 @@ describe('getObservedDependencies', () => {
 describe('getIncidentHistory', () => {
   it('returns events newest first with trace and span ids', async () => {
     const { client } = clientFor({
-      '/incidents/database:payments-db': [
-        {
-          id: 'trace-1:span-1',
-          timestamp: '2026-05-01T15:00:00.000Z',
-          service: 'service-b',
-          traceId: 'trace-1',
-          spanId: 'span-1',
-          errorMessage: 'older',
-          affectedNode: 'database:payments-db',
-        },
-        {
-          id: 'trace-2:span-2',
-          timestamp: '2026-05-01T15:30:00.000Z',
-          service: 'service-b',
-          traceId: 'trace-2',
-          spanId: 'span-2',
-          errorMessage: 'SCRAM-SERVER-FIRST-MESSAGE',
-          affectedNode: 'database:payments-db',
-        },
-      ],
+      '/incidents/database:payments-db': {
+        count: 2,
+        total: 2,
+        events: [
+          {
+            id: 'trace-1:span-1',
+            timestamp: '2026-05-01T15:00:00.000Z',
+            service: 'service-b',
+            traceId: 'trace-1',
+            spanId: 'span-1',
+            errorMessage: 'older',
+            affectedNode: 'database:payments-db',
+          },
+          {
+            id: 'trace-2:span-2',
+            timestamp: '2026-05-01T15:30:00.000Z',
+            service: 'service-b',
+            traceId: 'trace-2',
+            spanId: 'span-2',
+            errorMessage: 'SCRAM-SERVER-FIRST-MESSAGE',
+            affectedNode: 'database:payments-db',
+          },
+        ],
+      },
     })
     const res = await getIncidentHistory(client, { nodeId: 'database:payments-db' })
     const text = res.content[0].text
@@ -350,14 +354,18 @@ describe('getIncidentHistory', () => {
       errorMessage: `e${i}`,
       affectedNode: 'database:payments-db',
     }))
-    const { client } = clientFor({ '/incidents/database:payments-db': events })
+    const { client } = clientFor({
+      '/incidents/database:payments-db': { count: 5, total: 5, events },
+    })
     const res = await getIncidentHistory(client, { nodeId: 'database:payments-db', limit: 2 })
     expect(res.content[0].text).toContain('has 5 recorded incidents')
     expect(res.content[0].text).toContain('showing the 2 most recent')
   })
 
   it('returns a friendly message for an empty list', async () => {
-    const { client } = clientFor({ '/incidents/service:service-a': [] })
+    const { client } = clientFor({
+      '/incidents/service:service-a': { count: 0, total: 0, events: [] },
+    })
     const res = await getIncidentHistory(client, { nodeId: 'service:service-a' })
     expect(res.content[0].text).toContain('No incidents recorded')
   })
@@ -493,28 +501,32 @@ describe('getGraphDiff', () => {
 describe('getRecentStaleEdges', () => {
   it('formats a list of stale-edge transitions newest-first', async () => {
     const { client, capture } = clientFor({
-      '/stale-events': [
-        {
-          edgeId: 'CONNECTS_TO:OBSERVED:service:b->database:c',
-          source: 'service:b',
-          target: 'database:c',
-          edgeType: 'CONNECTS_TO',
-          thresholdMs: 14400000,
-          ageMs: 15000000,
-          lastObserved: '2026-05-02T07:00:00.000Z',
-          transitionedAt: '2026-05-02T11:10:00.000Z',
-        },
-        {
-          edgeId: 'CALLS:OBSERVED:service:a->service:b',
-          source: 'service:a',
-          target: 'service:b',
-          edgeType: 'CALLS',
-          thresholdMs: 3600000,
-          ageMs: 5400000,
-          lastObserved: '2026-05-02T10:00:00.000Z',
-          transitionedAt: '2026-05-02T11:30:00.000Z',
-        },
-      ],
+      '/stale-events': {
+        count: 2,
+        total: 2,
+        events: [
+          {
+            edgeId: 'CONNECTS_TO:OBSERVED:service:b->database:c',
+            source: 'service:b',
+            target: 'database:c',
+            edgeType: 'CONNECTS_TO',
+            thresholdMs: 14400000,
+            ageMs: 15000000,
+            lastObserved: '2026-05-02T07:00:00.000Z',
+            transitionedAt: '2026-05-02T11:10:00.000Z',
+          },
+          {
+            edgeId: 'CALLS:OBSERVED:service:a->service:b',
+            source: 'service:a',
+            target: 'service:b',
+            edgeType: 'CALLS',
+            thresholdMs: 3600000,
+            ageMs: 5400000,
+            lastObserved: '2026-05-02T10:00:00.000Z',
+            transitionedAt: '2026-05-02T11:30:00.000Z',
+          },
+        ],
+      },
     })
     const res = await getRecentStaleEdges(client, {})
     const out = res.content[0].text
@@ -526,14 +538,16 @@ describe('getRecentStaleEdges', () => {
   })
 
   it('returns a friendly empty message', async () => {
-    const { client } = clientFor({ '/stale-events': [] })
+    const { client } = clientFor({
+      '/stale-events': { count: 0, total: 0, events: [] },
+    })
     const res = await getRecentStaleEdges(client, {})
     expect(res.content[0].text).toContain('No stale-edge transitions')
   })
 
   it('passes edgeType + limit query params', async () => {
     const { client, capture } = clientFor({
-      '/stale-events?limit=10&edgeType=CALLS': [],
+      '/stale-events?limit=10&edgeType=CALLS': { count: 0, total: 0, events: [] },
     })
     await getRecentStaleEdges(client, { limit: 10, edgeType: 'CALLS' })
     expect(capture.paths[0]).toContain('limit=10')
@@ -563,7 +577,7 @@ describe('project routing', () => {
         total: 0,
         dependencies: [],
       },
-      '/projects/alpha/incidents/service:a': [],
+      '/projects/alpha/incidents/service:a': { count: 0, total: 0, events: [] },
       '/projects/alpha/search?q=foo': { query: 'foo', provider: 'substring', matches: [] },
       '/projects/alpha/graph/diff?against=snap.json': {
         base: { exportedAt: '2026-01-01' },
@@ -572,7 +586,7 @@ describe('project routing', () => {
         removed: { nodes: [], edges: [] },
         changed: { nodes: [], edges: [] },
       },
-      '/projects/alpha/stale-events': [],
+      '/projects/alpha/stale-events': { count: 0, total: 0, events: [] },
     })
 
     await getRootCause(client, { errorNode: 'database:payments-db', project: 'alpha' })

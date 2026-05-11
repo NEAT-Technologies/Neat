@@ -40,11 +40,16 @@ export const GraphEdgesResponseSchema = z.object({
 })
 export type GraphEdgesResponse = z.infer<typeof GraphEdgesResponseSchema>
 
-export const HealthResponseSchema = z.object({
-  ok: z.boolean(),
-  project: z.string(),
-  uptimeMs: z.number().int().nonnegative(),
-})
+// `.passthrough()` because the handler keeps legacy fields (uptime,
+// nodeCount, edgeCount, lastUpdated) for the web shell's StatusBar. The
+// canonical triple is what's required; the extras ride along.
+export const HealthResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    project: z.string(),
+    uptimeMs: z.number().int().nonnegative(),
+  })
+  .passthrough()
 export type HealthResponse = z.infer<typeof HealthResponseSchema>
 
 export const SingleProjectResponseSchema = z.object({
