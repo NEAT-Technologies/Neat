@@ -95,12 +95,16 @@
                           "_object": {
                             "file": "_string",
                             "line": {
-                              "_number": [
-                                "int",
-                                "min"
-                              ]
+                              "_optional": {
+                                "_number": [
+                                  "int",
+                                  "min"
+                                ]
+                              }
                             },
-                            "snippet": "_string"
+                            "snippet": {
+                              "_optional": "_string"
+                            }
                           }
                         }
                       },
@@ -212,12 +216,16 @@
                           "_object": {
                             "file": "_string",
                             "line": {
-                              "_number": [
-                                "int",
-                                "min"
-                              ]
+                              "_optional": {
+                                "_number": [
+                                  "int",
+                                  "min"
+                                ]
+                              }
                             },
-                            "snippet": "_string"
+                            "snippet": {
+                              "_optional": "_string"
+                            }
                           }
                         }
                       },
@@ -363,12 +371,16 @@
                           "_object": {
                             "file": "_string",
                             "line": {
-                              "_number": [
-                                "int",
-                                "min"
-                              ]
+                              "_optional": {
+                                "_number": [
+                                  "int",
+                                  "min"
+                                ]
+                              }
                             },
-                            "snippet": "_string"
+                            "snippet": {
+                              "_optional": "_string"
+                            }
                           }
                         }
                       },
@@ -511,12 +523,16 @@
                     "_object": {
                       "file": "_string",
                       "line": {
-                        "_number": [
-                          "int",
-                          "min"
-                        ]
+                        "_optional": {
+                          "_number": [
+                            "int",
+                            "min"
+                          ]
+                        }
                       },
-                      "snippet": "_string"
+                      "snippet": {
+                        "_optional": "_string"
+                      }
                     }
                   }
                 },
@@ -628,12 +644,16 @@
                     "_object": {
                       "file": "_string",
                       "line": {
-                        "_number": [
-                          "int",
-                          "min"
-                        ]
+                        "_optional": {
+                          "_number": [
+                            "int",
+                            "min"
+                          ]
+                        }
                       },
-                      "snippet": "_string"
+                      "snippet": {
+                        "_optional": "_string"
+                      }
                     }
                   }
                 },
@@ -779,12 +799,16 @@
                     "_object": {
                       "file": "_string",
                       "line": {
-                        "_number": [
-                          "int",
-                          "min"
-                        ]
+                        "_optional": {
+                          "_number": [
+                            "int",
+                            "min"
+                          ]
+                        }
                       },
-                      "snippet": "_string"
+                      "snippet": {
+                        "_optional": "_string"
+                      }
                     }
                   }
                 },
@@ -930,12 +954,16 @@
           "_object": {
             "file": "_string",
             "line": {
-              "_number": [
-                "int",
-                "min"
-              ]
+              "_optional": {
+                "_number": [
+                  "int",
+                  "min"
+                ]
+              }
             },
-            "snippet": "_string"
+            "snippet": {
+              "_optional": "_string"
+            }
           }
         }
       },

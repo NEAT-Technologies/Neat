@@ -10,7 +10,7 @@
  * Only relax a test if /docs/contracts.md and the relevant ADR change first.
  */
 
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { MultiDirectedGraph } from 'graphology'
 import {
   EdgeType,
@@ -5769,26 +5769,143 @@ describe('REST API canonicalization (ADR-061)', () => {
   })
 
   // ── Class C: response shape via Zod schemas ──────────────────────────
-  // Each endpoint's response parses through its declared schema. Live
-  // runtime assertions against fixture data; require buildApi() + supertest
-  // (or equivalent in-process HTTP test client). Fixtures live alongside.
-  it.todo('GET /incidents response parses through IncidentsResponseSchema (ADR-061 #3)')
-  it.todo('GET /incidents/:nodeId response parses through IncidentsResponseSchema (ADR-061 #3)')
-  it.todo('GET /stale-events response parses through StaleEventsResponseSchema (ADR-061 #3)')
-  it.todo('GET /policies/violations response parses through PoliciesViolationsResponseSchema (ADR-061 #3)')
-  it.todo('GET /graph/node/:id response parses through GraphNodeResponseSchema (ADR-061 #3)')
-  it.todo('GET /graph/edges/:id response parses through GraphEdgesResponseSchema (ADR-061 #3)')
-  it.todo('GET /health response parses through HealthResponseSchema (ADR-061 #3)')
-  it.todo('GET /projects/:project response parses through SingleProjectResponseSchema (ADR-061 #3)')
-  it.todo('GET /search response parses through SearchResponseSchema (ADR-061 #3)')
-  // For endpoints with existing typed results, assertion uses the existing schema:
-  it.todo('GET /graph/root-cause/:nodeId response parses through RootCauseResultSchema (ADR-061 #3)')
-  it.todo('GET /graph/blast-radius/:nodeId response parses through BlastRadiusResultSchema (ADR-061 #3)')
-  it.todo('GET /graph/dependencies/:nodeId response parses through TransitiveDependenciesResultSchema (ADR-061 #3)')
-  it.todo('GET /graph/divergences response parses through DivergenceResultSchema (ADR-061 #3)')
-  it.todo('GET /policies response parses through PolicyFileSchema (ADR-061 #3)')
-  it.todo('GET /graph response parses through SerializedGraphSchema (ADR-061 #3)')
-  it.todo('GET /graph/diff response parses through GraphDiffResultSchema (ADR-061 #3)')
+  // Each endpoint's response parses through its declared schema. The
+  // fixture is the demo graph loaded by extractFromDirectory — the same
+  // shape api.test.ts uses — wired up once and reused per assertion.
+  describe('response shapes parse through their declared schema (ADR-061 #3)', () => {
+    // Schemas + buildApi() load via dynamic imports inside beforeAll so
+    // the static-scan tests above don't pull the runtime machinery into
+    // module init. The fixture graph is the demo dir — same shape
+    // api.test.ts uses — and the registry is redirected via NEAT_HOME
+    // so /projects/:project has something to look up.
+    let app: import('fastify').FastifyInstance
+    let tmpDir: string
+    let diffPath: string
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let schemas: Record<string, import('zod').ZodTypeAny>
+
+    beforeAll(async () => {
+      const path = await import('node:path')
+      const { promises: fs } = await import('node:fs')
+      const os = await import('node:os')
+      const types = await import('@neat.is/types')
+      const { buildApi } = await import('../../src/api.js')
+      const { extractFromDirectory } = await import('../../src/extract.js')
+      const { resetGraph, getGraph } = await import('../../src/graph.js')
+      const { saveGraphToDisk } = await import('../../src/persist.js')
+      const { writeAtomically } = await import('../../src/registry.js')
+
+      const DEMO_PATH = path.resolve(__dirname, '../../../../demo')
+      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-adr061-shapes-'))
+      diffPath = path.join(tmpDir, 'base.json')
+      const registryHome = path.join(tmpDir, 'neat-home')
+
+      process.env.NEAT_HOME = registryHome
+      const registry = {
+        version: 1 as const,
+        projects: [
+          {
+            name: 'default',
+            path: DEMO_PATH,
+            registeredAt: '2026-05-11T00:00:00.000Z',
+            languages: ['javascript'],
+            status: 'active' as const,
+          },
+        ],
+      }
+      await writeAtomically(path.join(registryHome, 'projects.json'), JSON.stringify(registry))
+
+      resetGraph()
+      const graph = getGraph()
+      await extractFromDirectory(graph, DEMO_PATH)
+      await saveGraphToDisk(graph, diffPath)
+
+      app = await buildApi({ graph, scanPath: DEMO_PATH })
+
+      schemas = {
+        Incidents: types.IncidentsResponseSchema,
+        StaleEvents: types.StaleEventsResponseSchema,
+        PoliciesViolations: types.PoliciesViolationsResponseSchema,
+        GraphNode: types.GraphNodeResponseSchema,
+        GraphEdges: types.GraphEdgesResponseSchema,
+        Health: types.HealthResponseSchema,
+        SingleProject: types.SingleProjectResponseSchema,
+        Search: types.SearchResponseSchema,
+        SerializedGraph: types.SerializedGraphSchema,
+        GraphDiff: types.GraphDiffResultSchema,
+        RootCause: types.RootCauseResultSchema,
+        BlastRadius: types.BlastRadiusResultSchema,
+        TransitiveDependencies: types.TransitiveDependenciesResultSchema,
+        Divergence: types.DivergenceResultSchema,
+        PolicyFile: types.PolicyFileSchema,
+      }
+    })
+
+    afterAll(async () => {
+      const { promises: fs } = await import('node:fs')
+      if (app) await app.close()
+      if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true })
+      delete process.env.NEAT_HOME
+    })
+
+    // Helper: hit `path`, expect 200, parse through `schema`, surface the
+    // Zod error on failure so a regression points at the offending field.
+    async function expectShape(url: string, schema: import('zod').ZodTypeAny): Promise<void> {
+      const reply = await app.inject({ method: 'GET', url })
+      expect(reply.statusCode, `${url}: ${reply.body}`).toBe(200)
+      const parsed = schema.safeParse(reply.json())
+      expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.format(), null, 2)).toBe(true)
+    }
+
+    it('GET /incidents response parses through IncidentsResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/incidents', schemas.Incidents)
+    })
+    it('GET /incidents/:nodeId response parses through IncidentsResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/incidents/service:service-b', schemas.Incidents)
+    })
+    it('GET /stale-events response parses through StaleEventsResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/stale-events', schemas.StaleEvents)
+    })
+    it('GET /policies/violations response parses through PoliciesViolationsResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/policies/violations', schemas.PoliciesViolations)
+    })
+    it('GET /graph/node/:id response parses through GraphNodeResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/node/service:service-b', schemas.GraphNode)
+    })
+    it('GET /graph/edges/:id response parses through GraphEdgesResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/edges/service:service-b', schemas.GraphEdges)
+    })
+    it('GET /health response parses through HealthResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/health', schemas.Health)
+    })
+    it('GET /projects/:project response parses through SingleProjectResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/projects/default', schemas.SingleProject)
+    })
+    it('GET /search response parses through SearchResponseSchema (ADR-061 #3)', async () => {
+      await expectShape('/search?q=service-b', schemas.Search)
+    })
+    it('GET /graph/root-cause/:nodeId response parses through RootCauseResultSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/root-cause/database:payments-db', schemas.RootCause)
+    })
+    it('GET /graph/blast-radius/:nodeId response parses through BlastRadiusResultSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/blast-radius/service:service-a', schemas.BlastRadius)
+    })
+    it('GET /graph/dependencies/:nodeId response parses through TransitiveDependenciesResultSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/dependencies/service:service-a', schemas.TransitiveDependencies)
+    })
+    it('GET /graph/divergences response parses through DivergenceResultSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph/divergences', schemas.Divergence)
+    })
+    it('GET /policies response parses through PolicyFileSchema (ADR-061 #3)', async () => {
+      await expectShape('/policies', schemas.PolicyFile)
+    })
+    it('GET /graph response parses through SerializedGraphSchema (ADR-061 #3)', async () => {
+      await expectShape('/graph', schemas.SerializedGraph)
+    })
+    it('GET /graph/diff response parses through GraphDiffResultSchema (ADR-061 #3)', async () => {
+      await expectShape(`/graph/diff?against=${encodeURIComponent(diffPath)}`, schemas.GraphDiff)
+    })
+  })
 
   // ── Class D: path consistency scan ───────────────────────────────────
   // Every scope.get / scope.post path in api.ts must appear in
