@@ -4708,12 +4708,13 @@ describe('Publish system contract (ADR-052)', () => {
   it('publish workflow asserts a built @neat.is/web artifact in the installed tree (ADR-064 #2)', () => {
     const yml = readFileSync(join(REPO_ROOT, '.github/workflows/publish.yml'), 'utf8')
     // Tarball must contain @neat.is/web's built artifact at the standalone
-    // form #231 lands. Asserted via `test -f` against
-    // .next/standalone/server.js (or the equivalent if the bundling form
-    // changes — update both this assertion and the workflow together).
+    // form #231 lands — `.next/standalone/packages/web/server.js`. Next 14
+    // preserves the monorepo path relative to the auto-detected workspace
+    // tracing root, hence the `packages/web` segment. Asserted via `test -f`
+    // against a shell variable resolved from the same path.
     expect(yml).toMatch(/@neat\.is\/web/)
-    expect(yml).toMatch(/\.next\/standalone\/server\.js/)
-    expect(yml).toMatch(/-f .*\.next\/standalone\/server\.js/)
+    expect(yml).toMatch(/\.next\/standalone\/packages\/web\/server\.js/)
+    expect(yml).toMatch(/\[ ! -f "\$web_entry" \]/)
   })
 
   it('publish workflow spawns `neatd start` and asserts liveness on :8080, :6328, :4318 (ADR-064 #3)', () => {

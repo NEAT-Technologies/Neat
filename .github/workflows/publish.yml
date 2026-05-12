@@ -141,15 +141,18 @@ jobs:
           echo "  neat --help exited 0"
 
           # ADR-064 #2 — web artifact present in the installed tree. #231 ships
-          # @neat.is/web with `output: 'standalone'`, which puts the runnable
-          # entry at .next/standalone/server.js. Absence fails the workflow.
+          # @neat.is/web with `output: 'standalone'`. Next 14 preserves the
+          # monorepo path relative to the auto-detected tracing root, which
+          # puts the runnable entry at .next/standalone/packages/web/server.js.
+          # Absence fails the workflow.
           web_dir="$tmp/node_modules/@neat.is/web"
-          if [ ! -f "$web_dir/.next/standalone/server.js" ]; then
-            echo "::error::ADR-064 violation: @neat.is/web tarball ships without a built .next/standalone/server.js"
+          web_entry="$web_dir/.next/standalone/packages/web/server.js"
+          if [ ! -f "$web_entry" ]; then
+            echo "::error::ADR-064 violation: @neat.is/web tarball ships without a built standalone server entry"
             ls -la "$web_dir/.next/standalone" 2>/dev/null || echo "  .next/standalone absent entirely"
             exit 1
           fi
-          echo "  @neat.is/web ships .next/standalone/server.js"
+          echo "  @neat.is/web ships .next/standalone/packages/web/server.js"
 
           # ADR-064 #4 — fixture registry. Two projects, including one named
           # `default` (so ADR-026's unprefixed legacy paths resolve), and one

@@ -56,7 +56,7 @@ The smoke step does four things, in order:
 
 1. **Per-dep visibility wait.** Before installing the umbrella, the workflow waits for every package in the lockstep set (`@neat.is/{types,core,mcp,claude-skill,web}`, `neat.is`) to appear at the target version on the registry. The umbrella propagates faster than its deps in practice — the v0.3.1 smoke failed `ETARGET: No matching version found for @neat.is/web@^0.3.1` because the retry loop only checked the umbrella.
 
-2. **Web artifact presence.** After `npm install neat.is@<version>`, the unpacked `node_modules/@neat.is/web/` must contain a built artifact at the bundling form #231 lands — `.next/standalone/server.js` or the equivalent. Verified via `test -f`. Absence fails the workflow. Catches NEAT-BUG-1.
+2. **Web artifact presence.** After `npm install neat.is@<version>`, the unpacked `node_modules/@neat.is/web/` must contain a built artifact at the bundling form #231 lands — `.next/standalone/packages/web/server.js` (Next 14 preserves the monorepo path under its auto-detected tracing root, so the runtime entry sits under `packages/web/`). Verified via `test -f`. Absence fails the workflow. Catches NEAT-BUG-1.
 
 3. **Post-`neatd start` liveness.** The smoke step seeds `NEAT_HOME=$(mktemp -d)` with a fixture project registry, spawns `neatd start`, and within 30 seconds asserts:
    - `curl http://localhost:8080/graph` returns 200 (NEAT-BUG-2 / ADR-063).
