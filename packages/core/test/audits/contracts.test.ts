@@ -6133,3 +6133,58 @@ describe('REST API canonicalization (ADR-061)', () => {
     expect(documentedPaths).toContain('/graph/divergences')
   })
 })
+
+// ──────────────────────────────────────────────────────────────────────────
+// `neat watch` ignore-glob pruning + darwin polling fallback (#233)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// chokidar 4 dropped fsevents in favour of kqueue on macOS. Each watched
+// subdirectory opens one kqueue handle; a repo with nested `node_modules`
+// (medusa, anything 2025-era TS-heavy) blows through the per-process cap
+// with EMFILE before the function-based `ignored` callback fires. The
+// fix passes globs as `ignored` so chokidar prunes at descent time — the
+// dirs are never opened — and falls back to polling when the scan root is
+// large enough that the kqueue cap is still at risk.
+describe('`neat watch` ignore globs + polling fallback (#233)', () => {
+  const watchSrc = readFileSync(join(CORE_SRC, 'watch.ts'), 'utf8')
+
+  it('chokidar.watch is called with an array-form `ignored` containing the ignore globs', () => {
+    // The call site passes `[...IGNORED_WATCH_GLOBS, (p: string) => shouldIgnore(p)]`.
+    // Asserting the spread shape (not just "ignored: [...]") catches the regression
+    // back to the function-only form that produced the EMFILE on medusa.
+    expect(watchSrc).toMatch(/ignored:\s*\[\s*\.\.\.IGNORED_WATCH_GLOBS/)
+  })
+
+  it('IGNORED_WATCH_GLOBS includes node_modules, .git, dist, build, .turbo, .next, neat-out', () => {
+    // The globs the prompt enumerates (#233). Any missing entry would let a
+    // descent into that subtree open kqueue handles before the regex backstop
+    // fires.
+    for (const segment of [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/.turbo/**',
+      '**/.next/**',
+      '**/neat-out/**',
+    ]) {
+      expect(watchSrc, `IGNORED_WATCH_GLOBS missing ${segment}`).toContain(`'${segment}'`)
+    }
+  })
+
+  it('shouldUsePolling reads NEAT_WATCH_POLLING and falls through to a darwin heuristic', () => {
+    // Two overrides plus auto-detect on darwin. "1"/"true" forces polling,
+    // "0"/"false" disables it, unset uses the dir-count heuristic when
+    // process.platform is 'darwin'.
+    expect(watchSrc).toMatch(/NEAT_WATCH_POLLING/)
+    expect(watchSrc).toMatch(/process\.platform !== 'darwin'/)
+    expect(watchSrc).toMatch(/DARWIN_POLLING_DIR_THRESHOLD/)
+  })
+
+  it('chokidar.watch options pass through the computed `usePolling` value', () => {
+    // Belt-and-suspenders alongside the glob pruning. Without `usePolling`
+    // wired into the options object, the heuristic has no effect.
+    expect(watchSrc).toMatch(/const\s+usePolling\s*=\s*shouldUsePolling\(/)
+    expect(watchSrc).toMatch(/usePolling,/)
+  })
+})
