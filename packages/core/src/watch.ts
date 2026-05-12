@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import chokidar, { type FSWatcher } from 'chokidar'
 import type { FastifyInstance } from 'fastify'
@@ -201,6 +202,29 @@ export interface WatchHandle {
   stop: () => Promise<void>
 }
 
+// Anymatch-compatible ignore set passed to chokidar (#233). The earlier
+// implementation passed a function alone, which forced chokidar to descend
+// into every subdirectory before testing the path. On macOS with kqueue
+// (chokidar 4 dropped fsevents in favour of kqueue), each subdir under the
+// scan root opens a watch handle; nested `node_modules` blew through the
+// per-process kqueue cap with EMFILE before the function-based ignore ever
+// fired. Globs let chokidar prune at descent time — the dirs are never
+// opened in the first place.
+const IGNORED_WATCH_GLOBS = [
+  '**/node_modules/**',
+  '**/.git/**',
+  '**/dist/**',
+  '**/build/**',
+  '**/.turbo/**',
+  '**/.next/**',
+  '**/neat-out/**',
+  '**/.DS_Store',
+]
+
+// Backstop regex set — covers anything chokidar surfaces post-descent that
+// the globs missed (e.g. a path containing one of these segments at an
+// unexpected depth). Same shape as before; the globs are the load-bearing
+// pruning, this is defence in depth.
 const IGNORED_WATCH_PATHS = [
   /(?:^|[\\/])node_modules[\\/]/,
   /(?:^|[\\/])\.git[\\/]/,
@@ -214,6 +238,57 @@ const IGNORED_WATCH_PATHS = [
 
 function shouldIgnore(absPath: string): boolean {
   return IGNORED_WATCH_PATHS.some((re) => re.test(absPath))
+}
+
+// Roughly the number of immediate, non-ignored subdirectories in the scan
+// root above which `neat watch` should fall back to polling on darwin. kqueue
+// opens one handle per watched dir; macOS's per-process file-descriptor cap
+// is typically 256 (soft) / unlimited (hard) but raising the hard cap doesn't
+// help with the kqueue-specific limits. Empirically anything north of ~500
+// non-ignored dirs starts to flirt with EMFILE. Threshold sits comfortably
+// under that.
+const DARWIN_POLLING_DIR_THRESHOLD = 400
+
+// Fast non-recursive count: walk top-level entries only, descending one
+// level into non-ignored subdirs to capture the medusa-shaped case where
+// `packages/*` itself looks small but each contains a heavy `node_modules`.
+// Returns early once it crosses the threshold so we don't waste time on huge
+// repos.
+function countWatchableDirs(scanPath: string, limit: number): number {
+  let count = 0
+  const visit = (dir: string, depth: number): void => {
+    if (count >= limit) return
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      if (count >= limit) return
+      if (!e.isDirectory()) continue
+      if (IGNORED_WATCH_PATHS.some((re) => re.test(path.join(dir, e.name) + path.sep))) continue
+      count++
+      // One level deeper — enough to surface nested `node_modules` shapes
+      // without traversing the whole tree.
+      if (depth < 2) visit(path.join(dir, e.name), depth + 1)
+    }
+  }
+  visit(scanPath, 0)
+  return count
+}
+
+// Darwin heuristic (#233). Forces chokidar onto polling when the scan root
+// is large enough that kqueue would EMFILE. Override via NEAT_WATCH_POLLING:
+//   - "1" / "true"  → force polling regardless of platform/threshold
+//   - "0" / "false" → never poll (matches pre-#233 behaviour)
+//   - unset         → auto-detect on darwin
+function shouldUsePolling(scanPath: string): boolean {
+  const env = process.env.NEAT_WATCH_POLLING
+  if (env === '1' || env === 'true') return true
+  if (env === '0' || env === 'false') return false
+  if (process.platform !== 'darwin') return false
+  return countWatchableDirs(scanPath, DARWIN_POLLING_DIR_THRESHOLD) >= DARWIN_POLLING_DIR_THRESHOLD
 }
 
 export async function startWatch(
@@ -450,10 +525,22 @@ export async function startWatch(
     schedule()
   }
 
+  const usePolling = shouldUsePolling(opts.scanPath)
+  if (usePolling) {
+    const reason =
+      process.env.NEAT_WATCH_POLLING === '1' || process.env.NEAT_WATCH_POLLING === 'true'
+        ? 'NEAT_WATCH_POLLING env override'
+        : 'darwin heuristic — large scan root, kqueue cap risk'
+    console.log(`[${projectName}] watch: usePolling=true (${reason})`)
+  }
   const watcher: FSWatcher = chokidar.watch(opts.scanPath, {
     ignoreInitial: true,
-    ignored: (p) => shouldIgnore(p),
+    // Glob array prunes at descent time (#233) so chokidar never opens a
+    // kqueue handle for `node_modules` and friends. The function backstop
+    // catches any path that slipped through and matches the regex set.
+    ignored: [...IGNORED_WATCH_GLOBS, (p: string) => shouldIgnore(p)],
     persistent: true,
+    usePolling,
     awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
   })
   watcher.on('add', onPath)
