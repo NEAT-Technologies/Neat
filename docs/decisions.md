@@ -2098,3 +2098,93 @@ These ship live in the contract amendment PR — they assert on workflow content
 - **Persistent fixture registry in the repo.** The fixture is a `mktemp -d` per workflow run. Anything more would need versioning + checked-in `node_modules` fixtures, which is more weight than the signal justifies.
 
 Full rationale and the v0.3.0 failure-mode evidence: `~/neat-experiment/bugs/NEAT-BUG-1-web-ui-missing-next-build.md`, `~/neat-experiment/bugs/NEAT-BUG-3-neat-watch-emfile.md`.
+
+## ADR-065 — Static-extraction precision filters + loud failure mode (amends ADR-032)
+
+**Date:** 2026-05-13
+**Status:** Active. Amends ADR-032 (static-extraction contract). Rules from ADR-032 are retained except where this ADR sharpens producer-side behaviour.
+
+**Context.** The 2026-05-12 ADR-027 experiment ran `neat init` against `medusajs/medusa` (commit `370676c2a737fb3b558a745ad452a2c9d4ae6de5`) and surfaced 20 EXTRACTED edges in the divergence report. Every single one was a false positive. The evidence:
+
+| Row | Wrong because |
+|-----|---------------|
+| 0001-0003, 0012, 0013 | URL-substring service matching — `medusa.cloud` matched `@medusajs/medusa` by `.includes('medusa')` |
+| 0006 | JSX external link — `<Link to="https://medusajs.com/changelog/" target="_blank">` extracted as CALLS edge |
+| 0007 | Raw `new S3Client(config)` produced `infra:grpc-service:S3` (NEAT-BUG-5, also fixed in #238) |
+| 0008, 0015 | `.env.template` files registered as ConfigNode with CONFIGURED_BY edges |
+| 0014 | **JSDoc `@example` comment body** — `*       "http://localhost:9000"` inside a comment block became a CONNECTS_TO edge |
+| 0016 | `__tests__/*.spec.ts` file — `postgres://localhost/medusa-starter-default` string in test fixture extracted as a real edge (with the wrong target — `infra:redis:localhost`) |
+| 0017, 0019, 0020 | More string-in-test variants of the above |
+| 0018 | String literal `'localhost'` extracted as an infra edge |
+
+Full corpus: `~/neat-experiment/bugs/0001-*.md` through `0020-*.md`, `INDEX.md`.
+
+Plus: ~90 medusa source files silently failed extraction with the generic tree-sitter "Invalid argument" error and were skipped. `neat init` exited 0 with no summary mention. NEAT shipped a snapshot with those files quietly missing — and the divergence query has no way to surface gaps it doesn't know it has.
+
+The divergence query (`get_divergences`, ADR-060) is supposed to be NEAT's thesis surface — "where does declared intent disagree with observed reality?" That surface is meaningless while EXTRACTED is itself hallucinated. Until extraction is trustworthy and observably-incomplete-when-incomplete, ADR-027 cannot be satisfied.
+
+**Decision.**
+
+ADR-065 adds two binding rule blocks to the static-extraction contract.
+
+### Block 1 — Precision filters (CALLS / CONNECTS_TO / CONFIGURED_BY inference)
+
+Five filters. All five apply universally across JS/TS/Python. No per-language opt-out.
+
+1. **Test-scope exclusion.** Files under `**/__tests__/**`, `**/__fixtures__/**`, `**/integration-tests/**`, and files matching `*.spec.{ts,tsx,js,jsx,py}` / `*.test.{ts,tsx,js,jsx,py}` are excluded from outbound CALLS / CONNECTS_TO inference. They remain registered as service-internal nodes (test files belong to their package); only inferred outbound edges from them are filtered. Highest-signal fixture: experiment row 0016.
+
+2. **Comment-body exclusion.** No edge is inferred from a string literal that lies inside a comment token. tree-sitter exposes comment-node boundaries via `comment` / `block_comment` / `line_comment` / `documentation_comment` node types; the producer honours them. Highest-signal fixture: experiment row 0014 (JSDoc `@example` block).
+
+3. **JSX external-link exclusion.** No edge is inferred from a URL string passed as a JSX attribute on an element whose tag matches `/^(a|Link|NavLink|ExternalLink|Anchor)$/`. The pattern is "user-clickable hyperlink to a documentation/marketing site," not "service-to-service call." Applies to `<Link to=...>`, `<a href=...>`, `<NavLink to=...>`, `<ExternalLink href=...>`, `<Anchor href=...>`. Highest-signal fixture: experiment row 0006.
+
+4. **`.env.template` exclusion.** Files matching `.env.template`, `.env.example`, `.env.*.template`, `.env.*.example`, `.env.sample` are documentation artifacts. They are not registered as ConfigNodes and do not produce CONFIGURED_BY edges. ADR-016 binds ConfigNode to file existence at runtime; templates are not runtime. Highest-signal fixtures: experiment rows 0008, 0015.
+
+5. **No URL-substring service matching.** A URL whose hostname is `medusa.cloud` does not match the service `@medusajs/medusa` by substring containment. Cross-service inference from URL strings requires an exact hostname match against a registered ServiceNode alias or InfraNode hostname, not substring containment. The previous heuristic — `if (url.includes(serviceName.slice(after-slash)))` — produces unrelated-package collisions on every common-word service name. Highest-signal fixtures: experiment rows 0001, 0002, 0003, 0012, 0013.
+
+The filters are pre-emit gates inside the producer pass. A filtered candidate edge is never written to the graph — not added-then-retired. This keeps idempotency intact (ADR-032's existing rule) and avoids polluting `errors.ndjson` with successful-but-filtered cases.
+
+### Block 2 — Loud failure mode (per-file extraction errors)
+
+Per-file extraction failures during `neat init` and `neat watch`:
+
+1. **Append to `<projectDir>/neat-out/errors.ndjson`** with shape `{file, error, stack, ts}` per line. Append-only, never rewritten. The `errors.ndjson` artifact already exists for OTel error events per ADR-033; extraction failures route through the same writer with a `source: 'extract'` discriminator so consumers can separate them.
+
+2. **The init / watch summary banner reports an aggregate count** — `[neat] N files skipped due to parse errors`, where N is the count. The banner is unconditional; `0 files skipped due to parse errors` is observable as a positive signal that no quiet skipping happened. The prior behaviour — a single `[neat] <phase> skipped <file>: <message>` warning per file with no aggregate — is replaced.
+
+3. **`NEAT_STRICT_EXTRACTION=1` exits non-zero** on any per-file extraction failure. Useful in CI ("did this commit make extraction worse?"). Unset, the default `neat init` exits 0 even when some files failed — local dev wants forgiving behaviour with a banner.
+
+4. **Catch + log the real underlying stack at the call site, not the generic N-API error.** "Invalid argument" is the Node N-API generic the experiment surfaced; the real cause was an extractor calling a method on a missing tree-sitter field. Per-call-site `try`/`catch` with the parser context captured, not blanket suppression at the phase level.
+
+Silent partial extraction is forbidden. If the producer is incomplete, the snapshot is observably incomplete.
+
+### Block 3 — Regression fixture corpus
+
+`packages/core/test/fixtures/precision/` holds verbatim minimisations of the highest-signal experiment evidence rows:
+
+- `comment-body-jsdoc.ts` — row 0014 (JSDoc `@example` containing `http://localhost:9000`)
+- `test-scope-postgres.spec.ts` — row 0016 (postgres URL in a `__tests__/*.spec.ts` file)
+- `jsx-external-link.tsx` — row 0006 (`<Link to="https://medusajs.com/changelog/" target="_blank">`)
+- `env-template/.env.template` — row 0008 (a templated env file with no runtime semantics)
+- `aws-client-raw.ts` — row 0007 (`new S3Client(config)` with no `@aws-sdk/*` import context — covers both the precision side and the kind-classification side fixed in #238)
+
+Each fixture is the smallest reproduction of a row that v0.3.0's extractor produced a false-positive edge for. The contract assertions parameterise over these fixtures: "fixture X should produce no extracted edges of type Y." Adding a new false-positive shape becomes "add a fixture, add an assertion line."
+
+**Why amending ADR-032 and not writing a successor.** ADR-032's existing rules (producer interface, evidence on every edge, ghost-edge cleanup keyed on `evidence.file`, idempotency, language dispatch, per-file parse-failure isolation, owner extraction) are all still load-bearing and correct. This ADR adds precision rules to producer logic and an observability rule to the failure path. Amendment is the lighter touch.
+
+**Enforcement.** New live assertions in `packages/core/test/audits/contracts.test.ts` under the `Static-extraction contract (ADR-032)` describe block:
+
+- One `it()` per filter (five total) — each loads its fixture, runs the producer, asserts no false-positive edge.
+- One `it()` asserting `errors.ndjson` lines have the documented shape.
+- One `it()` asserting the init banner text contains the skipped-count phrase.
+- One `it()` asserting `NEAT_STRICT_EXTRACTION=1` flips the exit code.
+
+The assertions land as `it.todo` in this PR (Phase 3A — contract only) and flip live in the Phase 3B implementation PRs (#237, #238, #239). v0.3.3 closes when all flip live and the medusa re-run drops divergence count by ≥ 95%.
+
+**Not in scope.**
+
+- **Per-language opt-out for the filters.** The five rules are universal across JS/TS/Python. A future contract may carve language-specific exceptions if a real signal demands one; not earned now.
+- **Test framework detection.** "Files under `__tests__/`" is the contract surface. Sniffing for `describe`/`it` blocks or jest config to widen the test-scope is out — the file-path glob is observable and good enough.
+- **A `.gitignore`-style precision-filter file in the project.** Considered (let each project define its own filters). Rejected — filters are NEAT's correctness model, not a per-project preference. If a real project surfaces a needed carve-out, that's a successor ADR with concrete evidence.
+- **Tree-sitter upgrade or grammar swap to fix the "Invalid argument" cause.** The loud failure mode surfaces the failures; the underlying parser fix lives in the implementation PR (#239) and may end up as an upstream issue against `tree-sitter-typescript` if the cause is in the grammar.
+
+Full rationale and the v0.3.0 failure-mode evidence: `~/neat-experiment/bugs/NEAT-BUG-4-ghost-edges-from-strings.md`, `~/neat-experiment/bugs/NEAT-BUG-6-http-extraction-invalid-argument.md`, `~/neat-experiment/bugs/INDEX.md`.

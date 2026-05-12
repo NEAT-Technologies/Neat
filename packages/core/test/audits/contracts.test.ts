@@ -771,6 +771,43 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
     expect(merged.owner).toBe('@neat-tools/backend')
     expect(merged.discoveredVia).toBe('merged')
   })
+
+  // ────────────────────────────────────────────────────────────────────────
+  // ADR-065 — precision filters + loud failure mode.
+  //
+  // The 2026-05-12 medusa experiment produced 20 EXTRACTED edges in the
+  // divergence report; every single one was a false positive. Five filter
+  // categories cover the failure shapes; loud failure mode surfaces the
+  // ~90 silently-skipped files. Fixtures live at
+  // `packages/core/test/fixtures/precision/` and are verbatim minimisations
+  // of the highest-signal experiment evidence rows. Each `it.todo` flips
+  // live in the corresponding Phase 3B implementation PR.
+  // ────────────────────────────────────────────────────────────────────────
+
+  it.todo(
+    'ADR-065 #1 — test-scope exclusion: __tests__/test-scope-postgres.spec.ts produces no EXTRACTED edges (#237)',
+  )
+  it.todo(
+    'ADR-065 #2 — comment-body exclusion: comment-body-jsdoc.ts produces no edge from JSDoc @example URL (#237)',
+  )
+  it.todo(
+    'ADR-065 #3 — JSX external-link exclusion: jsx-external-link.tsx produces no CALLS edge (#237)',
+  )
+  it.todo(
+    'ADR-065 #4 — .env.template exclusion: env-template/.env.template registers no ConfigNode (#237)',
+  )
+  it.todo(
+    'ADR-065 #5 — no URL-substring service matching: hostname must match an alias exactly (#237)',
+  )
+  it.todo(
+    'ADR-065 — errors.ndjson lines have shape { file, error, stack, ts, source: "extract" } (#239)',
+  )
+  it.todo(
+    'ADR-065 — neat init banner contains "N files skipped due to parse errors" unconditionally (#239)',
+  )
+  it.todo(
+    'ADR-065 — NEAT_STRICT_EXTRACTION=1 makes neat init exit non-zero on any per-file extraction failure (#239)',
+  )
 })
 
 // ──────────────────────────────────────────────────────────────────────────
