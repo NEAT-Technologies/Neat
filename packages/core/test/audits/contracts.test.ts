@@ -3371,6 +3371,19 @@ describe('Daemon contract (ADR-049)', () => {
       await cleanup()
     }
   })
+
+  // ADR-063 — binding observability. The three assertions below ship as
+  // `it.todo` in the contract amendment PR (#235) and flip live in the
+  // implementation PR (#232). v0.3.1 closes when all three are live.
+  it.todo(
+    'ADR-063 — REST :8080 bound within 30s of startDaemon resolving (every registered project answers GET /graph)',
+  )
+  it.todo(
+    'ADR-063 — OTLP HTTP receiver :4318 bound within 30s of startDaemon resolving',
+  )
+  it.todo(
+    'ADR-063 — every registered project answers GET /projects/:project/graph with 200',
+  )
 })
 
 // ──────────────────────────────────────────────────────────────────────────
