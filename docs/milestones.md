@@ -12,36 +12,30 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 ## 🚩 Pick up here
 
-**Last session ended:** 2026-05-09. v0.2.0 through v0.2.5 milestones closed and tagged. v0.2.8 contracts (ADRs 050/051 — CLI surface + frontend-facing API) landed on `main`; implementation is queued. The publish system contract (ADR-052) landed alongside the npm pipeline rebuild, and ADR-053 codifies the milestone-naming rule that produced the v0.2.6 → v0.2.8 rename. npm packages at 0.2.7 on the registry; the 0.2.5 and 0.2.6 slots are permanently retired (broken publishes that forced patch bumps per npm policy).
+**Last session ended:** 2026-05-12. v0.3.0 published to npm (engineering complete + web shell GA). The first ADR-027 MVP-success-PR experiment ran against medusajs/medusa at commit `370676c2a737fb3b558a745ad452a2c9d4ae6de5` and returned `no-PR-candidate`. 21 divergences surfaced, all false positives (precision 0.0), and the OBSERVED layer was empty so ADR-027's "OBSERVED-layer-load-bearing" bar was unsatisfiable by construction.
 
-**For current operational state of the active milestone, read `docs/plans/2026-05-09-v0.2.8-kickoff.md` first.** That doc is the canonical handoff; this file describes the long-term shape.
+The experiment's six NEAT-side findings are the next two milestones. Audit trail in `~/neat-experiment/bugs/` (run-local — the markdown corpus). Scope doc: `docs/plans/2026-05-12-post-mvp-experiment-scope.md`.
 
-**Two parallel tracks share `main`:**
-
-- **Track 1 — v0.3.0 Frontend (Jed).** Builds against the stable v0.1.2 API. Issues #28-#31 + #106-#108. Doesn't gate the MVP success criterion.
-- **Track 2 — v0.2.x Engineering (Cem + Kurt).** Seven milestones, sequential (v0.2.0 through v0.2.5 plus v0.2.8 — originally numbered v0.2.6, renamed per ADR-053 after publish-fix releases consumed the 0.2.6 / 0.2.7 npm slots). Each opens with the contract batch that governs that layer, then ships the rebuild + cleanup against the locked contract. **Don't ship cleanup work against an unlocked contract** — that's what produced the v0.1.x drift the verification pass surfaced. Full v0.2.x sequencing in `docs/plans/2026-05-04-v0.2.x-sequencing.md`.
-
-  - **v0.2.0 — Sunrise** — data-layer foundation. ADRs 028-031 + contract framework + audit verification + AUDIT-DRIFT sync. Pending merge in PRs #146 + #147 + the doc-refresh PR.
-  - **v0.2.1 — Tree-sitter rebuild.** Opens with contract #5 (static extraction). Ships #140, #141, #142, #145.
-  - **v0.2.2 — OTel ingest rebuild.** Opens with contracts #6-#8. Ships #131-#135.
-  - **v0.2.3 — Traversal rebuild.** Opens with contracts #9-#11. Ships #136-#139, #123.
-  - **v0.2.4 — Policies + MCP refresh.** Opens with contracts #12-#18. Ships #115-#118, #143, #144.
-  - **v0.2.5 — `neat init` + SDK install + Claude skill.** Opens with contracts #19-#22. Ships #119.
-  - **v0.2.8 — CLI parity + frontend-API surface.** Opens with contracts #23-#24. CLI verbs mirroring the nine MCP tools (so a human at a terminal has the same reach as an agent), plus whatever API surface Jed's v0.3.0 frontend track surfaces as a gap. The `(if needed)` qualifier is honest — parts of this milestone wait until v0.3.0 starts pulling on concrete demands. Originally named v0.2.6; renamed per ADR-053 after two publish-fix patches consumed the 0.2.6 and 0.2.7 npm version slots.
-
-After v0.2.8: the MVP-success PR experiment (ADR-027). Self-hosting on the NEAT codebase activates only after that PR closes — until then NEAT is the target of construction, not the tool.
+- **v0.3.1 — Publish hygiene.** Three blockers (web shell `.next` missing, `neatd start` doesn't bind REST/OTLP, `neat watch` EMFILE on macOS) plus two contract amendments (ADR-052 smoke-test gate, ADR-049 daemon binding). Issues #231-#235. Contract Author opens with #234 + #235; implementation against the locked contract follows. Patch release.
+- **v0.4.0 — Extraction precision.** Opens with #236 (ADR-032 amendment — five precision filters + loud failure mode). Implementation in #237 (NEAT-BUG-4 ghost edges), #238 (NEAT-BUG-5 AWS SDK kind), #239 (NEAT-BUG-6 silent partial extraction). Plus #140 carried in. Minor release. Closes when medusa re-run drops divergence count ≥ 95% and ADR-027 re-runs against medusa with OTel attached.
 
 ### Active work — start here
 
-**Once the three open v0.2.0 PRs (#146, #147, doc refresh) merge:** v0.2.0 closes. Open v0.2.1.
+**v0.3.1 first move:** Contract Author writes #234 (ADR-052 tarball smoke-test additions) and #235 (ADR-049 binding-as-contract-surface). These can ship as one PR or a stacked pair. Implementation of #231 / #232 / #233 follows against the locked contract.
 
-**v0.2.1 first move:** the Contract Author writes contract #5 (static extraction) — ADR + `docs/contracts/static-extraction.md` + regression tests. Then the implementation agent picks up #140 / #141 / #142 / #145 against the locked contract. Each cleanup issue closes when its corresponding `it.todo` in `contracts.test.ts` flips to a live assertion and passes.
+**v0.4.0 first move:** Contract Author writes #236 (ADR-032 amendment) including the regression-fixture corpus seeded from the experiment's evidence rows (0014, 0016, 0006, 0008, 0007 at minimum). Implementation of #237 / #238 / #239 + #140 follows.
 
-The 15 cleanup issues #131-#145 are open against the v0.2.0 milestone today **but belong to v0.2.1-v0.2.4** under the rebuild-contract framing. Migration of issue→milestone on GitHub is pending.
+ADR-027 re-runs after v0.4.0 closes. Until then, NEAT is still under construction, not the tool — same posture as before the experiment.
+
+### Long-term shape (historic — v0.2.x closed)
+
+The seven-milestone v0.2.x engineering sequence (Sunrise / Tree-sitter / OTel ingest / Traversal / Policies / `neat init` + Claude skill / CLI parity + frontend-API) closed 2026-05-09 and shipped as v0.3.0 on npm. Track 1 (v0.3.0 Frontend) shipped alongside. v0.2.x sequencing reference: `docs/plans/2026-05-04-v0.2.x-sequencing.md`. Per-milestone close docs in `docs/plans/2026-05-0{6,7,9}-v0.2.*-close.md`.
 
 ### Closing gate — the MVP-success PR
 
-After v0.2.x lands: point NEAT at an open-source codebase, identify a real divergence-shaped bug (OBSERVED layer must be load-bearing), propose a fix, get the PR merged. ADR-027 is the framing. Static-only finds (FastAPI #12901-shaped) don't earn NEAT its category — a Graphify fork could match them.
+ADR-027 is the framing: point NEAT at an open-source codebase, identify a real divergence-shaped bug (OBSERVED layer must be load-bearing), propose a fix, get the PR merged. First attempt (2026-05-12, medusajs/medusa) returned no-PR-candidate; findings shaped v0.3.1 + v0.4.0. Re-attempt gated on v0.4.0 close.
+
+Static-only finds (FastAPI #12901-shaped) don't earn NEAT its category — a Graphify fork could match them.
 
 The Railway gates from M6 are still informational. AWS is the more likely production target.
 
