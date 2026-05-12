@@ -18,7 +18,7 @@ The experiment's six NEAT-side findings split across three milestones, each answ
 
 - **v0.3.1 — Daemon binds REST.** Does `neatd start` actually run NEAT? Issue #232 (REST/OTLP binding) + #235 (ADR-049 binding-as-contract-surface amendment). Patch release.
 - **v0.3.2 — Tarball ships working artifacts.** Does the npm tarball serve a working stack? Issues #231 (web shell `.next` missing) + #233 (chokidar EMFILE on macOS) + #234 (ADR-052 smoke-test gate amendment). Patch release. Sequenced after v0.3.1 because the smoke-test gate verifies post-v0.3.1 daemon behavior among other things.
-- **v0.4.0 — Extraction precision.** Does extraction produce trustworthy edges? Opens with #236 (ADR-032 amendment — five precision filters + loud failure mode). Implementation in #237 (NEAT-BUG-4 ghost edges), #238 (NEAT-BUG-5 AWS SDK kind), #239 (NEAT-BUG-6 silent partial extraction). Plus #140 carried in. Minor release. Closes when the medusa re-run drops divergence count ≥ 95% and ADR-027 re-runs against medusa with OTel attached.
+- **v0.3.3 — Extraction precision.** Does extraction produce trustworthy edges? Opens with #236 (ADR-032 amendment — five precision filters + loud failure mode). Implementation in #237 (NEAT-BUG-4 ghost edges), #238 (NEAT-BUG-5 AWS SDK kind), #239 (NEAT-BUG-6 silent partial extraction). Plus #140 carried in. Patch release — no breaking wire-format change; behavioral precision improvement. Closes when the medusa re-run drops divergence count ≥ 95% and ADR-027 re-runs against medusa with OTel attached.
 
 ### Active work — start here
 
@@ -26,9 +26,9 @@ The experiment's six NEAT-side findings split across three milestones, each answ
 
 **v0.3.2 first move:** Contract Author writes #234 (ADR-052 smoke-test gate). Implementation of #231 + #233 follows. Tag and publish 0.3.2.
 
-**v0.4.0 first move:** Contract Author writes #236 (ADR-032 amendment) including the regression-fixture corpus seeded from the experiment's evidence rows (0014, 0016, 0006, 0008, 0007 at minimum). Implementation of #237 / #238 / #239 + #140 follows.
+**v0.3.3 first move:** Contract Author writes #236 (ADR-032 amendment) including the regression-fixture corpus seeded from the experiment's evidence rows (0014, 0016, 0006, 0008, 0007 at minimum). Implementation of #237 / #238 / #239 + #140 follows.
 
-ADR-027 re-runs after v0.4.0 closes. Until then, NEAT is still under construction, not the tool — same posture as before the experiment.
+ADR-027 re-runs after v0.3.3 closes. Until then, NEAT is still under construction, not the tool — same posture as before the experiment.
 
 ### Long-term shape (historic — v0.2.x closed)
 
@@ -36,7 +36,7 @@ The seven-milestone v0.2.x engineering sequence (Sunrise / Tree-sitter / OTel in
 
 ### Closing gate — the MVP-success PR
 
-ADR-027 is the framing: point NEAT at an open-source codebase, identify a real divergence-shaped bug (OBSERVED layer must be load-bearing), propose a fix, get the PR merged. First attempt (2026-05-12, medusajs/medusa) returned no-PR-candidate; findings shaped v0.3.1 + v0.4.0. Re-attempt gated on v0.4.0 close.
+ADR-027 is the framing: point NEAT at an open-source codebase, identify a real divergence-shaped bug (OBSERVED layer must be load-bearing), propose a fix, get the PR merged. First attempt (2026-05-12, medusajs/medusa) returned no-PR-candidate; findings shaped v0.3.1 + v0.3.3. Re-attempt gated on v0.3.3 close.
 
 Static-only finds (FastAPI #12901-shaped) don't earn NEAT its category — a Graphify fork could match them.
 
