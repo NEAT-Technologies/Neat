@@ -2002,3 +2002,50 @@ The two SSR-safety scans (no `useState` lazy initializer / `useRef` initial valu
 The /incidents page had the same double-fetch shape AppShell did before ADR-062: `useState<string>('default')`, a `useEffect` that resolves the project from URL/localStorage, and a `useEffect([project])` that re-fires once the resolved value lands. Same root cause as the AppShell case — the SSR initial state has to be `'default'` to keep hydration byte-identical, which mandates the deferred resolution — and the same fix shape applies.
 
 §4 ("Other routes keep SSR") is amended: `/incidents/page.tsx` also mounts client-only via `dynamic({ ssr: false })`. Layout, `/api/**` routes, and any future routes default to SSR; an additional route opts out only by being added here. This keeps the minimum-blast-radius principle intact — every SSR-off opt-out is named explicitly, not opted into by default.
+
+## ADR-063 — `neatd start` binds REST and OTLP per project (amends ADR-049)
+
+**Date:** 2026-05-12
+**Status:** Active. Amends ADR-049 (daemon contract). Rules from ADR-049 are retained except where this ADR sharpens them.
+
+**Context.** The 2026-05-12 ADR-027 experiment (`docs/plans/2026-05-12-post-mvp-experiment-scope.md`) ran `neatd start` against a 2-project registry on a fresh install of `neat.is@0.3.0`. The daemon process came up, `neatd status` reported pid + projects ticking, but `lsof -p $(pgrep neatd) -P` showed no listeners. Every `neat <query>` verb failed with `cannot reach neat-core at http://localhost:8080: fetch failed`.
+
+Reading the v0.3.0 implementation back against ADR-049: the daemon bootstraps per-project graphs, loads snapshots, runs `extractFromDirectory`, starts persist loops, and spawns the web UI. It does not bind a REST host. It does not bind the OTLP receiver. ADR-049's "single long-lived process, per-project graph isolation, mtime + OTel + policy.json triggers" was satisfied to the letter — the graphs are isolated, the registry is read, the PID file is written — and yet none of the surfaces a consumer (CLI, MCP, web UI, OTel exporter) can reach are bound.
+
+The wording wasn't observably testable. v0.3.0 read it as "start the supervisor and call it good." The contract assertions in `contracts.test.ts` under `Daemon contract (ADR-049)` mirrored the wording — they checked `slots` membership, OTel routing as a pure function, registry re-read on SIGHUP, PID-file write/cleanup, and graceful degradation on missing registry. None of them asserted that anything actually listens on a port after `startDaemon()` returns.
+
+The trace stitcher / extraction story (ADR-034, ADR-035) was load-bearing on the OTel receiver being live. The CLI verbs (ADR-050) and MCP tools (ADR-039) were load-bearing on the REST host being live. Neither was, and the contract test suite didn't notice.
+
+**Decision.**
+
+1. **Binding is the contract surface.** After `neatd start` returns success, every project registered in `~/.neat/projects.json` has its graph host bound and reachable through the dual-mount paths from ADR-026 (`GET /projects/:project/graph` returns 200). The default-project unprefixed paths from ADR-026 (`GET /graph`) are also reachable. The OTLP HTTP receiver on `:4318` is bound for span ingest, single-instance and multi-project tenant by `service.name` per the existing ADR-049 OTel routing section. Bind happens within 30 seconds of the `startDaemon` promise resolving.
+
+2. **REST host on `:8080`, single-instance, multi-tenant.** One Fastify app, one listener, every registered project mounted under `/projects/:project/*` (ADR-026 dual-mount). The default project additionally answers the unprefixed legacy paths. Per-project ports are not introduced — there's one `:8080`, the project is in the URL.
+
+3. **OTLP receiver on `:4318`, single-instance, multi-tenant.** One receiver. Span routing happens at handler time via `routeSpanToProject(serviceName, projects)` (already exported from `daemon.ts`). Spans for unknown services route to the `default` project's FrontierNode flow per ADR-033.
+
+4. **Failure to bind is fatal.** A failed `app.listen` on either port (EADDRINUSE, permission denied, etc.) aborts `neatd start` with a non-zero exit and a clear error message. Silent fallback to "the daemon is running but only the supervisor is up" is forbidden — that's the v0.3.0 failure mode this ADR exists to close.
+
+5. **`NEAT_WEB_DISABLED=1` skips the web UI only.** REST and OTLP bind unconditionally. The web UI was opt-out for `neat init` users who run NEAT headless; REST/OTLP are non-negotiable because every `neat <verb>` consumer (CLI + MCP) depends on the REST host being live.
+
+6. **Authority.** `packages/core/src/daemon.ts` is the surface where the bind happens — it owns the supervisor that knows the per-project slot set and is the right place to install the listener. `server.ts` stays the `neat watch` / single-project entry point; the multi-project listener inside `daemon.ts` shares the same `buildApi` (via a `Projects` registry seeded from daemon slots) and the same `buildOtelReceiver` so the wire formats stay identical to `neat watch`.
+
+**Why amending ADR-049 and not writing a successor.** ADR-049's rules 1-7 (single long-lived process, per-project isolation, lifecycle commands, OTel routing, OTel ingest behaviour, graceful degradation, PID file) are all still correct. This ADR adds an observability rule that should have been in the original — concretely: "what `startDaemon` returning success means is testable from a `curl` outside the process." Amendment is the lighter touch; ADR-049 stays the canonical daemon ADR with an extended observability section.
+
+**Enforcement.** New live assertions in `packages/core/test/audits/contracts.test.ts` under `Daemon contract (ADR-049)`:
+
+- `it('binds REST on :8080 within 30s of startDaemon resolving')` — start daemon against a 2-project sandbox registry on an ephemeral port, poll `GET /graph` until 200 or 30s elapses, then assert 200.
+- `it('binds OTLP HTTP receiver on :4318 within 30s of startDaemon resolving')` — same shape; assert the receiver socket is bound (Fastify's documented response code on a `GET` against the receiver is acceptable as long as the socket accepted the connection).
+- `it('every registered project answers GET /projects/:project/graph with 200')` — iterate the sandbox registry, fetch the dual-mount path per project, assert 200 each.
+
+The three assertions land as `it.todo` in the contract amendment PR (the implementation isn't there yet) and flip live in the v0.3.1 implementation PR (#232). The amendment closes when both ship and the daemon answers a `curl` from outside the process.
+
+**Why a 30-second deadline.** The default daemon bootstrap reads a snapshot, runs `extractFromDirectory`, and starts a persist loop per project. On a registry with a single moderate project (~5k files), bootstrap completes in 2-5 seconds; on a 10-project registry of moderate projects, it takes ~30 seconds wall-clock on a modern laptop. The deadline matches the upper bound of realistic bootstrap time, not the lower bound, so the assertion is sensitive to "the daemon didn't bind" (the v0.3.0 bug, which would never bind) without being noisy on "bootstrap is slow because the project is large."
+
+**Not in scope.**
+
+- **OTLP/gRPC binding.** ADR-049 already says gRPC is opt-in via `NEAT_OTLP_GRPC=true`. This ADR doesn't change that — `:4318` is in scope because it's the documented default; `:4317` stays opt-in.
+- **Per-project graph hosts on separate ports.** The "fork a per-project REST host" framing in #232's fix-shape turned out to be the wrong reading on second look — `buildApi` already handles the multi-tenant case via a `Projects` registry. One listener, one port, project routing in the URL.
+- **Daemon vs `neat watch` consolidation.** `neat watch` (single-project) and `neatd start` (multi-project) coexist for now per the scope doc. Future work might collapse them; this ADR doesn't.
+
+Full rationale and the v0.3.0 failure-mode evidence: `~/neat-experiment/bugs/NEAT-BUG-2-neatd-never-binds-rest.md`.

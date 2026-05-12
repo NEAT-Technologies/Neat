@@ -1,13 +1,14 @@
 ---
 name: daemon
-description: Single long-lived process watching every registered project. Per-project graph isolation. File-mtime + OTel + policy.json triggers. Graceful per-project failure. Self-hosting gate stays closed during v0.2.5.
+description: Single long-lived process watching every registered project. Per-project graph isolation. File-mtime + OTel + policy.json triggers. REST + OTLP binding is the observable contract surface. Graceful per-project failure. Self-hosting gate stays closed during v0.2.5.
 governs:
   - "packages/core/src/daemon.ts"
+  - "packages/core/src/neatd.ts"
   - "packages/core/src/cli.ts"
   - "packages/core/src/ingest.ts"
   - "packages/core/src/extract/index.ts"
   - "packages/core/src/persist.ts"
-adr: [ADR-049, ADR-048, ADR-026, ADR-027]
+adr: [ADR-049, ADR-063, ADR-048, ADR-026, ADR-027]
 ---
 
 # Daemon contract
@@ -43,6 +44,19 @@ Per project, daemon watches:
 
 Each project's graph is its own `MultiDirectedGraph`. File watching, OTel ingest, policy evaluation scoped to the project. A failure in one project does not affect others.
 
+## Binding observability (ADR-063)
+
+After `neatd start` returns success, the daemon process is reachable through the documented surfaces. "Reachable" is what the contract asserts; "bootstrapped" is not enough.
+
+- **REST host on `:8080`.** One Fastify listener, multi-tenant. Every registered project answers under `/projects/:project/*` per the ADR-026 dual-mount. The default project additionally answers the unprefixed legacy paths (`GET /graph`, `GET /graph/divergences`, etc.).
+- **OTLP HTTP receiver on `:4318`.** Single-instance, multi-tenant. Span routing happens at handler time via `routeSpanToProject(serviceName, projects)` — already exported. Spans for unknown services route to the `default` project's FrontierNode flow per ADR-033.
+- **Bind happens within 30 seconds** of the `startDaemon` promise resolving. The deadline tracks the upper bound of realistic bootstrap time on a moderate-multi-project registry, not the lower bound.
+- **Failure to bind is fatal.** `EADDRINUSE`, permission denied, or any other listen failure aborts `neatd start` with a non-zero exit and a clear error message. Silent fallback to "the supervisor is running but no listeners are bound" is the v0.3.0 failure mode this contract exists to close.
+- **`NEAT_WEB_DISABLED=1` skips the web UI only.** REST and OTLP bind unconditionally — CLI and MCP consumers depend on the REST host being live.
+- **`PORT` and `OTEL_PORT` env vars override** the default ports (`8080`, `4318`) symmetrically with `server.ts`. Same env contract as `neat watch`.
+
+The OTLP/gRPC receiver on `:4317` stays opt-in via `NEAT_OTLP_GRPC=true` per the existing ADR-049 routing section. Only `:4318` is part of the binding contract.
+
 ## OTel routing
 
 Spans route to a project by `service.name` lookup across registered projects. Spans for unknown services route to a fallback `'default'` project for FrontierNode auto-creation per ADR-033.
@@ -72,6 +86,16 @@ Per ADR-027 + the v0.2.x sequencing: self-hosting NEAT on the NEAT codebase only
 
 ## Enforcement
 
-`it.todo` for v0.2.5 #119. Regression test: daemon writes `graph.json` only via `persist.ts` loop and shutdown handlers.
+`packages/core/test/audits/contracts.test.ts` under `Daemon contract (ADR-049)`:
 
-Full rationale: [ADR-049](../decisions.md#adr-049--daemon-contract).
+- Daemon writes `graph.json` only via `persist.ts` loop and shutdown handlers.
+- Per-project graph isolation: failure in one project does not affect others.
+- OTel span routing matches by `service.name` across registered projects.
+- Missing registry refuses to boot with a clear error.
+- Daemon writes PID to `~/.neat/neatd.pid`.
+- SIGHUP triggers registry re-read.
+- ADR-063 binding contract: REST `:8080` bound within 30s of `startDaemon` resolving.
+- ADR-063 binding contract: OTLP `:4318` bound within 30s of `startDaemon` resolving.
+- ADR-063 binding contract: every registered project answers `GET /projects/:project/graph` with 200.
+
+Full rationale: [ADR-049](../decisions.md#adr-049--daemon-contract), [ADR-063](../decisions.md#adr-063--neatd-start-binds-rest-and-otlp-per-project-amends-adr-049).
