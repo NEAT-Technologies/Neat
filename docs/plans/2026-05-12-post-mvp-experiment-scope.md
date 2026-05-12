@@ -6,7 +6,7 @@ Full audit trail: `~/neat-experiment/bugs/` — 21 divergence write-ups, 6 NEAT-
 
 The honest reading: NEAT is not ready for an unfamiliar codebase yet. Three packaging blockers prevent the documented happy path from working at all, and the extracted graph itself is hallucinated from string literals in tests, JSDoc comment bodies, and JSX external-link props. The thesis surface (`get_divergences`) cannot be load-bearing while the EXTRACTED layer it sits on is producing zero real edges.
 
-Three milestones come out of this. v0.3.1 fixes the daemon so `neatd start` actually runs NEAT. v0.3.2 fixes the npm tarball so the documented happy path serves on install. v0.4.0 rebuilds static-extraction precision against an amended contract so a re-run of ADR-027 has signal to work with. The split between v0.3.1 and v0.3.2 is by load-bearing question, not by bug count: v0.3.1 is daemon surgery (one architectural change), v0.3.2 is packaging hygiene (two mechanical fixes + the smoke-test gate that verifies them). They're sequenced rather than bundled because v0.3.2's smoke-test gate (ADR-052 amendment) depends on the things it's checking being true first — and v0.3.1's daemon fix is what makes the smoke test's REST-bound assertion reachable. After v0.4.0 closes, ADR-027 re-runs.
+Three milestones come out of this. v0.3.1 fixes the daemon so `neatd start` actually runs NEAT. v0.3.2 fixes the npm tarball so the documented happy path serves on install. v0.3.3 rebuilds static-extraction precision against an amended contract so a re-run of ADR-027 has signal to work with. The split between v0.3.1 and v0.3.2 is by load-bearing question, not by bug count: v0.3.1 is daemon surgery (one architectural change), v0.3.2 is packaging hygiene (two mechanical fixes + the smoke-test gate that verifies them). They're sequenced rather than bundled because v0.3.2's smoke-test gate (ADR-052 amendment) depends on the things it's checking being true first — and v0.3.1's daemon fix is what makes the smoke test's REST-bound assertion reachable. After v0.3.3 closes, ADR-027 re-runs.
 
 ---
 
@@ -72,13 +72,13 @@ The current smoke test only verifies bin entrypoints resolve. That's insufficien
 - `neat watch ~/some-repo-with-nested-node_modules` boots without EMFILE on macOS, no env-var workaround required.
 - CI publish workflow's tarball smoke-test step exercises the three new assertions on every tag push.
 
-After v0.3.2, the documented `npm install -g neat.is && neatd start && open http://localhost:6328` happy path works end-to-end. That's the precondition v0.4.0 — and the eventual ADR-027 re-run — were waiting on.
+After v0.3.2, the documented `npm install -g neat.is && neatd start && open http://localhost:6328` happy path works end-to-end. That's the precondition v0.3.3 — and the eventual ADR-027 re-run — were waiting on.
 
 ---
 
-## v0.4.0 — Extraction precision
+## v0.3.3 — Extraction precision
 
-Minor release. Opens with a contract batch amending the static-extraction contract (ADR-032, contract #5). Then the rebuild against the locked contract. Mirrors the v0.2.x rebuild-against-locked-contract pattern.
+Patch release. Opens with a contract amendment to the static-extraction contract (ADR-032, contract #5). Then the rebuild against the locked contract. Patch-versioned because no breaking wire-format change ships — REST stays put, MCP tool surface unchanged, response shapes unchanged. Observable behavior of `get_divergences` does change (fewer false-positive rows), but that's precision-improvement, not a contract break for consumers.
 
 The three remaining NEAT-side findings from the experiment, plus a deferred carryover.
 
@@ -87,7 +87,7 @@ The three remaining NEAT-side findings from the experiment, plus a deferred carr
 | NEAT-BUG-4 | Ghost CALLS / CONNECTS_TO edges from string literals in tests, JSDoc comments, JSX external-link props, `.env.template` files, raw `*Client()` constructors | Five extraction filters, codified as contract assertions and a regression-fixture corpus seeded from the experiment's evidence rows |
 | NEAT-BUG-5 | AWS S3 (and likely all AWS SDK clients) labelled `infra:grpc-service:S3` | Default unknown `*Client(...)` to `infra:service:X`; pattern-match `@aws-sdk/client-*` imports for accurate kind labelling |
 | NEAT-BUG-6 | ~90 medusa files silently skipped during `neat init` with "Invalid argument" tree-sitter errors | Route per-file extraction failures to `neat-out/errors.ndjson`; surface aggregate count in init banner; `NEAT_STRICT_EXTRACTION=1` exits non-zero; investigate underlying tree-sitter cause |
-| (carryover) | Ghost-edge cleanup keyed on `evidence.file` (issue #140) | Already filed under v0.2.1; folds into v0.4.0 because the cleanup-side and creation-side fixes ship together |
+| (carryover) | Ghost-edge cleanup keyed on `evidence.file` (issue #140) | Already filed under v0.2.1; folds into v0.3.3 because the cleanup-side and creation-side fixes ship together |
 
 ### Contract amendments
 
@@ -116,13 +116,13 @@ Each rule lands as a live contract assertion in `contracts.test.ts` plus a fixtu
 ### Verification gate
 
 - Re-run `neat init` against medusa at the same pinned commit (`370676c2a737fb3b558a745ad452a2c9d4ae6de5`). Every false-positive row from the 2026-05-12 experiment is verified gone. The regression-fixture corpus encodes this.
-- Total divergence count drops by ≥ 95% on the medusa snapshot under v0.4.0 vs v0.3.0 (the 21 from this experiment should resolve to 0-2 surviving rows).
+- Total divergence count drops by ≥ 95% on the medusa snapshot under v0.3.3 vs v0.3.0 (the 21 from this experiment should resolve to 0-2 surviving rows).
 - `<projectDir>/neat-out/errors.ndjson` exists and contains the ~90 medusa files that silently failed in v0.3.0; init banner names the count.
 - Contract scoreboard grows by the new ADR-032 assertions, all live, none `it.todo`.
 
 ### Closing gate
 
-v0.4.0 closes when the verification gate passes **and** ADR-027 re-runs against medusa with OTel instrumentation attached. The re-run is the actual test — the precision fixes are necessary preconditions, not the success criterion. Outcome of the re-run determines what v0.4.x or v0.5.0 is for.
+v0.3.3 closes when the verification gate passes **and** ADR-027 re-runs against medusa with OTel instrumentation attached. The re-run is the actual test — the precision fixes are necessary preconditions, not the success criterion. Outcome of the re-run determines what v0.3.4 or v0.4.0 is for.
 
 ---
 
@@ -132,20 +132,20 @@ The three milestones each answer exactly one question.
 
 - **v0.3.1: does `neatd` run NEAT?** Architectural surgery on the daemon supervisor. One real change. Once shipped, anyone (human via CLI, agent via MCP) can drive NEAT after `neatd start`.
 - **v0.3.2: does the npm tarball ship a working stack?** Packaging hygiene — the web build lands in the tarball, the watcher boots on real repos, the smoke-test gate verifies both. Patches the v0.3.0 publish lie.
-- **v0.4.0: does extraction produce trustworthy edges?** Precision rebuild against a tightened static-extraction contract. Same pattern as the v0.2.x sequence.
+- **v0.3.3: does extraction produce trustworthy edges?** Precision rebuild against a tightened static-extraction contract. Same pattern as the v0.2.x sequence.
 
-v0.3.1 ships before v0.3.2 because v0.3.2's smoke-test gate (ADR-052 amendment) verifies REST/OTLP-bind among other things — that assertion is unreachable while the daemon doesn't bind. v0.3.2 ships before v0.4.0 because the regression-fixture corpus for v0.4.0 is most valuable when the v0.3.2 daemon-plus-tarball can actually serve the project it's testing through the documented surface.
+v0.3.1 ships before v0.3.2 because v0.3.2's smoke-test gate (ADR-052 amendment) verifies REST/OTLP-bind among other things — that assertion is unreachable while the daemon doesn't bind. v0.3.2 ships before v0.3.3 because the regression-fixture corpus for v0.3.3 is most valuable when the v0.3.2 daemon-plus-tarball can actually serve the project it's testing through the documented surface.
 
-Each milestone is small in scope compared to a v0.2.x minor. v0.3.1 should be one Contract Author + one implementation session. v0.3.2 should be one Contract Author + one implementation session. v0.4.0 should be one Contract Author session opening the batch, then one or two implementation sessions for the precision filters + loud failure mode.
+Each milestone is small in scope compared to a v0.2.x minor. v0.3.1 should be one Contract Author + one implementation session. v0.3.2 should be one Contract Author + one implementation session. v0.3.3 should be one Contract Author session opening the batch, then one or two implementation sessions for the precision filters + loud failure mode.
 
 ---
 
 ## What we don't take on now
 
-- **The OTel-instrumentation story for unfamiliar targets.** ADR-027 needs OBSERVED data on the target. Manual instrumentation is fine for the re-run; productizing "point NEAT at a repo and get OBSERVED data without thinking" is post-v0.4.0.
+- **The OTel-instrumentation story for unfamiliar targets.** ADR-027 needs OBSERVED data on the target. Manual instrumentation is fine for the re-run; productizing "point NEAT at a repo and get OBSERVED data without thinking" is post-v0.3.3.
 - **The daemon vs `neat watch` consolidation.** NEAT-BUG-2's fix puts REST behind `neatd start`, but the underlying architectural question of whether `neat watch` (single-project) should be merged into `neatd` (multi-project) is bigger than this round. The two coexist for now.
 - **Issue #141 (source-level DB detection), #142 (framework field), #145 (dep cleanup).** Carried forward from v0.2.1 since v0.2.5 close. Still carried forward. They're not on the critical path for ADR-027.
-- **A Rust v1.0 conversation.** Engineering hibernates until ADR-027 closes successfully. v0.4.0 closing without a merged upstream PR means another iteration on whatever the new failure mode reveals, not a jump to v1.0 work.
+- **A Rust v1.0 conversation.** Engineering hibernates until ADR-027 closes successfully. v0.3.3 closing without a merged upstream PR means another iteration on whatever the new failure mode reveals, not a jump to v1.0 work.
 
 ---
 
@@ -155,6 +155,6 @@ Each milestone is small in scope compared to a v0.2.x minor. v0.3.1 should be on
 
 **v0.3.2 next.** Contract Author writes the ADR-052 amendment (#234) — the smoke-test gate that verifies what v0.3.1 made true plus what v0.3.2 will make true. Implementation agent picks up #231 (web shell `.next` build) and #233 (chokidar polling fallback). v0.3.2 ships when the documented `npm install -g neat.is && neatd start && open http://localhost:6328` happy path works on a clean macOS machine. Tag and publish 0.3.2.
 
-**v0.4.0 next.** Contract Author writes #236 (ADR-032 amendment — the five precision filters + the loud-failure-mode rule + the regression-fixture corpus seeded from the experiment evidence). Implementation agent picks up #237 + #238 + #239 (+ carries #140 forward). v0.4.0 ships when the medusa re-run drops divergence count by ≥ 95% and `errors.ndjson` surfaces the previously-silent failures.
+**v0.3.3 next.** Contract Author writes #236 (ADR-032 amendment — the five precision filters + the loud-failure-mode rule + the regression-fixture corpus seeded from the experiment evidence). Implementation agent picks up #237 + #238 + #239 (+ carries #140 forward). v0.3.3 ships when the medusa re-run drops divergence count by ≥ 95% and `errors.ndjson` surfaces the previously-silent failures.
 
-ADR-027 re-runs after v0.4.0 closes. That re-run, not v0.4.0 itself, is the gate that decides what comes next.
+ADR-027 re-runs after v0.3.3 closes. That re-run, not v0.3.3 itself, is the gate that decides what comes next.
