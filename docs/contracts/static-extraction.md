@@ -1,10 +1,10 @@
 ---
 name: static-extraction
-description: Producers under packages/core/src/extract/* read source code and config to build the EXTRACTED layer. Every edge carries evidence.file. Ghost-edge cleanup keys on it. All producers are idempotent.
+description: Producers under packages/core/src/extract/* read source code and config to build the EXTRACTED layer. Every edge carries evidence.file. Ghost-edge cleanup keys on it. Producers are idempotent and pre-emit gate against five precision filters. Per-file failures route to errors.ndjson with a loud aggregate banner.
 governs:
   - "packages/core/src/extract/**"
   - "packages/core/src/watch.ts"
-adr: [ADR-032, ADR-030, ADR-031, ADR-024]
+adr: [ADR-032, ADR-065, ADR-030, ADR-031, ADR-024, ADR-055]
 ---
 
 # Static-extraction contract
@@ -117,6 +117,86 @@ Issue #142 adds `framework?: string` to `ServiceNodeSchema`. This is **schema gr
 
 The table lives in `compat.json` or a sibling data file. Population happens at extract time. The snapshot guard catches schema drift.
 
+## Precision filters (ADR-065)
+
+Five pre-emit gates inside the producer pass. A filtered candidate edge is never written to the graph — not added-then-retired. Idempotency stays intact (a re-run filters the same candidates, produces the same graph). Filtered candidates are silent; only true parse failures go to `errors.ndjson`.
+
+All five apply universally across JS / TS / Python. No per-language opt-out.
+
+### 1. Test-scope exclusion
+
+Files matching any of the following are excluded from outbound CALLS / CONNECTS_TO inference:
+
+- `**/__tests__/**`
+- `**/__fixtures__/**`
+- `**/integration-tests/**`
+- `*.spec.{ts,tsx,js,jsx,py}`
+- `*.test.{ts,tsx,js,jsx,py}`
+
+The files remain registered as service-internal (a test file belongs to its package); only inferred outbound edges from them are filtered. Path matching is on the file path relative to `scanPath`, normalised to forward slashes. Highest-signal fixture: `packages/core/test/fixtures/precision/test-scope-postgres.spec.ts` (experiment row 0016).
+
+### 2. Comment-body exclusion
+
+No edge is inferred from a string literal whose AST parent (or any ancestor) is a comment node. tree-sitter exposes these via the `comment`, `block_comment`, `line_comment`, and `documentation_comment` node types depending on grammar; the producer's URL-string walker must skip them.
+
+Highest-signal fixture: `packages/core/test/fixtures/precision/comment-body-jsdoc.ts` (experiment row 0014 — a JSDoc `@example` block containing `http://localhost:9000` was extracted as a real CONNECTS_TO edge).
+
+### 3. JSX external-link exclusion
+
+No edge is inferred from a URL string passed as a JSX attribute on an element whose tag matches `/^(a|Link|NavLink|ExternalLink|Anchor)$/`. The semantic shape is "user-clickable hyperlink to a documentation / marketing site," not "service-to-service call." Applies to common attrs (`to`, `href`) and any string-valued attr on a matching tag.
+
+Highest-signal fixture: `packages/core/test/fixtures/precision/jsx-external-link.tsx` (experiment row 0006 — `<Link to="https://medusajs.com/changelog/" target="_blank">` became a CALLS edge to `@medusajs/medusa`).
+
+### 4. `.env.template` exclusion
+
+Files matching the following are documentation, not runtime config. They are not registered as ConfigNodes and produce no CONFIGURED_BY edges:
+
+- `.env.template`
+- `.env.example`
+- `.env.sample`
+- `.env.*.template`
+- `.env.*.example`
+- `.env.*.sample`
+
+ADR-016 binds ConfigNode to file existence at runtime; templates have no runtime semantics. Highest-signal fixture: `packages/core/test/fixtures/precision/env-template/.env.template` (experiment rows 0008, 0015).
+
+### 5. No URL-substring service matching
+
+A URL whose hostname is `medusa.cloud` does not match the service `@medusajs/medusa` by substring containment. Cross-service inference from URL strings requires:
+
+- An exact hostname match against a registered ServiceNode alias (host:port set in `aliases.ts`), **or**
+- An exact hostname match against a registered InfraNode hostname.
+
+`.includes(serviceName.slice(after-slash))` is forbidden. Common-word service names (`api`, `core`, `web`, `medusa`) make substring matching unconditionally wrong. Highest-signal fixtures: experiment rows 0001, 0002, 0003, 0012, 0013.
+
+## Loud failure mode (ADR-065)
+
+Silent partial extraction is forbidden. The previous behaviour — `console.warn(...)` per file with no aggregate — let ~90 medusa files quietly drop out of the snapshot during the v0.3.0 experiment with `neat init` exiting 0.
+
+Per-file extraction failures route through these four behaviours:
+
+1. **`<projectDir>/neat-out/errors.ndjson` append.** One JSON object per line: `{file, error, stack, ts, source: 'extract'}`. Append-only. The `errors.ndjson` artifact already exists for OTel error events (per ADR-033); the `source` discriminator separates extract failures from OTel error events for consumers.
+
+2. **Banner aggregate.** `neat init` and `neat watch` summaries print `[neat] N files skipped due to parse errors` unconditionally. `0 files skipped` is a positive signal that no quiet skipping happened.
+
+3. **`NEAT_STRICT_EXTRACTION=1` flips the exit code.** Any per-file failure causes `neat init` to exit non-zero. Useful in CI ("did this commit make extraction worse?"). Default unset — local dev wants forgiving behaviour with a banner.
+
+4. **Catch + log the real stack at the call site.** "Invalid argument" is the Node N-API generic; the real cause was an extractor calling a method on a missing tree-sitter field. Per-call-site `try`/`catch` captures the parser context, not blanket suppression at the phase level.
+
+## Regression fixture corpus (ADR-065)
+
+`packages/core/test/fixtures/precision/` holds verbatim minimisations of the highest-signal v0.3.0 experiment evidence rows. Each fixture is the smallest reproduction of a row that v0.3.0's extractor produced a false-positive edge for. The contract assertions parameterise over them: "fixture X should produce no extracted edges of type Y."
+
+| Fixture | Filter | Experiment row |
+|---|---|---|
+| `comment-body-jsdoc.ts` | comment-body exclusion | 0014 |
+| `test-scope-postgres.spec.ts` | test-scope exclusion | 0016 |
+| `jsx-external-link.tsx` | JSX external-link exclusion | 0006 |
+| `env-template/.env.template` | `.env.template` exclusion | 0008 |
+| `aws-client-raw.ts` | (also #238 AWS-SDK kind) | 0007 |
+
+Adding a new false-positive shape to the corpus: drop a fixture, add an assertion line.
+
 ## Per-file parse-failure isolation (ADR-055)
 
 Every producer that parses per-file content wraps the parse in `try / catch`. On failure: `console.warn` with the producer name, file path, and error message; `continue` to the next file. The phase completes even if some files are unparseable.
@@ -162,11 +242,15 @@ CODEOWNERS pattern matching in MVP is minimal: support `*`, `**`, and exact path
 - A producer-interface assertion: every `addX` export under `extract/` accepts `(graph, services, scanPath)` (or a strict subset).
 - An idempotency assertion: run a producer twice on the same fixture, expect identical graph state.
 - Owner-extraction block (`it.todo`s for ADR-054): schema includes optional `owner`; CODEOWNERS at root + at `.github/`; package.json `author` fallback; undefined when neither source covers; backfill on existing nodes from OTel ingest.
+- ADR-065 precision-filter block (five `it.todo`s — one per filter — flip live in #237): each loads its fixture, runs the producer, asserts no false-positive edge.
+- ADR-065 loud-failure block (three `it.todo`s — flip live in #239): `errors.ndjson` shape, init-banner skipped-count phrase, `NEAT_STRICT_EXTRACTION=1` exit-code flip.
 
 The PreToolUse hook surfaces this contract whenever any file under `extract/` or `watch.ts` is edited.
 
 ## Rationale
 
-Static extraction was the most-FAIL'd layer in the verification pass — 7 FAILs and 13 PARTIALs across the tree-sitter audit. Most of them clustered around two missing structural rules: evidence shape on every EXTRACTED edge, and a cleanup mechanism keyed to it. Both rules already informally existed (CALLS edges carry evidence; the audit asks for cleanup). This contract makes them universal across producers and ties them to the lifecycle authority that owns retirement.
+Static extraction was the most-FAIL'd layer in the verification pass — 7 FAILs and 13 PARTIALs across the tree-sitter audit. Most of them clustered around two missing structural rules: evidence shape on every EXTRACTED edge, and a cleanup mechanism keyed to it. Both rules already informally existed (CALLS edges carry evidence; the audit asks for cleanup). This contract made them universal across producers and tied them to the lifecycle authority that owns retirement.
 
-Full rationale and historical context: [ADR-032](../decisions.md#adr-032--static-extraction-contract).
+ADR-065 closes the second cluster: producer-side precision (the v0.3.0 medusa run produced 20 EXTRACTED edges, 100% false positives) and observable failure mode (~90 medusa files silently dropped during the same run). Until both close, `get_divergences` (ADR-060) cannot be load-bearing — the layer it sits on is hallucinated and silently incomplete.
+
+Full rationale and historical context: [ADR-032](../decisions.md#adr-032--static-extraction-contract), [ADR-065](../decisions.md#adr-065--static-extraction-precision-filters--loud-failure-mode-amends-adr-032).
