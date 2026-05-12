@@ -16,19 +16,21 @@
     "node": ">=20"
   },
   "files": [
+    ".next/standalone",
+    ".next/static",
     "app",
     "lib",
-    "public",
-    "next.config.js",
+    "next.config.mjs",
     "tsconfig.json",
-    "postcss.config.js",
-    "tailwind.config.js",
+    "postcss.config.mjs",
+    "tailwind.config.ts",
     "README.md"
   ],
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "build": "next build && node ./scripts/post-build-standalone.mjs",
+    "start": "node .next/standalone/packages/web/server.js",
+    "prepublishOnly": "rm -rf .next && npm run build",
     "lint": "eslint app",
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf .next .turbo"

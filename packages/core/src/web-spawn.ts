@@ -65,6 +65,17 @@ function resolveWebPackageDir(): string {
   return path.dirname(pkgJsonPath)
 }
 
+/**
+ * Locate the standalone server.js inside the web package. ADR-064 #2 — the
+ * tarball ships `.next/standalone/packages/web/server.js` (path preserved
+ * relative to the monorepo tracing root). Missing means the package was
+ * published without `next build` having run, which the smoke-test gate
+ * catches at publish time.
+ */
+function resolveStandaloneServerEntry(webDir: string): string {
+  return path.join(webDir, '.next/standalone/packages/web/server.js')
+}
+
 export async function spawnWebUI(restPort: number): Promise<WebHandle> {
   const portRaw = process.env.NEAT_WEB_PORT
   const port = portRaw && portRaw.length > 0 ? Number.parseInt(portRaw, 10) : DEFAULT_WEB_PORT
@@ -75,18 +86,39 @@ export async function spawnWebUI(restPort: number): Promise<WebHandle> {
   await assertPortFree(port)
 
   const cwd = resolveWebPackageDir()
+  const serverEntry = resolveStandaloneServerEntry(cwd)
+  // ADR-064 — fail loudly if the standalone build is missing. v0.3.0 shipped
+  // without it; the symptom on the user side was `next start` aborting with
+  // `Could not find a production build in the '.next' directory`. This check
+  // catches it at the parent's bootstrap instead of letting the child crash
+  // a few moments later with a worse error.
+  try {
+    require.resolve(serverEntry)
+  } catch {
+    throw new Error(
+      `neatd: web UI standalone build missing at ${serverEntry}. ` +
+        `The published @neat.is/web tarball should include it; if you're running from a ` +
+        `monorepo checkout, run \`npm run build --workspace @neat.is/web\` first, or set ` +
+        `NEAT_WEB_DISABLED=1 to skip the web UI.`,
+    )
+  }
+
   // ADR-059 #6 — child inherits NEAT_API_URL pointing at our REST server,
   // unless the operator pre-configured it.
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: String(port),
+    HOSTNAME: process.env.HOSTNAME ?? '0.0.0.0',
     NEAT_API_URL: process.env.NEAT_API_URL ?? `http://localhost:${restPort}`,
   }
 
-  // `npm exec next start` works under both monorepo and global install.
+  // The standalone bundle is self-contained — its own `node_modules` and
+  // `package.json` sit alongside `server.js`. Spawn `node` against it
+  // directly; no `next start` (which needs the source tree + build cache)
+  // and no `npm exec` (which is monorepo-only in practice).
   // `detached: false` keeps the child in our process group so signals reach it.
-  const child = spawn('npm', ['exec', '--', 'next', 'start', '-p', String(port)], {
-    cwd,
+  const child = spawn(process.execPath, [serverEntry], {
+    cwd: path.dirname(serverEntry),
     env,
     stdio: ['ignore', 'inherit', 'inherit'],
     detached: false,
