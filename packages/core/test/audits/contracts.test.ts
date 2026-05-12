@@ -4687,6 +4687,59 @@ describe('Publish system contract (ADR-052)', () => {
     expect(yml).toMatch(/npm install ["']?neat\.is@/)
     expect(yml).toMatch(/neat --help/)
   })
+
+  it('publish workflow waits for every lockstep package version before install (ADR-064 #1)', () => {
+    const yml = readFileSync(join(REPO_ROOT, '.github/workflows/publish.yml'), 'utf8')
+    // Per-dep visibility wait. The v0.3.1 smoke failed `ETARGET: No matching
+    // version found for @neat.is/web@^0.3.1` because the retry loop only
+    // checked the umbrella. The smoke step must explicitly wait on each
+    // lockstep package before installing.
+    for (const pkg of PUBLISHABLE_PACKAGES) {
+      const pkgName = pkg === 'neat.is' ? 'neat.is' : `@neat.is/${pkg}`
+      expect(
+        yml,
+        `${pkgName} should be in the per-dep visibility-wait loop`,
+      ).toContain(`"${pkgName}"`)
+    }
+    // The body must loop with `npm view <pkg>@<version>` against each.
+    expect(yml).toMatch(/npm view "\$\{pkg\}@\$\{version\}"/)
+  })
+
+  it('publish workflow asserts a built @neat.is/web artifact in the installed tree (ADR-064 #2)', () => {
+    const yml = readFileSync(join(REPO_ROOT, '.github/workflows/publish.yml'), 'utf8')
+    // Tarball must contain @neat.is/web's built artifact at the standalone
+    // form #231 lands. Asserted via `test -f` against
+    // .next/standalone/server.js (or the equivalent if the bundling form
+    // changes — update both this assertion and the workflow together).
+    expect(yml).toMatch(/@neat\.is\/web/)
+    expect(yml).toMatch(/\.next\/standalone\/server\.js/)
+    expect(yml).toMatch(/-f .*\.next\/standalone\/server\.js/)
+  })
+
+  it('publish workflow spawns `neatd start` and asserts liveness on :8080, :6328, :4318 (ADR-064 #3)', () => {
+    const yml = readFileSync(join(REPO_ROOT, '.github/workflows/publish.yml'), 'utf8')
+    // Post-`neatd start` liveness. The smoke step must spawn neatd, wait for
+    // it to bind, and curl each of the three documented surfaces. Failure on
+    // any of them fails the workflow.
+    expect(yml).toMatch(/neatd start/)
+    expect(yml).toMatch(/localhost:8080\/graph/)
+    expect(yml).toMatch(/localhost:6328\//)
+    expect(yml).toMatch(/localhost:4318\/health/)
+  })
+
+  it('publish workflow seeds a fixture registry with a default project and a nested-node_modules project (ADR-064 #4)', () => {
+    const yml = readFileSync(join(REPO_ROOT, '.github/workflows/publish.yml'), 'utf8')
+    // Fixture registry needs ≥2 projects, including a project literally named
+    // "default" (so ADR-026 unprefixed paths resolve), and at least one
+    // project whose directory has a populated node_modules/ tree (so the
+    // chokidar trigger exercises the polling fallback from #233).
+    expect(yml).toMatch(/NEAT_HOME=.*neat-home/)
+    expect(yml).toMatch(/neat init .*--project default/)
+    // The nested-node_modules project: workflow runs `npm install` inside
+    // its dir so the daemon's watcher sees real ignore-prone trees.
+    expect(yml).toMatch(/proj_nested/)
+    expect(yml).toMatch(/cd .*proj_nested.*npm install/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────

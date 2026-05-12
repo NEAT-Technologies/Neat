@@ -2049,3 +2049,52 @@ The three assertions land as `it.todo` in the contract amendment PR (the impleme
 - **Daemon vs `neat watch` consolidation.** `neat watch` (single-project) and `neatd start` (multi-project) coexist for now per the scope doc. Future work might collapse them; this ADR doesn't.
 
 Full rationale and the v0.3.0 failure-mode evidence: `~/neat-experiment/bugs/NEAT-BUG-2-neatd-never-binds-rest.md`.
+
+## ADR-064 — Tarball smoke-test verifies built web artifact + post-`neatd start` liveness (amends ADR-052)
+
+**Date:** 2026-05-13
+**Status:** Active. Amends ADR-052 (publish system contract). Rules from ADR-052 are retained except where this ADR sharpens the smoke-test gate.
+
+**Context.** The v0.3.0 publish landed three blocker bugs that the existing tarball smoke-test gate (ADR-052 §3) didn't catch: NEAT-BUG-1 (`@neat.is/web` shipped without a built `.next/` directory, so `neatd start`'s web UI crashes on every fresh install), NEAT-BUG-2 (`neatd start` never bound REST or OTLP — closed at v0.3.1 via ADR-063), and NEAT-BUG-3 (`neat watch` EMFILE on any repo with nested `node_modules`).
+
+The current smoke-test step installs the published umbrella, runs `neat --help`, and exits. That catches the 0.2.6-class failure (broken bin-wrapper subpaths) and nothing else. It doesn't read the web tarball, it doesn't spawn `neatd start`, it doesn't observe whether anything actually listens. The v0.3.0 publish passed this smoke test cleanly and shipped a stack that couldn't serve the documented `npm install -g neat.is && neatd start && open http://localhost:6328` happy path on any machine.
+
+Plus: the v0.3.1 publish's smoke-test step failed on a registry-propagation race — `neat.is@0.3.1` was visible to `npm view`, the install ran, but `@neat.is/web@^0.3.1` hadn't propagated yet, so `npm install neat.is@0.3.1` failed `ETARGET: No matching version found for @neat.is/web@^0.3.1`. The retry loop checked only the umbrella, not the deps it pulls in. Lockstep visibility, not just umbrella visibility, is what the gate has to wait for.
+
+**Decision.**
+
+1. **Per-dep visibility wait.** Before the smoke install, the workflow waits for every package in the lockstep set (`@neat.is/types`, `@neat.is/core`, `@neat.is/mcp`, `@neat.is/claude-skill`, `@neat.is/web`, `neat.is`) to appear at the target version on the registry. The current single-package retry loop on the umbrella is insufficient.
+
+2. **Web artifact presence in the installed tree.** After `npm install neat.is@<version>`, the unpacked `node_modules/@neat.is/web/` must contain a built artifact at the bundling form #231 lands — either `.next/standalone/server.js` or the equivalent. The smoke step asserts presence via `test -f` (or `ls`); absence fails the workflow. Catches NEAT-BUG-1 directly.
+
+3. **Post-`neatd start` liveness checks.** The smoke step spawns `neatd start` against a fixture project registry, then within 30 seconds:
+   - `curl http://localhost:8080/graph` returns 200 (NEAT-BUG-2; covered live at v0.3.1, asserted in CI from v0.3.2 onward).
+   - `curl http://localhost:6328/` returns 200 (NEAT-BUG-1).
+   - `:4318` is bound by the daemon process (NEAT-BUG-2 OTLP side).
+
+   `NEAT_WEB_DISABLED=0` (i.e., web UI on). The check kills `neatd` after the asserts; the workflow runner's port range is owned by the job, no collision risk.
+
+4. **Fixture project registry with realistic shape.** The smoke step creates `NEAT_HOME=$(mktemp -d)` and registers at least two projects: one named `default` (to exercise ADR-026's unprefixed legacy paths), and at least one whose project directory contains a populated `node_modules/` tree (to exercise NEAT-BUG-3's chokidar polling path under `neatd start`'s extraction triggers). Fresh projects with `npm init -y && npm install some-small-pkg` is the cheapest way to produce the latter.
+
+5. **Failure is fatal, with no rollback option.** Per ADR-052 §6, npm immutability means a failed smoke test does not unship the broken version; the operator has to bump and re-publish. The smoke-test gate is the last-chance check before the broken publish becomes load-bearing for users.
+
+6. **Contract assertions are workflow-shape regex checks.** `contracts.test.ts` doesn't run the smoke step itself (it would need to publish to npm to exercise it). It reads `.github/workflows/publish.yml` and asserts the smoke step contains the right invocations: `npm view` per-package wait, web-artifact presence check, `neatd start` spawn, three liveness curls, and a fixture-registry setup that includes ≥2 projects and ≥1 with nested `node_modules`. Wrong-shape workflow files block merge.
+
+**Why amending ADR-052 and not writing a successor.** ADR-052's other rules (subpath validity, version lockstep, dependency order, engines floor, npm immutability) are all still load-bearing and correct. This ADR extends only the smoke-test gate from "does the bin entrypoint resolve" to "does the documented happy path work on a fresh install." Same shape of amendment as ADR-063 did to ADR-049 — sharpen the observability rule, leave everything else.
+
+**Enforcement.** New assertions in `packages/core/test/audits/contracts.test.ts` under `Publish system contract (ADR-052)`:
+
+- Workflow waits for every lockstep package's target version before installing the umbrella.
+- Workflow asserts presence of a built `@neat.is/web` artifact in the installed tree.
+- Workflow spawns `neatd start` and asserts liveness on `:8080`, `:6328`, and `:4318`.
+- Workflow's fixture registry includes a project named `default` and a project with a populated `node_modules/`.
+
+These ship live in the contract amendment PR — they assert on workflow content, which lands in the same PR. The actual smoke-test execution depends on the v0.3.2 implementation PRs (#231 for web `.next/`, #233 for `neat watch` polling) being merged before the next tag-publish.
+
+**Not in scope.**
+
+- **Tarball content sniffing without install.** Considered (`tar tzf` against `npm pack` output for each dep). Rejected for MVP — the install path already exercises the same code paths and gives a stronger signal.
+- **Multi-platform smoke.** Workflow runs on `ubuntu-latest`; the NEAT-BUG-3 EMFILE bug is specifically macOS (`darwin`'s kqueue limit). Workflow CI catches the general shape; a macOS smoke runner is a successor concern.
+- **Persistent fixture registry in the repo.** The fixture is a `mktemp -d` per workflow run. Anything more would need versioning + checked-in `node_modules` fixtures, which is more weight than the signal justifies.
+
+Full rationale and the v0.3.0 failure-mode evidence: `~/neat-experiment/bugs/NEAT-BUG-1-web-ui-missing-next-build.md`, `~/neat-experiment/bugs/NEAT-BUG-3-neat-watch-emfile.md`.

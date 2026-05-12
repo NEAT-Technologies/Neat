@@ -113,18 +113,88 @@ jobs:
           version=$(node -p "require('./packages/neat.is/package.json').version")
           echo "Smoke-testing neat.is@${version} from the registry"
 
-          # The registry can be a few seconds behind the publish — retry until
-          # the just-published version is visible, then fail loudly if it never
-          # appears.
-          for i in 1 2 3 4 5; do
-            if npm view "neat.is@${version}" version > /dev/null 2>&1; then break; fi
-            echo "  not yet visible, retrying ($i/5)"
-            sleep 3
+          # ADR-064 — per-dep visibility wait. The umbrella propagates faster
+          # than its deps; the v0.3.1 smoke failed `ETARGET` on @neat.is/web
+          # because the retry loop only checked the umbrella. Every package in
+          # the lockstep set must be visible at the target version before we
+          # install.
+          for pkg in "@neat.is/types" "@neat.is/core" "@neat.is/mcp" "@neat.is/claude-skill" "@neat.is/web" "neat.is"; do
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              if npm view "${pkg}@${version}" version > /dev/null 2>&1; then
+                echo "  ${pkg}@${version} visible"
+                break
+              fi
+              echo "  ${pkg}@${version} not yet visible, retrying ($i/10)"
+              sleep 3
+            done
+            # Final check — fail loudly if it never appeared.
+            npm view "${pkg}@${version}" version > /dev/null
           done
 
           tmp=$(mktemp -d)
           cd "$tmp"
           npm init -y > /dev/null
           npm install "neat.is@${version}"
+
+          # ADR-052 #3 — bin entrypoint resolves.
           ./node_modules/.bin/neat --help > /dev/null
-          echo "Smoke test passed — neat --help exited 0 against the published tarball."
+          echo "  neat --help exited 0"
+
+          # ADR-064 #2 — web artifact present in the installed tree. #231 ships
+          # @neat.is/web with `output: 'standalone'`, which puts the runnable
+          # entry at .next/standalone/server.js. Absence fails the workflow.
+          web_dir="$tmp/node_modules/@neat.is/web"
+          if [ ! -f "$web_dir/.next/standalone/server.js" ]; then
+            echo "::error::ADR-064 violation: @neat.is/web tarball ships without a built .next/standalone/server.js"
+            ls -la "$web_dir/.next/standalone" 2>/dev/null || echo "  .next/standalone absent entirely"
+            exit 1
+          fi
+          echo "  @neat.is/web ships .next/standalone/server.js"
+
+          # ADR-064 #4 — fixture registry. Two projects, including one named
+          # `default` (so ADR-026's unprefixed legacy paths resolve), and one
+          # whose dir has a populated node_modules/ (so the daemon's chokidar
+          # trigger exercises the polling fallback from #233).
+          export NEAT_HOME="$tmp/neat-home"
+          mkdir -p "$NEAT_HOME"
+          proj_default="$tmp/proj-default"
+          proj_nested="$tmp/proj-nested"
+          mkdir -p "$proj_default" "$proj_nested"
+          ( cd "$proj_default" && git init -q && echo '{"name":"default","version":"0.0.0"}' > package.json )
+          ( cd "$proj_nested" && git init -q && echo '{"name":"nested","version":"0.0.0"}' > package.json && npm install --no-audit --no-fund --silent left-pad )
+          NEAT_HOME="$NEAT_HOME" ./node_modules/.bin/neat init "$proj_default" --project default > /dev/null
+          NEAT_HOME="$NEAT_HOME" ./node_modules/.bin/neat init "$proj_nested" --project nested  > /dev/null
+          echo "  fixture registry seeded (default + nested project, ~$(find $proj_nested/node_modules -maxdepth 2 -type d | wc -l) dirs in nested/node_modules)"
+
+          # ADR-064 #3 — post-`neatd start` liveness on :8080, :6328, :4318.
+          # We don't want a real npm-spawn nested under a npm-spawn flake; spawn
+          # neatd as a detached process, wait up to 30s for binds, curl each
+          # endpoint, then kill.
+          NEAT_HOME="$NEAT_HOME" ./node_modules/.bin/neatd start > "$tmp/neatd.log" 2>&1 &
+          neatd_pid=$!
+          echo "  neatd started, pid $neatd_pid"
+
+          wait_for() {
+            local url="$1"
+            local label="$2"
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+              if curl -sf -o /dev/null --max-time 2 "$url"; then
+                echo "  ${label} reachable (${url})"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::ADR-064 violation: ${label} did not answer within 30s (${url})"
+            cat "$tmp/neatd.log"
+            kill -TERM "$neatd_pid" 2>/dev/null || true
+            return 1
+          }
+
+          wait_for "http://localhost:8080/graph"  "REST :8080 /graph"
+          wait_for "http://localhost:6328/"        "Web UI :6328"
+          # OTLP :4318 — receiver replies on /health (cheap liveness probe).
+          wait_for "http://localhost:4318/health"  "OTLP :4318 /health"
+
+          kill -TERM "$neatd_pid" 2>/dev/null || true
+          wait "$neatd_pid" 2>/dev/null || true
+          echo "Smoke test passed — neat --help + web build + post-neatd liveness all green."
