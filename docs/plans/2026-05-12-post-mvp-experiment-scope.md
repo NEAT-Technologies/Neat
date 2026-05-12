@@ -6,48 +6,73 @@ Full audit trail: `~/neat-experiment/bugs/` — 21 divergence write-ups, 6 NEAT-
 
 The honest reading: NEAT is not ready for an unfamiliar codebase yet. Three packaging blockers prevent the documented happy path from working at all, and the extracted graph itself is hallucinated from string literals in tests, JSDoc comment bodies, and JSX external-link props. The thesis surface (`get_divergences`) cannot be load-bearing while the EXTRACTED layer it sits on is producing zero real edges.
 
-Two milestones come out of this. v0.3.1 patches the publish-hygiene blockers so the documented happy path actually works. v0.4.0 rebuilds static-extraction precision against an amended contract so a re-run of ADR-027 has signal to work with. After v0.4.0 closes, ADR-027 re-runs.
+Three milestones come out of this. v0.3.1 fixes the daemon so `neatd start` actually runs NEAT. v0.3.2 fixes the npm tarball so the documented happy path serves on install. v0.4.0 rebuilds static-extraction precision against an amended contract so a re-run of ADR-027 has signal to work with. The split between v0.3.1 and v0.3.2 is by load-bearing question, not by bug count: v0.3.1 is daemon surgery (one architectural change), v0.3.2 is packaging hygiene (two mechanical fixes + the smoke-test gate that verifies them). They're sequenced rather than bundled because v0.3.2's smoke-test gate (ADR-052 amendment) depends on the things it's checking being true first — and v0.3.1's daemon fix is what makes the smoke test's REST-bound assertion reachable. After v0.4.0 closes, ADR-027 re-runs.
 
 ---
 
-## v0.3.1 — Publish hygiene
+## v0.3.1 — Daemon binds REST
 
-Patch release. No new contract batch — amendments to the existing publish-system (ADR-052) and daemon (ADR-049) contracts plus the three blocker fixes. Three of the six NEAT-side findings from the experiment.
+Patch release. **One load-bearing question:** does `neatd start` actually run NEAT? One bug fix + one contract amendment.
 
 | Bug | Title | Fix shape |
 |-----|-------|-----------|
-| NEAT-BUG-1 | `neatd start` web UI crashes — `.next/` missing from `@neat.is/web` tarball | `prepublishOnly` runs `next build` (output: 'standalone'); `files` includes the standalone artifact; tarball smoke-test verifies the web UI actually serves a 200 on `/` |
-| NEAT-BUG-2 | `neatd start` never binds REST :8080 or OTLP :4318 | Daemon entrypoint forks/in-process-starts the neat-core host per active project after project registration; smoke-test asserts `/graph` returns 200 within N seconds of `neatd start` |
-| NEAT-BUG-3 | `neat watch` EMFILE on macOS for any repo with nested `node_modules` | Pass ignore globs (`**/node_modules/**`, `**/.git/**`, `**/dist/**`, `**/.next/**`, `**/.turbo/**`, `**/build/**`) as chokidar's first arg; macOS heuristic fallback to `usePolling: true` for repos above a directory-count threshold |
+| NEAT-BUG-2 | `neatd start` never binds REST :8080 or OTLP :4318 | Daemon entrypoint forks/in-process-starts the neat-core host per active project after project registration; per-project mount paths per ADR-026 dual-mount |
 
 ### Contract amendments
 
-**ADR-052 (publish system, contract #25).** Add two assertions to the tarball smoke-test gate:
+**ADR-049 (daemon, contract #22).** Tighten the wording of "single long-lived process, per-project graph isolation" to make it observably testable: after `neatd start`, every registered project has a graph host bound and reachable through the documented dual-mount paths (`GET /projects/:project/graph` returns 200). REST host on `:8080`, OTLP receiver on `:4318`. Bind within 30 seconds of `neatd start` returning. Add corresponding live assertions to `packages/core/test/audits/contracts.test.ts` under the `Daemon contract (ADR-049)` describe block.
 
-1. The unpacked `neat.is` tarball contains a built `@neat.is/web` artifact (`.next/standalone` or equivalent, asserted by file presence).
-2. After `neatd start`, the REST endpoint at `http://localhost:8080/graph` returns 200 within 30 seconds. The web UI on `http://localhost:6328` returns 200 within 30 seconds. The OTLP receiver on `:4318` is bound (lsof or equivalent).
+### Issues
 
-The current smoke test only verifies bin entrypoints resolve. That's insufficient — it caught nothing of substance in this run.
-
-**ADR-049 (daemon, contract #22).** Tighten the wording of "single long-lived process, per-project graph isolation" to make it observably testable: after `neatd start`, every registered project has a graph host bound and reachable through the documented dual-mount paths. Add a contract assertion that mirrors the smoke-test wording above.
-
-### Issues to file
-
-- `#XYZ` — NEAT-BUG-1: web shell `.next/` missing from tarball
-- `#XYZ` — NEAT-BUG-2: `neatd start` doesn't bind REST or OTLP
-- `#XYZ` — NEAT-BUG-3: `neat watch` EMFILE on real-shape repos (macOS)
-- `#XYZ` — ADR-052 amendment: tarball smoke-test must verify web-UI build and post-start REST bind
-- `#XYZ` — ADR-049 amendment: per-project graph host binding is the contract surface
-
-(Issue numbers TBD on filing.)
+- #232 — NEAT-BUG-2: `neatd start` doesn't bind REST or OTLP
+- #235 — ADR-049 amendment: per-project graph host binding is the contract surface
 
 ### Verification gate
 
-- Fresh `npm install -g neat.is@0.3.1` on a clean machine.
-- `neatd start` against a 2-project registry: both projects' `/graph` endpoints return non-empty within 30s, web UI at `:6328` returns the SPA shell.
+- `neatd start` against a 2-project registry: every project's `/graph` endpoint returns 200 within 30s, OTLP `:4318` bound.
+- Single-project default-mount path also serves (`GET /graph` returns 200, unprefixed) per ADR-026.
+- `cd packages/core && npx vitest run test/audits/contracts.test.ts` — ADR-049 assertion count grows by the binding-as-contract-surface amendments.
+
+The web UI and watcher blockers (NEAT-BUG-1, NEAT-BUG-3) are still broken at v0.3.1; that's expected. CLI users can drive NEAT through REST/MCP without the web UI. v0.3.1 ships as soon as the daemon question is answered, even though `neatd start --web` still crashes the web side.
+
+---
+
+## v0.3.2 — Tarball ships working artifacts
+
+Patch release. **One load-bearing question:** does the published npm tarball serve a working stack? Two bug fixes + one contract amendment whose smoke-test gate verifies both.
+
+| Bug | Title | Fix shape |
+|-----|-------|-----------|
+| NEAT-BUG-1 | `neatd start` web UI crashes — `.next/` missing from `@neat.is/web` tarball | `prepublishOnly` runs `next build` (output: 'standalone'); `files` includes the standalone artifact; bin wrapper runs the standalone server |
+| NEAT-BUG-3 | `neat watch` EMFILE on macOS for any repo with nested `node_modules` | Pass ignore globs (`**/node_modules/**`, `**/.git/**`, `**/dist/**`, `**/.next/**`, `**/.turbo/**`, `**/build/**`) as chokidar's first arg; darwin heuristic fallback to `{ usePolling: true }` for repos above a directory-count threshold |
+
+### Contract amendments
+
+**ADR-052 (publish system, contract #25).** Add two assertions to the tarball smoke-test gate, now that the things they verify can be true:
+
+1. The unpacked `neat.is` tarball contains a built `@neat.is/web` artifact (`.next/standalone` or equivalent, asserted by file presence).
+2. After `neatd start`, within 30 seconds:
+   - `curl http://localhost:8080/graph` returns 200 (already-true post-v0.3.1; the smoke test makes it observable in CI).
+   - `curl http://localhost:6328/` returns 200 (covers NEAT-BUG-1).
+   - `:4318` is bound by the daemon process.
+3. The smoke-test fixture project registry includes at least two projects, at least one with nested `node_modules`, to also exercise NEAT-BUG-3's polling path.
+
+The current smoke test only verifies bin entrypoints resolve. That's insufficient — it caught nothing of substance in the v0.3.0 release.
+
+### Issues
+
+- #231 — NEAT-BUG-1: web shell `.next/` missing from tarball
+- #233 — NEAT-BUG-3: `neat watch` EMFILE on real-shape repos (macOS)
+- #234 — ADR-052 amendment: tarball smoke-test must verify web-UI build and post-start REST bind
+
+### Verification gate
+
+- Fresh `npm install -g neat.is@0.3.2` on a clean machine.
+- `neatd start` against a 2-project registry: REST + OTLP + web UI all bound (v0.3.1 + v0.3.2 combined).
 - `neat watch ~/some-repo-with-nested-node_modules` boots without EMFILE on macOS, no env-var workaround required.
-- `cd packages/core && npx vitest run test/audits/contracts.test.ts` — ADR-052 and ADR-049 assertion counts both grow by their new amendments.
-- CI publish workflow's tarball smoke-test step exercises the new assertions on every tag push.
+- CI publish workflow's tarball smoke-test step exercises the three new assertions on every tag push.
+
+After v0.3.2, the documented `npm install -g neat.is && neatd start && open http://localhost:6328` happy path works end-to-end. That's the precondition v0.4.0 — and the eventual ADR-027 re-run — were waiting on.
 
 ---
 
@@ -103,11 +128,15 @@ v0.4.0 closes when the verification gate passes **and** ADR-027 re-runs against 
 
 ## Why this split
 
-v0.3.1 is honest publish hygiene. The version under the npm tag didn't actually do what its README claimed. Fix that first; nothing else matters until the documented happy path works.
+The three milestones each answer exactly one question.
 
-v0.4.0 is the extraction-precision rebuild that the divergence query needs to be credible. It rebuilds against a tightened contract — same pattern as the v0.2.x sequence. v0.3.1 first because contract work shouldn't happen on a broken substrate, and the regression-fixture corpus for v0.4.0 is most valuable when the v0.3.1 daemon can actually serve the project it's testing.
+- **v0.3.1: does `neatd` run NEAT?** Architectural surgery on the daemon supervisor. One real change. Once shipped, anyone (human via CLI, agent via MCP) can drive NEAT after `neatd start`.
+- **v0.3.2: does the npm tarball ship a working stack?** Packaging hygiene — the web build lands in the tarball, the watcher boots on real repos, the smoke-test gate verifies both. Patches the v0.3.0 publish lie.
+- **v0.4.0: does extraction produce trustworthy edges?** Precision rebuild against a tightened static-extraction contract. Same pattern as the v0.2.x sequence.
 
-Both milestones are small in scope compared to a v0.2.x minor. v0.3.1 should be one engineering session — three blocker fixes plus two contract amendments. v0.4.0 should be one Contract Author session opening the batch, then one or two implementation sessions for the precision filters + loud failure mode.
+v0.3.1 ships before v0.3.2 because v0.3.2's smoke-test gate (ADR-052 amendment) verifies REST/OTLP-bind among other things — that assertion is unreachable while the daemon doesn't bind. v0.3.2 ships before v0.4.0 because the regression-fixture corpus for v0.4.0 is most valuable when the v0.3.2 daemon-plus-tarball can actually serve the project it's testing through the documented surface.
+
+Each milestone is small in scope compared to a v0.2.x minor. v0.3.1 should be one Contract Author + one implementation session. v0.3.2 should be one Contract Author + one implementation session. v0.4.0 should be one Contract Author session opening the batch, then one or two implementation sessions for the precision filters + loud failure mode.
 
 ---
 
@@ -122,8 +151,10 @@ Both milestones are small in scope compared to a v0.2.x minor. v0.3.1 should be 
 
 ## Pick up here
 
-The Contract Author writes the ADR-052 + ADR-049 amendments for v0.3.1 first (smallest, most mechanical). The implementation agent picks up the three blocker fixes against the locked contracts. v0.3.1 ships when all three smoke-test assertions are live and CI publishes a working 0.3.1 tarball.
+**v0.3.1 first.** Contract Author writes the ADR-049 amendment (#235) — single, mechanical. Implementation agent picks up #232 (daemon binds REST) against the locked contract. v0.3.1 ships when `neatd start` answers the binding contract for every registered project and the new ADR-049 assertions are live in `contracts.test.ts`. Tag and publish 0.3.1.
 
-Then the Contract Author writes the ADR-032 amendment for v0.4.0 — the five precision filters + the loud-failure-mode rule + the regression-fixture corpus seeded from the experiment evidence. Implementation against the locked contract follows. v0.4.0 ships when the medusa re-run drops divergence count by ≥ 95% and `errors.ndjson` surfaces the previously-silent failures.
+**v0.3.2 next.** Contract Author writes the ADR-052 amendment (#234) — the smoke-test gate that verifies what v0.3.1 made true plus what v0.3.2 will make true. Implementation agent picks up #231 (web shell `.next` build) and #233 (chokidar polling fallback). v0.3.2 ships when the documented `npm install -g neat.is && neatd start && open http://localhost:6328` happy path works on a clean macOS machine. Tag and publish 0.3.2.
+
+**v0.4.0 next.** Contract Author writes #236 (ADR-032 amendment — the five precision filters + the loud-failure-mode rule + the regression-fixture corpus seeded from the experiment evidence). Implementation agent picks up #237 + #238 + #239 (+ carries #140 forward). v0.4.0 ships when the medusa re-run drops divergence count by ≥ 95% and `errors.ndjson` surfaces the previously-silent failures.
 
 ADR-027 re-runs after v0.4.0 closes. That re-run, not v0.4.0 itself, is the gate that decides what comes next.

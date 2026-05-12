@@ -14,14 +14,17 @@ Source of truth for sprint status. Update this file at the end of every session.
 
 **Last session ended:** 2026-05-12. v0.3.0 published to npm (engineering complete + web shell GA). The first ADR-027 MVP-success-PR experiment ran against medusajs/medusa at commit `370676c2a737fb3b558a745ad452a2c9d4ae6de5` and returned `no-PR-candidate`. 21 divergences surfaced, all false positives (precision 0.0), and the OBSERVED layer was empty so ADR-027's "OBSERVED-layer-load-bearing" bar was unsatisfiable by construction.
 
-The experiment's six NEAT-side findings are the next two milestones. Audit trail in `~/neat-experiment/bugs/` (run-local — the markdown corpus). Scope doc: `docs/plans/2026-05-12-post-mvp-experiment-scope.md`.
+The experiment's six NEAT-side findings split across three milestones, each answering one load-bearing question. Audit trail in `~/neat-experiment/bugs/` (run-local). Scope doc: `docs/plans/2026-05-12-post-mvp-experiment-scope.md`.
 
-- **v0.3.1 — Publish hygiene.** Three blockers (web shell `.next` missing, `neatd start` doesn't bind REST/OTLP, `neat watch` EMFILE on macOS) plus two contract amendments (ADR-052 smoke-test gate, ADR-049 daemon binding). Issues #231-#235. Contract Author opens with #234 + #235; implementation against the locked contract follows. Patch release.
-- **v0.4.0 — Extraction precision.** Opens with #236 (ADR-032 amendment — five precision filters + loud failure mode). Implementation in #237 (NEAT-BUG-4 ghost edges), #238 (NEAT-BUG-5 AWS SDK kind), #239 (NEAT-BUG-6 silent partial extraction). Plus #140 carried in. Minor release. Closes when medusa re-run drops divergence count ≥ 95% and ADR-027 re-runs against medusa with OTel attached.
+- **v0.3.1 — Daemon binds REST.** Does `neatd start` actually run NEAT? Issue #232 (REST/OTLP binding) + #235 (ADR-049 binding-as-contract-surface amendment). Patch release.
+- **v0.3.2 — Tarball ships working artifacts.** Does the npm tarball serve a working stack? Issues #231 (web shell `.next` missing) + #233 (chokidar EMFILE on macOS) + #234 (ADR-052 smoke-test gate amendment). Patch release. Sequenced after v0.3.1 because the smoke-test gate verifies post-v0.3.1 daemon behavior among other things.
+- **v0.4.0 — Extraction precision.** Does extraction produce trustworthy edges? Opens with #236 (ADR-032 amendment — five precision filters + loud failure mode). Implementation in #237 (NEAT-BUG-4 ghost edges), #238 (NEAT-BUG-5 AWS SDK kind), #239 (NEAT-BUG-6 silent partial extraction). Plus #140 carried in. Minor release. Closes when the medusa re-run drops divergence count ≥ 95% and ADR-027 re-runs against medusa with OTel attached.
 
 ### Active work — start here
 
-**v0.3.1 first move:** Contract Author writes #234 (ADR-052 tarball smoke-test additions) and #235 (ADR-049 binding-as-contract-surface). These can ship as one PR or a stacked pair. Implementation of #231 / #232 / #233 follows against the locked contract.
+**v0.3.1 first move:** Contract Author writes #235 (ADR-049 binding-as-contract-surface). Implementation of #232 follows against the locked contract. Tag and publish 0.3.1.
+
+**v0.3.2 first move:** Contract Author writes #234 (ADR-052 smoke-test gate). Implementation of #231 + #233 follows. Tag and publish 0.3.2.
 
 **v0.4.0 first move:** Contract Author writes #236 (ADR-032 amendment) including the regression-fixture corpus seeded from the experiment's evidence rows (0014, 0016, 0006, 0008, 0007 at minimum). Implementation of #237 / #238 / #239 + #140 follows.
 
