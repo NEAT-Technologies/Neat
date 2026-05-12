@@ -3152,7 +3152,16 @@ describe('Daemon contract (ADR-049)', () => {
     const addedPaths = new Map<string, string>()
     const cleanups: Array<() => Promise<void>> = []
     const prevHome = process.env.NEAT_HOME
+    const prevPort = process.env.PORT
+    const prevOtelPort = process.env.OTEL_PORT
+    const prevHost = process.env.HOST
     process.env.NEAT_HOME = home
+    // ADR-063 — daemon binds REST :8080 and OTLP :4318 by default. Force
+    // ephemeral ports under test so the suite is robust against ports being
+    // occupied on dev boxes and against multiple workers fighting for 8080.
+    process.env.PORT = '0'
+    process.env.OTEL_PORT = '0'
+    process.env.HOST = '127.0.0.1'
 
     const { addProject, setStatus } = await import('../../src/registry.js')
     for (const p of opts.projects ?? []) {
@@ -3180,6 +3189,12 @@ describe('Daemon contract (ADR-049)', () => {
       cleanup: async () => {
         if (prevHome === undefined) delete process.env.NEAT_HOME
         else process.env.NEAT_HOME = prevHome
+        if (prevPort === undefined) delete process.env.PORT
+        else process.env.PORT = prevPort
+        if (prevOtelPort === undefined) delete process.env.OTEL_PORT
+        else process.env.OTEL_PORT = prevOtelPort
+        if (prevHost === undefined) delete process.env.HOST
+        else process.env.HOST = prevHost
         for (const c of cleanups) await c().catch(() => {})
         await fs2.rm(home, { recursive: true, force: true })
       },
@@ -3372,18 +3387,97 @@ describe('Daemon contract (ADR-049)', () => {
     }
   })
 
-  // ADR-063 — binding observability. The three assertions below ship as
-  // `it.todo` in the contract amendment PR (#235) and flip live in the
-  // implementation PR (#232). v0.3.1 closes when all three are live.
-  it.todo(
-    'ADR-063 — REST :8080 bound within 30s of startDaemon resolving (every registered project answers GET /graph)',
-  )
-  it.todo(
-    'ADR-063 — OTLP HTTP receiver :4318 bound within 30s of startDaemon resolving',
-  )
-  it.todo(
-    'ADR-063 — every registered project answers GET /projects/:project/graph with 200',
-  )
+  // ADR-063 — binding observability. The daemon binds REST :8080 and the
+  // OTLP HTTP receiver :4318 after slot bootstrap; the contract surface is
+  // "an outside caller can reach the daemon," not "the supervisor is up."
+  // Tests run on ephemeral ports — see setupDaemonSandbox.
+  it('ADR-063 — REST listener bound within 30s; default project answers GET /graph 200', async () => {
+    const { home, cleanup } = await setupDaemonSandbox({
+      projects: [{ name: 'default' }],
+    })
+    const prevWarn = console.warn
+    const prevLog = console.log
+    console.warn = () => {}
+    console.log = () => {}
+    try {
+      const t0 = Date.now()
+      const { startDaemon } = await import('../../src/daemon.js')
+      const handle = await startDaemon()
+      try {
+        expect(handle.restAddress).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+        const res = await fetch(`${handle.restAddress}/graph`)
+        expect(res.status).toBe(200)
+        const elapsedMs = Date.now() - t0
+        expect(elapsedMs).toBeLessThan(30_000)
+      } finally {
+        await handle.stop()
+      }
+      void home
+    } finally {
+      console.warn = prevWarn
+      console.log = prevLog
+      await cleanup()
+    }
+  })
+
+  it('ADR-063 — OTLP HTTP receiver bound within 30s of startDaemon resolving', async () => {
+    const { home, cleanup } = await setupDaemonSandbox({
+      projects: [{ name: 'default' }],
+    })
+    const prevWarn = console.warn
+    const prevLog = console.log
+    console.warn = () => {}
+    console.log = () => {}
+    try {
+      const t0 = Date.now()
+      const { startDaemon } = await import('../../src/daemon.js')
+      const handle = await startDaemon()
+      try {
+        expect(handle.otlpAddress).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+        // /health is the cheap liveness probe wired in buildOtelReceiver.
+        // The contract is that the socket is bound, not that /v1/traces
+        // accepts an empty GET.
+        const res = await fetch(`${handle.otlpAddress}/health`)
+        expect(res.status).toBe(200)
+        const elapsedMs = Date.now() - t0
+        expect(elapsedMs).toBeLessThan(30_000)
+      } finally {
+        await handle.stop()
+      }
+      void home
+    } finally {
+      console.warn = prevWarn
+      console.log = prevLog
+      await cleanup()
+    }
+  })
+
+  it('ADR-063 — every registered project answers GET /projects/:project/graph with 200', async () => {
+    const { home, cleanup } = await setupDaemonSandbox({
+      projects: [{ name: 'default' }, { name: 'second' }, { name: 'third' }],
+    })
+    const prevWarn = console.warn
+    const prevLog = console.log
+    console.warn = () => {}
+    console.log = () => {}
+    try {
+      const { startDaemon } = await import('../../src/daemon.js')
+      const handle = await startDaemon()
+      try {
+        for (const name of ['default', 'second', 'third']) {
+          const res = await fetch(`${handle.restAddress}/projects/${name}/graph`)
+          expect(res.status, `project ${name} should answer 200`).toBe(200)
+        }
+      } finally {
+        await handle.stop()
+      }
+      void home
+    } finally {
+      console.warn = prevWarn
+      console.log = prevLog
+      await cleanup()
+    }
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -51,6 +51,10 @@ async function cmdStart(): Promise<void> {
   const handle = await startDaemon()
   console.log(`neatd: started, PID ${process.pid}, ${handle.slots.size} project(s)`)
   console.log(`neatd: registry at ${registryPath()}`)
+  // ADR-063 — surface the bound addresses so the operator can sanity-check
+  // the documented happy path without grepping startup logs.
+  if (handle.restAddress) console.log(`neatd: REST  → ${handle.restAddress}`)
+  if (handle.otlpAddress) console.log(`neatd: OTLP  → ${handle.otlpAddress}`)
 
   // ADR-059 — bring up the web UI alongside the daemon. Failure here aborts
   // start with the clear-error pattern from ADR-049 instead of silently

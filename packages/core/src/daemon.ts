@@ -28,10 +28,14 @@
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import type { FastifyInstance } from 'fastify'
 import { DEFAULT_PROJECT, getGraph, resetGraph, type NeatGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
 import { loadGraphFromDisk, startPersistLoop } from './persist.js'
-import { pathsForProject } from './projects.js'
+import { Projects, pathsForProject, type ProjectPaths } from './projects.js'
+import { buildApi } from './api.js'
+import { buildOtelReceiver } from './otel.js'
+import { handleSpan, makeErrorSpanWriter } from './ingest.js'
 import {
   listProjects,
   registryPath,
@@ -45,12 +49,23 @@ export interface DaemonOptions {
   // Defaults to `~/.neat/`. Honors NEAT_HOME the same way registry.ts does.
   // Tests override via NEAT_HOME and don't pass this directly.
   neatHome?: string
+  // ADR-063 — bind targets. Defaults to PORT (8080) / OTEL_PORT (4318) env
+  // vars, matching server.ts. Tests pass 0 to get ephemeral ports.
+  restPort?: number
+  otlpPort?: number
+  // ADR-063 — bind host. Defaults to HOST env (0.0.0.0).
+  host?: string
+  // ADR-063 — opt out of binding entirely (e.g. integration tests that
+  // exercise daemon slots without needing the listeners). Production
+  // `neatd start` never sets this.
+  bindListeners?: boolean
 }
 
 export interface ProjectSlot {
   entry: RegistryEntry
   graph: NeatGraph
   outPath: string
+  paths: ProjectPaths
   stopPersist: () => void
   status: 'active' | 'broken'
   errorReason?: string
@@ -68,6 +83,11 @@ export interface DaemonHandle {
   stop: () => Promise<void>
   // Path to the PID file the daemon owns. Useful for test assertions.
   pidPath: string
+  // ADR-063 — addresses where consumers reach the daemon. Empty string when
+  // bindListeners is false. REST is the Fastify app's listening address;
+  // OTLP is the receiver's.
+  restAddress: string
+  otlpAddress: string
 }
 
 function neatHomeFor(opts: DaemonOptions): string {
@@ -103,6 +123,8 @@ export function routeSpanToProject(
 }
 
 async function bootstrapProject(entry: RegistryEntry): Promise<ProjectSlot> {
+  const paths = pathsForProject(entry.name, path.join(entry.path, 'neat-out'))
+
   // Path missing on disk → mark broken and surface the reason. Daemon
   // continues with the rest of the registry.
   try {
@@ -118,6 +140,7 @@ async function bootstrapProject(entry: RegistryEntry): Promise<ProjectSlot> {
       // output; nothing routes to it because it's not 'active'.
       graph: getGraph(`__broken__:${entry.name}`),
       outPath: '',
+      paths,
       stopPersist: () => {},
       status: 'broken',
       errorReason: (err as Error).message,
@@ -129,10 +152,7 @@ async function bootstrapProject(entry: RegistryEntry): Promise<ProjectSlot> {
   // bootstrap (ADR-030 — mutation authority).
   resetGraph(entry.name)
   const graph = getGraph(entry.name)
-  const outPath = pathsForProject(
-    entry.name,
-    path.join(entry.path, 'neat-out'),
-  ).snapshotPath
+  const outPath = paths.snapshotPath
 
   await loadGraphFromDisk(graph, outPath)
   await extractFromDirectory(graph, entry.path)
@@ -143,9 +163,37 @@ async function bootstrapProject(entry: RegistryEntry): Promise<ProjectSlot> {
     entry,
     graph,
     outPath,
+    paths,
     stopPersist,
     status: 'active',
   }
+}
+
+function resolveRestPort(opts: DaemonOptions): number {
+  if (typeof opts.restPort === 'number') return opts.restPort
+  const env = process.env.PORT
+  if (env && env.length > 0) {
+    const n = Number.parseInt(env, 10)
+    if (Number.isFinite(n)) return n
+  }
+  return 8080
+}
+
+function resolveOtlpPort(opts: DaemonOptions): number {
+  if (typeof opts.otlpPort === 'number') return opts.otlpPort
+  const env = process.env.OTEL_PORT
+  if (env && env.length > 0) {
+    const n = Number.parseInt(env, 10)
+    if (Number.isFinite(n)) return n
+  }
+  return 4318
+}
+
+function resolveHost(opts: DaemonOptions): string {
+  if (opts.host && opts.host.length > 0) return opts.host
+  const env = process.env.HOST
+  if (env && env.length > 0) return env
+  return '0.0.0.0'
 }
 
 export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandle> {
@@ -165,6 +213,18 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   await writeAtomically(pidPath, `${process.pid}\n`)
 
   const slots = new Map<string, ProjectSlot>()
+  // Projects registry mirrors slots for the REST listener (ADR-063). buildApi
+  // reads from this; we keep it in sync as slots come and go.
+  const registry = new Projects()
+
+  function upsertRegistryFromSlot(slot: ProjectSlot): void {
+    if (slot.status !== 'active') return
+    registry.set(slot.entry.name, {
+      scanPath: slot.entry.path,
+      paths: slot.paths,
+      graph: slot.graph,
+    })
+  }
 
   async function loadAll(): Promise<void> {
     const projects = await listProjects()
@@ -175,6 +235,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       try {
         const slot = await bootstrapProject(entry)
         slots.set(entry.name, slot)
+        upsertRegistryFromSlot(slot)
         if (slot.status === 'broken') {
           console.warn(`neatd: project "${entry.name}" broken — ${slot.errorReason}`)
         } else {
@@ -202,6 +263,91 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
 
   await loadAll()
 
+  // ADR-063 — bind the REST host and the OTLP HTTP receiver. One listener
+  // each, multi-tenant by project name in the URL (REST) and by service.name
+  // dispatch (OTLP). Failure on either listen aborts startDaemon with a
+  // surfacing error rather than letting the supervisor sit half-up.
+  const bind = opts.bindListeners !== false
+  let restApp: FastifyInstance | null = null
+  let otlpApp:
+    | (FastifyInstance & { flushPending: () => Promise<void> })
+    | null = null
+  let restAddress = ''
+  let otlpAddress = ''
+
+  if (bind) {
+    const host = resolveHost(opts)
+    const restPort = resolveRestPort(opts)
+    const otlpPort = resolveOtlpPort(opts)
+
+    try {
+      restApp = await buildApi({ projects: registry })
+      restAddress = await restApp.listen({ port: restPort, host })
+      console.log(`neatd: REST listening on ${restAddress}`)
+    } catch (err) {
+      // Roll back anything we started so far before surfacing the error.
+      for (const slot of slots.values()) {
+        try {
+          slot.stopPersist()
+        } catch {
+          // best-effort
+        }
+      }
+      if (restApp) await restApp.close().catch(() => {})
+      await fs.unlink(pidPath).catch(() => {})
+      throw new Error(
+        `neatd: failed to bind REST on port ${restPort} — ${(err as Error).message}`,
+      )
+    }
+
+    try {
+      otlpApp = await buildOtelReceiver({
+        onSpan: async (span) => {
+          // ADR-049 OTel routing — dispatch by service.name across active
+          // registry entries. Unknown services route to DEFAULT_PROJECT so
+          // the FrontierNode auto-creation flow keeps working (ADR-033).
+          const liveEntries = await listProjects().catch(() => [])
+          const target = routeSpanToProject(span.service, liveEntries)
+          const slot = slots.get(target) ?? slots.get(DEFAULT_PROJECT)
+          if (!slot || slot.status !== 'active') return
+          await handleSpan(
+            {
+              graph: slot.graph,
+              errorsPath: slot.paths.errorsPath,
+              project: slot.entry.name,
+              // Receiver already wrote the error event synchronously below.
+              writeErrorEventInline: false,
+            },
+            span,
+          )
+        },
+        onErrorSpanSync: async (span) => {
+          const liveEntries = await listProjects().catch(() => [])
+          const target = routeSpanToProject(span.service, liveEntries)
+          const slot = slots.get(target) ?? slots.get(DEFAULT_PROJECT)
+          if (!slot || slot.status !== 'active') return
+          await makeErrorSpanWriter(slot.paths.errorsPath)(span)
+        },
+      })
+      otlpAddress = await otlpApp.listen({ port: otlpPort, host })
+      console.log(`neatd: OTLP listening on ${otlpAddress}/v1/traces`)
+    } catch (err) {
+      for (const slot of slots.values()) {
+        try {
+          slot.stopPersist()
+        } catch {
+          // best-effort
+        }
+      }
+      if (restApp) await restApp.close().catch(() => {})
+      if (otlpApp) await otlpApp.close().catch(() => {})
+      await fs.unlink(pidPath).catch(() => {})
+      throw new Error(
+        `neatd: failed to bind OTLP on port ${otlpPort} — ${(err as Error).message}`,
+      )
+    }
+  }
+
   let reloading: Promise<void> | null = null
   const reload = async (): Promise<void> => {
     if (reloading) return reloading
@@ -228,6 +374,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     if (stopped) return
     stopped = true
     process.off('SIGHUP', sighupHandler)
+    if (otlpApp) await otlpApp.close().catch(() => {})
+    if (restApp) await restApp.close().catch(() => {})
     for (const slot of slots.values()) {
       try {
         slot.stopPersist()
@@ -238,5 +386,5 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     await fs.unlink(pidPath).catch(() => {})
   }
 
-  return { slots, reload, stop, pidPath }
+  return { slots, reload, stop, pidPath, restAddress, otlpAddress }
 }
