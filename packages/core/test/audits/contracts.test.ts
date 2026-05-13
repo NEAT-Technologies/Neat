@@ -784,21 +784,92 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
   // live in the corresponding Phase 3B implementation PR.
   // ────────────────────────────────────────────────────────────────────────
 
-  it.todo(
-    'ADR-065 #1 — test-scope exclusion: __tests__/test-scope-postgres.spec.ts produces no EXTRACTED edges (#237)',
-  )
-  it.todo(
-    'ADR-065 #2 — comment-body exclusion: comment-body-jsdoc.ts produces no edge from JSDoc @example URL (#237)',
-  )
-  it.todo(
-    'ADR-065 #3 — JSX external-link exclusion: jsx-external-link.tsx produces no CALLS edge (#237)',
-  )
-  it.todo(
-    'ADR-065 #4 — .env.template exclusion: env-template/.env.template registers no ConfigNode (#237)',
-  )
-  it.todo(
-    'ADR-065 #5 — no URL-substring service matching: hostname must match an alias exactly (#237)',
-  )
+  it('ADR-065 #1 — test-scope exclusion: isTestPath matches the documented patterns', async () => {
+    const { isTestPath } = await import('../../src/extract/shared.js')
+    expect(isTestPath('packages/foo/__tests__/bar.spec.ts')).toBe(true)
+    expect(isTestPath('packages/foo/__fixtures__/bar.ts')).toBe(true)
+    expect(isTestPath('packages/foo/integration-tests/bar.ts')).toBe(true)
+    expect(isTestPath('packages/foo/bar.spec.ts')).toBe(true)
+    expect(isTestPath('packages/foo/bar.test.ts')).toBe(true)
+    expect(isTestPath('packages/foo/bar.test.tsx')).toBe(true)
+    expect(isTestPath('packages/foo/bar.test.py')).toBe(true)
+    expect(isTestPath('packages/foo/bar.ts')).toBe(false)
+    expect(isTestPath('packages/foo/specifications.ts')).toBe(false)
+    // The seed fixture from experiment row 0016 is correctly identified.
+    const fixture = join(
+      __dirname,
+      '../fixtures/precision/__tests__/test-scope-postgres.spec.ts',
+    )
+    expect(isTestPath(fixture)).toBe(true)
+  })
+
+  it('ADR-065 #2 — comment-body exclusion: maskCommentsInSource strips URLs in comments (row 0014)', async () => {
+    const { maskCommentsInSource } = await import('../../src/extract/shared.js')
+    const fixture = readFileSync(
+      join(__dirname, '../fixtures/precision/comment-body-jsdoc.ts'),
+      'utf8',
+    )
+    const masked = maskCommentsInSource(fixture)
+    // The JSDoc @example URL the v0.3.0 extractor pulled an edge from is gone
+    // from the masked content. Strings in code still survive.
+    expect(masked).not.toContain('http://localhost:9000')
+    expect(masked).not.toContain('@example')
+    // Identifier from the interface declaration is preserved.
+    expect(masked).toContain('backendUrl')
+  })
+
+  it('ADR-065 #3 — JSX external-link exclusion: <Link to="..."> URL produces no CALLS edge (row 0006)', async () => {
+    const { callsFromSource } = await import('../../src/extract/calls/http.js')
+    const ParserMod = (await import('tree-sitter')).default as unknown as new () => {
+      setLanguage(lang: unknown): void
+      parse(src: string): { rootNode: unknown }
+    }
+    const JavaScript = (await import('tree-sitter-javascript')).default
+    const parser = new ParserMod() as unknown as import('tree-sitter')
+    parser.setLanguage(JavaScript)
+    const src = readFileSync(
+      join(__dirname, '../fixtures/precision/jsx-external-link.tsx'),
+      'utf8',
+    )
+    // Configure knownHosts so without the JSX filter, the substring matcher
+    // would have produced a candidate match against `medusajs.com`.
+    const targets = callsFromSource(src, parser, new Set(['medusajs.com']))
+    expect([...targets]).toEqual([])
+  })
+
+  it('ADR-065 #4 — .env.template exclusion: isEnvTemplateFile + isConfigFile both filter (rows 0008/0015)', async () => {
+    const { isEnvTemplateFile, isConfigFile } = await import('../../src/extract/shared.js')
+    // Direct predicate.
+    expect(isEnvTemplateFile('.env.template')).toBe(true)
+    expect(isEnvTemplateFile('.env.example')).toBe(true)
+    expect(isEnvTemplateFile('.env.sample')).toBe(true)
+    expect(isEnvTemplateFile('.env.production.template')).toBe(true)
+    expect(isEnvTemplateFile('.env.production.example')).toBe(true)
+    // Real env files keep matching.
+    expect(isEnvTemplateFile('.env')).toBe(false)
+    expect(isEnvTemplateFile('.env.local')).toBe(false)
+    expect(isEnvTemplateFile('.env.production')).toBe(false)
+    // isConfigFile delegates — templates are not config.
+    expect(isConfigFile('.env.template').match).toBe(false)
+    expect(isConfigFile('.env.production.template').match).toBe(false)
+    expect(isConfigFile('.env').match).toBe(true)
+    expect(isConfigFile('.env.local').match).toBe(true)
+  })
+
+  it('ADR-065 #5 — no URL-substring service matching: urlMatchesHost requires exact hostname (rows 0001-0003/0012/0013)', async () => {
+    const { urlMatchesHost } = await import('../../src/extract/shared.js')
+    // The v0.3.0 substring bug: medusa.cloud matched @medusajs/medusa.
+    // Post-fix: only exact hostname.
+    expect(urlMatchesHost('https://medusa.cloud/foo', 'medusajs/medusa')).toBe(false)
+    expect(urlMatchesHost('https://medusajs.com/changelog/', 'medusajs/medusa')).toBe(false)
+    // Real matches still work.
+    expect(urlMatchesHost('http://api.example.com:8080/x', 'api.example.com')).toBe(true)
+    expect(urlMatchesHost('http://api.example.com:8080/x', 'api.example.com:8080')).toBe(true)
+    // Port mismatch fails when port is specified in the wanted host.
+    expect(urlMatchesHost('http://api.example.com:9999/x', 'api.example.com:8080')).toBe(false)
+    // Non-URLs and malformed inputs fail closed.
+    expect(urlMatchesHost('not a url', 'api.example.com')).toBe(false)
+  })
   it.todo(
     'ADR-065 — errors.ndjson lines have shape { file, error, stack, ts, source: "extract" } (#239)',
   )

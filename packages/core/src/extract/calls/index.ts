@@ -1,7 +1,12 @@
 import type { GraphEdge, InfraNode } from '@neat.is/types'
 import { EdgeType, NodeType, Provenance } from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
-import { makeEdgeId, type DiscoveredService } from '../shared.js'
+import {
+  isTestPath,
+  makeEdgeId,
+  maskCommentsInSource,
+  type DiscoveredService,
+} from '../shared.js'
 import { addHttpCallEdges } from './http.js'
 import { loadSourceFiles, type ExternalEndpoint } from './shared.js'
 import { kafkaEndpointsFromFile } from './kafka.js'
@@ -36,10 +41,21 @@ async function addExternalEndpointEdges(
     const files = await loadSourceFiles(service.dir)
     const endpoints: ExternalEndpoint[] = []
     for (const file of files) {
-      endpoints.push(...kafkaEndpointsFromFile(file, service.dir))
-      endpoints.push(...redisEndpointsFromFile(file, service.dir))
-      endpoints.push(...awsEndpointsFromFile(file, service.dir))
-      endpoints.push(...grpcEndpointsFromFile(file, service.dir))
+      // ADR-065 #1 — test-scope exclusion. Tests stay registered as
+      // service-internal (via the file walk earlier); only outbound
+      // endpoint inference from them is filtered.
+      if (isTestPath(file.path)) continue
+      // ADR-065 #2 — comment-body exclusion. The regex-based extractors
+      // (redis / kafka / aws / grpc) scan raw file.content; URLs inside
+      // JSDoc / line / block comments leaked through to the graph in the
+      // v0.3.0 medusa run. Mask comments while preserving line/column for
+      // evidence line-mapping.
+      const masked = maskCommentsInSource(file.content)
+      const maskedFile = { path: file.path, content: masked }
+      endpoints.push(...kafkaEndpointsFromFile(maskedFile, service.dir))
+      endpoints.push(...redisEndpointsFromFile(maskedFile, service.dir))
+      endpoints.push(...awsEndpointsFromFile(maskedFile, service.dir))
+      endpoints.push(...grpcEndpointsFromFile(maskedFile, service.dir))
     }
     if (endpoints.length === 0) continue
 
