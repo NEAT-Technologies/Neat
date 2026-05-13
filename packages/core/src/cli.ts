@@ -5,6 +5,10 @@ import { promises as fs } from 'node:fs'
 import type { GraphEdge, GraphNode, ServiceNode } from '@neat.is/types'
 import { DEFAULT_PROJECT, getGraph, resetGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
+import {
+  formatExtractionBanner,
+  isStrictExtractionEnabled,
+} from './extract/errors.js'
 import { discoverServices } from './extract/services.js'
 import type { DiscoveredService } from './extract/shared.js'
 import { saveGraphToDisk } from './persist.js'
@@ -391,7 +395,15 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
   const graphKey = opts.projectExplicit ? opts.project : DEFAULT_PROJECT
   resetGraph(graphKey)
   const graph = getGraph(graphKey)
-  const result = await extractFromDirectory(graph, opts.scanPath)
+  // ADR-065 — per-file extraction failures land alongside the snapshot in
+  // <projectDir>/neat-out/errors.ndjson. Same file as OTel error events
+  // (ADR-033) with a `source: 'extract'` discriminator.
+  const projectPaths = pathsForProject(
+    graphKey,
+    path.join(opts.scanPath, 'neat-out'),
+  )
+  const errorsPath = path.join(path.dirname(opts.outPath), path.basename(projectPaths.errorsPath))
+  const result = await extractFromDirectory(graph, opts.scanPath, { errorsPath })
   await saveGraphToDisk(graph, opts.outPath)
   written.push(opts.outPath)
 
@@ -445,6 +457,13 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
   console.log(`added: ${result.nodesAdded} nodes, ${result.edgesAdded} edges`)
   console.log(`total:  ${graph.order} nodes, ${graph.size} edges`)
   console.log(summarise(nodes, edges))
+  // ADR-065 — loud failure mode banner. Unconditional; 0 is a positive
+  // signal. When errors > 0, also surface the sidecar path so the operator
+  // can read per-file detail.
+  console.log(formatExtractionBanner(result.extractionErrors))
+  if (result.extractionErrors > 0) {
+    console.log(`errors:   ${errorsPath}`)
+  }
 
   const incompatibilities = findIncompatibilities(nodes)
   if (incompatibilities.length > 0) {
@@ -455,6 +474,13 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
         console.log(`  ${svc.name}: ${formatIncompat(inc)}`)
       }
     }
+  }
+
+  // ADR-065 — NEAT_STRICT_EXTRACTION=1 makes any per-file failure exit
+  // non-zero. Default is forgiving (banner only). Exit code 4 keeps
+  // misuse (2) and daemon-down (3) distinguishable per the CLI contract.
+  if (result.extractionErrors > 0 && isStrictExtractionEnabled()) {
+    return { exitCode: 4, writtenFiles: written }
   }
 
   return { exitCode: 0, writtenFiles: written }

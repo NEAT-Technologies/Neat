@@ -11,6 +11,7 @@ import {
   urlMatchesHost,
   type DiscoveredService,
 } from '../shared.js'
+import { recordExtractionError } from '../errors.js'
 import { loadSourceFiles, lineOf, snippet } from './shared.js'
 
 // JS uses `string_fragment` for the textual interior of a template/string;
@@ -135,9 +136,7 @@ export async function addHttpCallEdges(
       try {
         targets = callsFromSource(file.content, parser, knownHosts)
       } catch (err) {
-        console.warn(
-          `[neat] http call extraction skipped ${file.path}: ${(err as Error).message}`,
-        )
+        recordExtractionError('http call extraction', file.path, err)
         continue
       }
       for (const t of targets) {

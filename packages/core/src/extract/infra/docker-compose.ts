@@ -3,6 +3,7 @@ import type { GraphEdge } from '@neat.is/types'
 import { EdgeType, Provenance } from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
 import { exists, makeEdgeId, readYaml, type DiscoveredService } from '../shared.js'
+import { recordExtractionError } from '../errors.js'
 import { classifyImage, makeInfraNode } from './shared.js'
 
 interface ComposeService {
@@ -59,8 +60,10 @@ export async function addComposeInfra(
   try {
     compose = await readYaml<ComposeFile>(composePath)
   } catch (err) {
-    console.warn(
-      `[neat] infra docker-compose skipped ${path.relative(scanPath, composePath)}: ${(err as Error).message}`,
+    recordExtractionError(
+      'infra docker-compose',
+      path.relative(scanPath, composePath),
+      err,
     )
     return { nodesAdded, edgesAdded }
   }

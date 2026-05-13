@@ -919,15 +919,73 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
     }
   })
 
-  it.todo(
-    'ADR-065 — errors.ndjson lines have shape { file, error, stack, ts, source: "extract" } (#239)',
-  )
-  it.todo(
-    'ADR-065 — neat init banner contains "N files skipped due to parse errors" unconditionally (#239)',
-  )
-  it.todo(
-    'ADR-065 — NEAT_STRICT_EXTRACTION=1 makes neat init exit non-zero on any per-file extraction failure (#239)',
-  )
+  it('ADR-065 — errors.ndjson lines have shape { file, error, stack, ts, source: "extract" }', async () => {
+    const { recordExtractionError, drainExtractionErrors, writeExtractionErrors } =
+      await import('../../src/extract/errors.js')
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const tmp = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'adr-065-errors-'))
+    const errorsPath = path2.join(tmp, 'errors.ndjson')
+    const prevWarn = console.warn
+    console.warn = () => {}
+    try {
+      drainExtractionErrors() // clear any prior state
+      // recordExtractionError captures the shape; writeExtractionErrors
+      // serialises it as ndjson with `source: 'extract'`.
+      recordExtractionError('test-producer', '/repo/foo.ts', new Error('boom'))
+      const entries = drainExtractionErrors()
+      await writeExtractionErrors(entries, errorsPath)
+      const raw = await fs2.readFile(errorsPath, 'utf8')
+      const lines = raw.trim().split('\n')
+      expect(lines).toHaveLength(1)
+      const parsed = JSON.parse(lines[0]!) as Record<string, unknown>
+      expect(parsed.file).toBe('/repo/foo.ts')
+      expect(parsed.error).toBe('boom')
+      expect(typeof parsed.stack).toBe('string')
+      expect(typeof parsed.ts).toBe('string')
+      expect(parsed.source).toBe('extract')
+      expect(parsed.producer).toBe('test-producer')
+    } finally {
+      console.warn = prevWarn
+      await fs2.rm(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('ADR-065 — extraction banner reports a skipped-count phrase unconditionally', async () => {
+    const { formatExtractionBanner } = await import('../../src/extract/errors.js')
+    // Zero is observable as a positive signal — no special-casing.
+    expect(formatExtractionBanner(0)).toBe('[neat] 0 files skipped due to parse errors')
+    expect(formatExtractionBanner(1)).toBe('[neat] 1 file skipped due to parse errors')
+    expect(formatExtractionBanner(92)).toBe('[neat] 92 files skipped due to parse errors')
+    // The CLI summary in cli.ts always logs this — source-grep to make sure
+    // the line stays in place across refactors.
+    const cliSrc = readFileSync(join(CORE_SRC, 'cli.ts'), 'utf8')
+    expect(cliSrc).toMatch(/formatExtractionBanner\(\s*result\.extractionErrors\s*\)/)
+  })
+
+  it('ADR-065 — isStrictExtractionEnabled flips on NEAT_STRICT_EXTRACTION and the CLI exits non-zero on any failure', async () => {
+    const { isStrictExtractionEnabled } = await import('../../src/extract/errors.js')
+    const prev = process.env.NEAT_STRICT_EXTRACTION
+    try {
+      delete process.env.NEAT_STRICT_EXTRACTION
+      expect(isStrictExtractionEnabled()).toBe(false)
+      process.env.NEAT_STRICT_EXTRACTION = '0'
+      expect(isStrictExtractionEnabled()).toBe(false)
+      process.env.NEAT_STRICT_EXTRACTION = '1'
+      expect(isStrictExtractionEnabled()).toBe(true)
+      process.env.NEAT_STRICT_EXTRACTION = 'true'
+      expect(isStrictExtractionEnabled()).toBe(true)
+    } finally {
+      if (prev === undefined) delete process.env.NEAT_STRICT_EXTRACTION
+      else process.env.NEAT_STRICT_EXTRACTION = prev
+    }
+    // The CLI uses isStrictExtractionEnabled() to gate a non-zero exit when
+    // the extract pass reported any per-file failures.
+    const cliSrc = readFileSync(join(CORE_SRC, 'cli.ts'), 'utf8')
+    expect(cliSrc).toMatch(/isStrictExtractionEnabled\(\)/)
+    expect(cliSrc).toMatch(/result\.extractionErrors\s*>\s*0\s*&&\s*isStrictExtractionEnabled/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
