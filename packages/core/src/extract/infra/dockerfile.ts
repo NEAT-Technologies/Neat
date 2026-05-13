@@ -4,6 +4,7 @@ import type { GraphEdge } from '@neat.is/types'
 import { EdgeType, Provenance } from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
 import { exists, makeEdgeId, type DiscoveredService } from '../shared.js'
+import { recordExtractionError } from '../errors.js'
 import { makeInfraNode } from './shared.js'
 
 // Pull the first non-`scratch` `FROM` line out of a Dockerfile, ignoring
@@ -43,8 +44,10 @@ export async function addDockerfileRuntimes(
     try {
       content = await fs.readFile(dockerfilePath, 'utf8')
     } catch (err) {
-      console.warn(
-        `[neat] infra dockerfile skipped ${path.relative(scanPath, dockerfilePath)}: ${(err as Error).message}`,
+      recordExtractionError(
+        'infra dockerfile',
+        path.relative(scanPath, dockerfilePath),
+        err,
       )
       continue
     }

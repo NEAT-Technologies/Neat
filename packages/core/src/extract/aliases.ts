@@ -4,6 +4,7 @@ import { parseAllDocuments } from 'yaml'
 import type { ServiceNode } from '@neat.is/types'
 import { NodeType } from '@neat.is/types'
 import type { NeatGraph } from '../graph.js'
+import { recordExtractionError } from './errors.js'
 import {
   CONFIG_FILE_EXTENSIONS,
   IGNORED_DIRS,
@@ -99,8 +100,10 @@ async function collectComposeAliases(
   try {
     compose = await readYaml<ComposeFile>(composePath)
   } catch (err) {
-    console.warn(
-      `[neat] aliases compose skipped ${path.relative(scanPath, composePath)}: ${(err as Error).message}`,
+    recordExtractionError(
+      'aliases compose',
+      path.relative(scanPath, composePath),
+      err,
     )
     return
   }
@@ -158,9 +161,7 @@ async function collectDockerfileAliases(
     try {
       content = await fs.readFile(dockerfilePath, 'utf8')
     } catch (err) {
-      console.warn(
-        `[neat] aliases dockerfile skipped ${dockerfilePath}: ${(err as Error).message}`,
-      )
+      recordExtractionError('aliases dockerfile', dockerfilePath, err)
       continue
     }
     const aliases = parseDockerfileLabels(content)

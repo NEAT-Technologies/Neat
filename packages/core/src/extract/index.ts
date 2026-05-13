@@ -21,11 +21,22 @@ import { addDatabasesAndCompat } from './databases/index.js'
 import { addConfigNodes } from './configs.js'
 import { addCallEdges } from './calls/index.js'
 import { addInfra } from './infra/index.js'
+import {
+  drainExtractionErrors,
+  writeExtractionErrors,
+  type ExtractionError,
+} from './errors.js'
 
 export interface ExtractResult {
   nodesAdded: number
   edgesAdded: number
   frontiersPromoted: number
+  // ADR-065 — per-file extraction failures collected during the pass.
+  // `extractionErrors` is the count; `errorEntries` is the drained list,
+  // available for callers that want to surface per-file context. Both are
+  // present on every pass (zero is observable as a positive signal).
+  extractionErrors: number
+  errorEntries: ExtractionError[]
 }
 
 export interface ExtractOptions {
@@ -36,6 +47,12 @@ export interface ExtractOptions {
   // Project tag for the extraction-complete event (ADR-051). Defaults to
   // DEFAULT_PROJECT when omitted.
   project?: string
+  // ADR-065 — when set, drained extraction errors are appended to this
+  // path as ndjson with `source: 'extract'`. Daemons / `neat init` /
+  // `neat watch` wire this to `<projectDir>/neat-out/errors.ndjson`. When
+  // omitted, errors are still drained and returned in the result, just
+  // not persisted.
+  errorsPath?: string
 }
 
 export async function extractFromDirectory(
@@ -44,6 +61,11 @@ export async function extractFromDirectory(
   opts: ExtractOptions = {},
 ): Promise<ExtractResult> {
   await ensureCompatLoaded()
+  // Clear any stale entries from a prior pass (the producer-side sink is
+  // process-local). Per ADR-065, every pass collects its own errors; we drain
+  // again at the end to capture this pass's failures.
+  drainExtractionErrors()
+
   const services = await discoverServices(scanPath)
 
   const phase1Nodes = addServiceNodes(graph, services)
@@ -59,6 +81,20 @@ export async function extractFromDirectory(
   // upgrades that just landed).
   if (opts.onPolicyTrigger) await opts.onPolicyTrigger(graph)
 
+  // ADR-065 — drain the per-file extraction errors collected during the pass.
+  // If a sidecar path was supplied, append the entries; otherwise return them
+  // for the caller to surface.
+  const errorEntries = drainExtractionErrors()
+  if (opts.errorsPath && errorEntries.length > 0) {
+    try {
+      await writeExtractionErrors(errorEntries, opts.errorsPath)
+    } catch (err) {
+      console.warn(
+        `[neat] failed to write extraction errors to ${opts.errorsPath}: ${(err as Error).message}`,
+      )
+    }
+  }
+
   const result: ExtractResult = {
     nodesAdded:
       phase1Nodes +
@@ -69,6 +105,8 @@ export async function extractFromDirectory(
     edgesAdded:
       phase2.edgesAdded + phase3.edgesAdded + phase4.edgesAdded + phase5.edgesAdded,
     frontiersPromoted,
+    extractionErrors: errorEntries.length,
+    errorEntries,
   }
 
   // extraction-complete (ADR-051). fileCount is the number of services

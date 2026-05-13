@@ -14,6 +14,7 @@ import {
 } from './shared.js'
 import { discoverPythonService, pythonToPackage } from './python.js'
 import { computeServiceOwner, loadCodeowners } from './owners.js'
+import { recordExtractionError } from './errors.js'
 
 const DEFAULT_SCAN_DEPTH = 5
 
@@ -126,9 +127,7 @@ async function discoverNodeService(
   try {
     pkg = await readJson<PackageJson>(pkgPath)
   } catch (err) {
-    console.warn(
-      `[neat] services skipped ${path.relative(scanPath, pkgPath)}: ${(err as Error).message}`,
-    )
+    recordExtractionError('services', path.relative(scanPath, pkgPath), err)
     return null
   }
   if (!pkg.name) return null
@@ -182,8 +181,10 @@ export async function discoverServices(scanPath: string): Promise<DiscoveredServ
     try {
       rootPkg = await readJson<RootPackageJson>(rootPkgPath)
     } catch (err) {
-      console.warn(
-        `[neat] services workspaces skipped ${path.relative(scanPath, rootPkgPath)}: ${(err as Error).message}`,
+      recordExtractionError(
+        'services workspaces',
+        path.relative(scanPath, rootPkgPath),
+        err,
       )
     }
   }
