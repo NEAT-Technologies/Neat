@@ -856,10 +856,10 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
     expect(isConfigFile('.env.local').match).toBe(true)
   })
 
-  it('ADR-065 #5 — no URL-substring service matching: urlMatchesHost requires exact hostname (rows 0001-0003/0012/0013)', async () => {
+  it('ADR-065 #5 — no URL-substring service matching: urlMatchesHost requires a real URL with exact hostname (rows 0001-0003/0012/0013)', async () => {
     const { urlMatchesHost } = await import('../../src/extract/shared.js')
     // The v0.3.0 substring bug: medusa.cloud matched @medusajs/medusa.
-    // Post-fix: only exact hostname.
+    // Post-fix: only exact hostname against a real URL.
     expect(urlMatchesHost('https://medusa.cloud/foo', 'medusajs/medusa')).toBe(false)
     expect(urlMatchesHost('https://medusajs.com/changelog/', 'medusajs/medusa')).toBe(false)
     // Real matches still work.
@@ -867,7 +867,16 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
     expect(urlMatchesHost('http://api.example.com:8080/x', 'api.example.com:8080')).toBe(true)
     // Port mismatch fails when port is specified in the wanted host.
     expect(urlMatchesHost('http://api.example.com:9999/x', 'api.example.com:8080')).toBe(false)
-    // Non-URLs and malformed inputs fail closed.
+    // Scheme-relative URLs are accepted.
+    expect(urlMatchesHost('//api.example.com/x', 'api.example.com')).toBe(true)
+    // Bare-string matching is rejected — the v0.3.3 medusa pre-check produced
+    // 279 false positives because `urlMatchesHost('admin-bundler', 'admin-bundler')`
+    // used to fall through to `http://admin-bundler` and match every basename.
+    expect(urlMatchesHost('admin-bundler', 'admin-bundler')).toBe(false)
+    expect(urlMatchesHost('index', 'index')).toBe(false)
+    expect(urlMatchesHost('@medusajs/types', '@medusajs/types')).toBe(false)
+    // Empty / garbage inputs fail closed.
+    expect(urlMatchesHost('', 'api.example.com')).toBe(false)
     expect(urlMatchesHost('not a url', 'api.example.com')).toBe(false)
   })
 
@@ -889,7 +898,7 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
     }
   })
 
-  it('#238 — `new SomeClient()` without an SDK import defaults to kind `service`, not `grpc-service`', async () => {
+  it('#238 — `new SomeClient()` without an SDK import emits no edge (the v0.3.3 medusa pre-check caught QueryClient as a false positive)', async () => {
     const { grpcEndpointsFromFile } = await import('../../src/extract/calls/grpc.js')
     const source = `
       class SomeClient { constructor(_: unknown) {} }
@@ -897,12 +906,12 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
         return new SomeClient({ region: 'us-east-1' })
       }
     `
+    // No @aws-sdk import, no @grpc/grpc-js or *_grpc_pb import — the
+    // classifier returns null and the producer emits no edge. The earlier
+    // "default to `service` kind" behaviour produced false positives like
+    // `infra:service:Query` from TanStack's QueryClient.
     const eps = grpcEndpointsFromFile({ path: '/tmp/some.ts', content: source }, '/tmp')
-    expect(eps.length).toBeGreaterThan(0)
-    for (const ep of eps) {
-      expect(ep.kind).toBe('service')
-      expect(ep.infraId).toMatch(/^infra:service:/)
-    }
+    expect(eps).toEqual([])
   })
 
   it('#238 — legitimate gRPC stubs (via @grpc/grpc-js or *_grpc_pb import) stay classified as grpc-service', async () => {

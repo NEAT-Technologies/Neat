@@ -158,22 +158,31 @@ export function maskCommentsInSource(src: string): string {
 }
 
 // ADR-065 #5 — exact hostname match for cross-service URL inference. Returns
-// true if `urlString` parses as a URL whose hostname equals `host` exactly
-// (case-insensitive). No `.includes()` containment.
+// true if `urlString` looks like an actual URL — has an explicit `scheme://`
+// or starts with a scheme-relative `//` — and its hostname matches `host`
+// exactly (case-insensitive). No `.includes()` containment, and no bare-string
+// matching: a literal like `'admin-bundler'` would otherwise parse as
+// `http://admin-bundler` and match the basename of every service directory,
+// which is how the v0.3.3 medusa pre-check produced 279 false positives.
 //
 // Accepts a `host` that may include a port (`api.example.com:8080`); in that
 // case the URL's hostname AND port must both match.
+const URL_LIKE = /^(?:[a-z][a-z0-9+.-]*:)?\/\//i
+
 export function urlMatchesHost(urlString: string, host: string): boolean {
+  if (typeof urlString !== 'string' || urlString.length === 0) return false
+  // Require the literal to look like a URL — scheme + `://` or scheme-relative
+  // `//host`. Bare hostnames are rejected; they're the load-bearing source of
+  // false positives.
+  if (!URL_LIKE.test(urlString)) return false
   const [wantedHost, wantedPort] = host.split(':')
   let parsed: URL
   try {
-    parsed = new URL(urlString)
+    // For scheme-relative `//host/path`, prepend `http:` so URL accepts it.
+    const candidate = urlString.startsWith('//') ? `http:${urlString}` : urlString
+    parsed = new URL(candidate)
   } catch {
-    try {
-      parsed = new URL(`http://${urlString.replace(/^\/\//, '')}`)
-    } catch {
-      return false
-    }
+    return false
   }
   if (parsed.hostname.toLowerCase() !== (wantedHost ?? '').toLowerCase()) return false
   if (wantedPort && parsed.port !== wantedPort) return false
