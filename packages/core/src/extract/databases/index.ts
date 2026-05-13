@@ -227,13 +227,12 @@ export async function addDatabasesAndCompat(
         target: dbNode.id,
         type: EdgeType.CONNECTS_TO,
         provenance: Provenance.EXTRACTED,
-        ...(config.sourceFile
-          ? {
-              evidence: {
-                file: path.relative(scanPath, config.sourceFile).split(path.sep).join('/'),
-              },
-            }
-          : {}),
+        // ADR-032 / #140 — every EXTRACTED edge carries evidence.file.
+        // Ghost-edge cleanup keys retirement on this; the conditional
+        // sourceFile spread that used to live here was a v0.1.x leftover.
+        evidence: {
+          file: path.relative(scanPath, config.sourceFile).split(path.sep).join('/'),
+        },
       }
       if (!graph.hasEdge(edge.id)) {
         graph.addEdgeWithKey(edge.id, edge.source, edge.target, edge)

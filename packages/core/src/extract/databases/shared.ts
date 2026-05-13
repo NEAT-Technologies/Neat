@@ -7,11 +7,11 @@ export interface DbConfig {
   database: string
   engine: string
   engineVersion: string // "unknown" when not statically determinable
-  // Absolute path to the file the parser read this config from. Used to
-  // populate evidence.file on the resulting CONNECTS_TO edge. Optional so
-  // synthesized configs (e.g. prisma's env() fallback) can omit it; the
-  // CONNECTS_TO writer emits evidence only when present.
-  sourceFile?: string
+  // Absolute path to the file the parser read this config from. Required —
+  // ghost-edge cleanup keys CONNECTS_TO retirement on `evidence.file` per
+  // ADR-032 / #140. Parsers that synthesize a DbConfig from a partial
+  // source still set this to the file the partial came from.
+  sourceFile: string
 }
 
 // Map a connection-string scheme to the engine name our compat matrix uses.
@@ -39,7 +39,11 @@ export function schemeToEngine(scheme: string): string | null {
   }
 }
 
-export function parseConnectionString(url: string): DbConfig | null {
+// Returns the inner DbConfig fields without sourceFile — every caller spreads
+// the parser's own file path on top. Type makes that contract explicit.
+export type ParsedConnectionConfig = Omit<DbConfig, 'sourceFile'>
+
+export function parseConnectionString(url: string): ParsedConnectionConfig | null {
   const m = url.match(
     /^(?<scheme>[a-z][a-z+]*):\/\/(?:[^@/]+(?::[^@]*)?@)?(?<host>[^:/?]+)(?::(?<port>\d+))?(?:\/(?<db>[^?#]*))?/i,
   )

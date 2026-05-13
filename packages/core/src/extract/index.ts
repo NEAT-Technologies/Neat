@@ -26,6 +26,7 @@ import {
   writeExtractionErrors,
   type ExtractionError,
 } from './errors.js'
+import { retireExtractedEdgesByMissingFile } from './retire.js'
 
 export interface ExtractResult {
   nodesAdded: number
@@ -37,6 +38,10 @@ export interface ExtractResult {
   // present on every pass (zero is observable as a positive signal).
   extractionErrors: number
   errorEntries: ExtractionError[]
+  // #140 — count of EXTRACTED edges retired this pass because their
+  // evidence.file no longer exists on disk. Zero on a clean pass; non-zero
+  // means the snapshot was carrying ghosts from deleted source.
+  ghostsRetired: number
 }
 
 export interface ExtractOptions {
@@ -74,6 +79,17 @@ export async function extractFromDirectory(
   const phase3 = await addConfigNodes(graph, services, scanPath)
   const phase4 = await addCallEdges(graph, services)
   const phase5 = await addInfra(graph, scanPath, services)
+  // #140 — drop EXTRACTED edges whose evidence.file no longer exists on disk.
+  // Catches the deleted-file ghost case for the full-pass entry point
+  // (init / daemon bootstrap). The edited-file case is handled per-mtime by
+  // watch.ts's `retireEdgesByFile`. Service dirs are passed alongside scanPath
+  // because CALLS-family producers store service-dir-relative paths while
+  // configs / databases / infra store scanPath-relative.
+  const ghostsRetired = retireExtractedEdgesByMissingFile(
+    graph,
+    scanPath,
+    services.map((s) => s.dir),
+  )
   const frontiersPromoted = promoteFrontierNodes(graph)
 
   // Post-extract policy trigger (ADR-043). Fires after frontier promotion so
@@ -107,6 +123,7 @@ export async function extractFromDirectory(
     frontiersPromoted,
     extractionErrors: errorEntries.length,
     errorEntries,
+    ghostsRetired,
   }
 
   // extraction-complete (ADR-051). fileCount is the number of services

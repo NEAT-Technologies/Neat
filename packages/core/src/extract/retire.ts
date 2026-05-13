@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 import type { GraphEdge } from '@neat.is/types'
 import { Provenance } from '@neat.is/types'
 import type { NeatGraph } from '../graph.js'
@@ -16,6 +18,46 @@ export function retireEdgesByFile(graph: NeatGraph, file: string): number {
     if (edge.provenance !== Provenance.EXTRACTED) return
     if (!edge.evidence?.file) return
     if (edge.evidence.file === normalized) toDrop.push(id)
+  })
+  for (const id of toDrop) graph.dropEdge(id)
+  return toDrop.length
+}
+
+// #140 — full-pass cleanup. Walk every EXTRACTED edge in the graph; if its
+// `evidence.file` cannot be resolved on disk against the scan root or any
+// discovered service directory, drop it. extractFromDirectory calls this at
+// the end of every pass so a daemon bootstrap (or a re-init after the
+// operator deleted some source) gets a snapshot consistent with what's
+// actually on disk.
+//
+// Handles the deleted-file half of the ghost-edge bug. The edited-file half
+// (file still exists, producer no longer emits the edge) is handled by
+// watch.ts's per-file `retireEdgesByFile` on the mtime trigger.
+//
+// Path resolution is tolerant: producers in this tree are inconsistent about
+// whether `evidence.file` is scanPath-relative (configs, databases, infra)
+// or service-dir-relative (calls/*). We try every candidate base before
+// concluding the file is gone — the cost is one extra `existsSync` per
+// service dir per ghost candidate, which is cheap.
+export function retireExtractedEdgesByMissingFile(
+  graph: NeatGraph,
+  scanPath: string,
+  serviceDirs: readonly string[] = [],
+): number {
+  const toDrop: string[] = []
+  const bases = [scanPath, ...serviceDirs]
+  graph.forEachEdge((id, attrs) => {
+    const edge = attrs as GraphEdge
+    if (edge.provenance !== Provenance.EXTRACTED) return
+    const evidenceFile = edge.evidence?.file
+    if (!evidenceFile) return
+    if (path.isAbsolute(evidenceFile)) {
+      if (!existsSync(evidenceFile)) toDrop.push(id)
+      return
+    }
+    // Tolerant: the file is "present" if any base resolves it.
+    const found = bases.some((base) => existsSync(path.join(base, evidenceFile)))
+    if (!found) toDrop.push(id)
   })
   for (const id of toDrop) graph.dropEdge(id)
   return toDrop.length
