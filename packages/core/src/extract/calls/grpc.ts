@@ -59,12 +59,18 @@ function readImports(content: string): ImportContext {
 function classifyClient(
   symbol: string,
   ctx: ImportContext,
-): { kind: string } {
+): { kind: string } | null {
   const key = normaliseForMatch(symbol)
   const awsRaw = ctx.awsSdkSuffixes.get(key)
   if (awsRaw) return { kind: `aws-${awsRaw}` }
   if (ctx.hasGrpcImport) return { kind: 'grpc-service' }
-  return { kind: 'service' }
+  // ADR-065 #5-adjacent — a bare `new <Name>Client()` with no AWS or gRPC
+  // import context is ambiguous; could be an in-process client object
+  // (`new QueryClient()` from @tanstack/react-query, `new PrismaClient()`,
+  // a domain Client class, etc.). Refuse to emit an edge rather than guess
+  // a `service` kind that produces false positives. v0.3.3 medusa run had
+  // a QueryClient false positive before this guard.
+  return null
 }
 
 export function grpcEndpointsFromFile(
@@ -81,8 +87,10 @@ export function grpcEndpointsFromFile(
     const addr = m[2]?.trim()
     const name = isLikelyAddress(addr) ? addr! : symbol
     if (seen.has(name)) continue
+    const classified = classifyClient(symbol, ctx)
+    if (!classified) continue
     seen.add(name)
-    const { kind } = classifyClient(symbol, ctx)
+    const { kind } = classified
     const line = lineOf(file.content, m[0])
     out.push({
       infraId: infraId(kind, name),
