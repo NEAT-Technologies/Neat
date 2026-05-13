@@ -3833,6 +3833,92 @@ describe('Queued contracts (v0.2.1 leftovers — #141, #142, #145)', () => {
     expect(g.hasEdge(ghostId)).toBe(false)
     expect(g.hasEdge(survivorId)).toBe(true)
   })
+
+  it('retireExtractedEdgesByMissingFile drops EXTRACTED edges for files no longer on disk (#140)', async () => {
+    const { retireExtractedEdgesByMissingFile } = await import(
+      '../../src/extract/retire.js'
+    )
+    const { extractedEdgeId } = await import('@neat.is/types')
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const root = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'adr-032-ghost-'))
+    const survivorFile = 'apps/foo/.env'
+    const ghostFile = 'apps/foo/db.yaml'
+    await fs2.mkdir(path2.join(root, 'apps/foo'), { recursive: true })
+    await fs2.writeFile(path2.join(root, survivorFile), 'DATABASE_URL=postgres://db/x')
+    // Note: ghostFile is intentionally NOT created.
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:foo', {
+      id: 'service:foo',
+      type: NodeType.ServiceNode,
+      name: 'foo',
+      language: 'javascript',
+    })
+    g.addNode('database:db', {
+      id: 'database:db',
+      type: NodeType.DatabaseNode,
+      name: 'db',
+      engine: 'postgresql',
+      engineVersion: '15',
+      host: 'db',
+    })
+    g.addNode('config:apps/foo/.env', {
+      id: 'config:apps/foo/.env',
+      type: NodeType.ConfigNode,
+      name: '.env',
+      path: 'apps/foo/.env',
+      fileType: 'env',
+    })
+
+    const survivorId = extractedEdgeId(
+      'service:foo',
+      'database:db',
+      EdgeType.CONNECTS_TO,
+    )
+    g.addEdgeWithKey(survivorId, 'service:foo', 'database:db', {
+      id: survivorId,
+      source: 'service:foo',
+      target: 'database:db',
+      type: EdgeType.CONNECTS_TO,
+      provenance: Provenance.EXTRACTED,
+      evidence: { file: survivorFile },
+    })
+
+    const ghostId = extractedEdgeId(
+      'service:foo',
+      'config:apps/foo/.env',
+      EdgeType.CONFIGURED_BY,
+    )
+    g.addEdgeWithKey(ghostId, 'service:foo', 'config:apps/foo/.env', {
+      id: ghostId,
+      source: 'service:foo',
+      target: 'config:apps/foo/.env',
+      type: EdgeType.CONFIGURED_BY,
+      provenance: Provenance.EXTRACTED,
+      evidence: { file: ghostFile },
+    })
+
+    try {
+      const dropped = retireExtractedEdgesByMissingFile(g, root)
+      expect(dropped).toBe(1)
+      expect(g.hasEdge(ghostId)).toBe(false)
+      expect(g.hasEdge(survivorId)).toBe(true)
+    } finally {
+      await fs2.rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('extractFromDirectory exposes ghostsRetired in its result (#140)', async () => {
+    // Source-grep guard so a refactor doesn't quietly drop the field — the
+    // CLI / daemon banner needs to count ghosts cleaned.
+    const idx = readFileSync(join(CORE_SRC, 'extract/index.ts'), 'utf8')
+    expect(idx).toMatch(/ghostsRetired:\s*number/)
+    expect(idx).toMatch(/retireExtractedEdgesByMissingFile\(/)
+    expect(idx).toMatch(/ghostsRetired,/)
+  })
+
   it.todo('Source-level DB connection + import detection (issue #141)')
   it.todo('ServiceNode.framework populated from package.json (issue #142)')
   it.todo('Drop unused graphology-traversal/-shortest-path deps (issue #145)')
