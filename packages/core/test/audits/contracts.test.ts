@@ -870,6 +870,55 @@ describe('ServiceNode.owner extraction (ADR-054)', () => {
     // Non-URLs and malformed inputs fail closed.
     expect(urlMatchesHost('not a url', 'api.example.com')).toBe(false)
   })
+
+  it('#238 — `new S3Client()` with @aws-sdk/client-s3 import → kind aws-s3 (row 0007)', async () => {
+    const { grpcEndpointsFromFile } = await import('../../src/extract/calls/grpc.js')
+    const fixturePath = join(
+      __dirname,
+      '../fixtures/precision/aws-client-raw.ts',
+    )
+    const content = readFileSync(fixturePath, 'utf8')
+    const eps = grpcEndpointsFromFile({ path: fixturePath, content }, __dirname)
+    expect(eps.length).toBeGreaterThan(0)
+    // Every endpoint emitted from this file must be aws-s3, never the
+    // v0.3.0 `grpc-service` lie.
+    for (const ep of eps) {
+      expect(ep.kind).toBe('aws-s3')
+      expect(ep.infraId).toMatch(/^infra:aws-s3:/)
+      expect(ep.infraId).not.toMatch(/grpc-service/)
+    }
+  })
+
+  it('#238 — `new SomeClient()` without an SDK import defaults to kind `service`, not `grpc-service`', async () => {
+    const { grpcEndpointsFromFile } = await import('../../src/extract/calls/grpc.js')
+    const source = `
+      class SomeClient { constructor(_: unknown) {} }
+      export function build(): SomeClient {
+        return new SomeClient({ region: 'us-east-1' })
+      }
+    `
+    const eps = grpcEndpointsFromFile({ path: '/tmp/some.ts', content: source }, '/tmp')
+    expect(eps.length).toBeGreaterThan(0)
+    for (const ep of eps) {
+      expect(ep.kind).toBe('service')
+      expect(ep.infraId).toMatch(/^infra:service:/)
+    }
+  })
+
+  it('#238 — legitimate gRPC stubs (via @grpc/grpc-js or *_grpc_pb import) stay classified as grpc-service', async () => {
+    const { grpcEndpointsFromFile } = await import('../../src/extract/calls/grpc.js')
+    const source = `
+      const grpc = require('@grpc/grpc-js')
+      const { OrdersClient } = require('./generated/orders_grpc_pb')
+      const client = new OrdersClient('orders.internal:50051', grpc.credentials.createInsecure())
+    `
+    const eps = grpcEndpointsFromFile({ path: '/tmp/g.js', content: source }, '/tmp')
+    expect(eps.length).toBeGreaterThan(0)
+    for (const ep of eps) {
+      expect(ep.kind).toBe('grpc-service')
+    }
+  })
+
   it.todo(
     'ADR-065 — errors.ndjson lines have shape { file, error, stack, ts, source: "extract" } (#239)',
   )

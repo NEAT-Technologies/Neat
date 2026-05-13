@@ -30,6 +30,14 @@ function edgeTypeFromEndpoint(ep: ExternalEndpoint): (typeof EdgeType)[keyof typ
   }
 }
 
+function isAwsKind(kind: string): boolean {
+  return (
+    kind.startsWith('aws-') ||
+    kind.startsWith('s3') ||
+    kind.startsWith('dynamodb')
+  )
+}
+
 async function addExternalEndpointEdges(
   graph: NeatGraph,
   services: DiscoveredService[],
@@ -66,7 +74,10 @@ async function addExternalEndpointEdges(
           id: ep.infraId,
           type: NodeType.InfraNode,
           name: ep.name,
-          provider: ep.kind.startsWith('s3') || ep.kind.startsWith('dynamodb') ? 'aws' : 'self',
+          // #238 — `aws-*` covers AWS-SDK client kinds (aws-s3, aws-dynamodb,
+          // aws-cognito-identity-provider, …); `s3-` / `dynamodb-` cover the
+          // bucket / table kinds from aws.ts.
+          provider: isAwsKind(ep.kind) ? 'aws' : 'self',
           kind: ep.kind,
         }
         graph.addNode(node.id, node)
