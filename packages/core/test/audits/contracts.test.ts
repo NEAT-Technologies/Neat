@@ -6158,6 +6158,93 @@ describe('Divergence query (ADR-060)', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────
+// OBSERVED-led divergence query weighting + graded confidence (ADR-066)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Amends ADR-029 (provenance confidence semantics), ADR-060 (divergence query
+// weighting). EXTRACTED grades at emit time per extractor; OBSERVED grades by
+// the signal block; a precision floor drops sub-threshold EXTRACTED candidates
+// before they enter the graph; the divergence query reweights so
+// `missing-extracted` (OBSERVED-led) is the headline finding type.
+//
+// Initial entries are `it.todo` and flip to live as the v0.3.4 implementation
+// PRs land (#257 EXTRACTED grading, #258 OBSERVED grading, #259 reweighting +
+// NEAT-BUG-8 envelope).
+describe('OBSERVED-led divergence weighting + graded confidence (ADR-066)', () => {
+  it.todo(
+    '`@neat.is/types/confidence.ts` exports a single grading helper for EXTRACTED and OBSERVED tiers (ADR-066 §1 + §2)',
+  )
+
+  it.todo(
+    'EXTRACTED grades structural file facts at ~0.85: package.json deps, AST imports, Dockerfile RUNS_ON, ConfigNode existence (ADR-066 §1)',
+  )
+
+  it.todo(
+    'EXTRACTED grades verified call sites at ~0.85 when a framework-aware recognizer matched (ADR-066 §1)',
+  )
+
+  it.todo(
+    'EXTRACTED grades string-shaped candidates with structural support at ~0.5 (ADR-066 §1)',
+  )
+
+  it.todo(
+    'EXTRACTED grades string-shaped candidates without structural support at ~0.2 (ADR-066 §1) — these fall below the precision floor by default',
+  )
+
+  it.todo(
+    'no `confidence: 0.5` literal remains in packages/core/src/extract/ (the flat-coarse emission pattern is a contract violation under ADR-066)',
+  )
+
+  it.todo(
+    'OBSERVED grades by signal block: spanCount: 500 + recent grades strictly above spanCount: 5 + recent on otherwise-identical edges (ADR-066 §2)',
+  )
+
+  it.todo(
+    'OBSERVED grades by signal block: errorCount: 4 / spanCount: 5 grades strictly below errorCount: 0 / spanCount: 5 (ADR-066 §2)',
+  )
+
+  it.todo(
+    'OBSERVED never emits flat confidence: 1.0 unless the signal block warrants it (spanCount >= 100 + lastObservedAgeMs < 1h) (ADR-066 §2)',
+  )
+
+  it.todo(
+    'precision floor: a fixture with above- and below-threshold EXTRACTED candidates produces only above-threshold edges in the graph (ADR-066 §3)',
+  )
+
+  it.todo(
+    'precision floor: NEAT_EXTRACTED_PRECISION_FLOOR overrides the default 0.7 threshold (ADR-066 §3)',
+  )
+
+  it.todo(
+    'precision floor: NEAT_EXTRACTED_PRECISION_FLOOR=0.0 keeps every candidate (diagnostic mode) (ADR-066 §3)',
+  )
+
+  it.todo(
+    'computeDivergences orders `missing-extracted` ahead of `missing-observed` when both surface at equal confidence (ADR-066 §4)',
+  )
+
+  it.todo(
+    '`missing-observed` rows backed by sub-floor EXTRACTED candidates never surface — the underlying edge was never added to the graph (ADR-066 §4)',
+  )
+
+  it.todo(
+    'GET /graph/divergences returns DivergenceResultSchema on a freshly-loaded snapshot (NEAT-BUG-8 — ADR-066 §6)',
+  )
+
+  it.todo(
+    'GET /graph/divergences returns DivergenceResultSchema on a graph with no detectable divergences (zero-result; never null, never a bare value) (NEAT-BUG-8 — ADR-066 §6)',
+  )
+
+  it.todo(
+    'GET /projects/:project/graph/divergences returns DivergenceResultSchema on snapshot-load + zero-result paths (dual-mount per ADR-026 — ADR-066 §6)',
+  )
+
+  it.todo(
+    'every documented GET endpoint returns a JSON object matching its declared schema on snapshot-load + zero-result paths (ADR-066 §6 — broader ADR-061 envelope assertion)',
+  )
+})
+
+// ──────────────────────────────────────────────────────────────────────────
 // REST API path canonicalization + response envelope rule (ADR-061)
 // ──────────────────────────────────────────────────────────────────────────
 //

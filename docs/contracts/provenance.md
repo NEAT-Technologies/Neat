@@ -9,7 +9,7 @@ governs:
   - "packages/types/src/identity.ts"
   - "packages/types/src/edges.ts"
   - "packages/types/src/constants.ts"
-adr: [ADR-029, ADR-024, ADR-027]
+adr: [ADR-029, ADR-024, ADR-027, ADR-066]
 ---
 
 # Provenance contract
@@ -80,19 +80,21 @@ Frozen object. Consumers import it; nobody re-defines it locally. Traversal uses
 
 FRONTIER ranks 0 alongside STALE for the case where it ends up in a comparison set, but [contracts.md Rule 3](../contracts.md#3-frontier-edges-are-not-traversed) says traversal must skip FRONTIER edges entirely — so this rank is rarely consulted for FRONTIER in practice.
 
-## Confidence semantics per provenance
+## Confidence semantics per provenance (ADR-066)
 
-- **OBSERVED** — `confidence: 1.0` always. Direct measurement; the value is a max-trust marker, not a derived score.
-- **INFERRED** — `confidence ≤ 0.7`, default `0.6` (`INFERRED_CONFIDENCE` in `ingest.ts`). Set at creation by the trace stitcher; never exceeds 0.7.
-- **EXTRACTED** — confidence is **not stored**. EXTRACTED edges either exist (the static analyzer found them) or they don't. They don't decay on a clock; their confidence is implicit.
+PROV_RANK still locks tier ordering — OBSERVED outranks INFERRED outranks EXTRACTED outranks STALE | FRONTIER. The grading below sits *within* each tier so the divergence query (ADR-060 / ADR-066) can reweight against honest values, not flat coarse ones.
+
+- **OBSERVED** — graded by the `signal` block at ingest. `spanCount >= 100` plus `lastObservedAgeMs < 1h` grades `0.95–1.0`; `spanCount 10–99` recent grades `0.7–0.9`; `spanCount < 10` recent grades `0.4–0.6` (a single span could be a misconfig). `errorCount / spanCount > 0` subtracts up to `0.2` for degraded edges. The grading helper lives in `@neat.is/types/confidence.ts`; `upsertObservedEdge` calls it at the same point it writes `signal`.
+- **INFERRED** — `confidence ≤ 0.7`, default `0.6` (`INFERRED_CONFIDENCE` in `ingest.ts`). Set at creation by the trace stitcher; never exceeds `0.7`.
+- **EXTRACTED** — graded at emit time per extractor. Structural file facts (imports, package.json deps, Dockerfile `RUNS_ON`, ConfigNode existence per ADR-016) and verified call sites (framework-aware recognizer matched) grade `0.85`. String-shaped candidates with structural support grade `0.5`. String-shaped candidates without structural support grade `0.2` and are dropped at emit by the precision floor (`NEAT_EXTRACTED_PRECISION_FLOOR`, default `0.7`) before they reach the graph. The grading helper in `@neat.is/types/confidence.ts` is the single source of truth; per-extractor code imports it rather than hand-rolling values.
 - **STALE** — confidence drops to `≤ 0.3` on transition; original `lastObserved` preserved.
 - **FRONTIER** — confidence not stored as a numeric field. FRONTIER is excluded from traversal so its confidence is never compared.
 
 ## Required fields per provenance
 
-- **OBSERVED:** `lastObserved` (ISO8601), `callCount`, `confidence: 1.0`.
+- **OBSERVED:** `lastObserved` (ISO8601), `callCount`, `signal: { spanCount, errorCount, lastObservedAgeMs }`, graded `confidence` in `[0, 1]` per the OBSERVED grading function.
 - **INFERRED:** `confidence` (0.0–0.7).
-- **EXTRACTED:** `evidence: { file, line?, snippet? }` for CALLS-family edges; broader evidence shapes for other edge types are pending the v0.2.1 tree-sitter rebuild (issue #140).
+- **EXTRACTED:** `evidence: { file, line?, snippet? }` for CALLS-family edges; broader evidence shapes for other edge types are pending the v0.2.1 tree-sitter rebuild (issue #140). Graded `confidence` in `[0, 1]` per the EXTRACTED grading function — flat-`0.5` emissions are a contract violation (ADR-066).
 - **STALE:** `lastObserved` preserved from the OBSERVED state, `confidence ≤ 0.3`.
 - **FRONTIER:** `lastObserved` (ISO8601 of the span that revealed the unresolved peer).
 
