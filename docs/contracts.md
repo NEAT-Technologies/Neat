@@ -40,6 +40,7 @@ This file is the index. Each rule has a short summary and a link to its full per
 | 28 | Web shell debugging surface | [`contracts/web-debugging.md`](./contracts/web-debugging.md) | StatusBar shows daemon + SSE connection state; no silent API failures; debug panel toggleable via Ctrl+Shift+D; read-only (ADR-058) | ✅ landed (Track 1 frontend) |
 | 29 | Web UI bootstrap from neatd | [`contracts/web-bootstrap.md`](./contracts/web-bootstrap.md) | `neatd start` launches the web UI on port 6328 (T9 NEAT); `NEAT_WEB_PORT` overrides; fail-loud on collision; `@neat.is/web` joins the lockstep (ADR-059) | ✅ landed (Track 1 frontend) |
 | 30 | Divergence query | [`contracts/divergence-query.md`](./contracts/divergence-query.md) | `get_divergences` as a first-class graph operation across REST + MCP + CLI; five divergence types; read-only; derived not persisted; OBSERVED-led weighting + graded EXTRACTED/OBSERVED confidence + precision floor at emit (ADR-060 + ADR-066) | ✅ landed (OBSERVED-led weighting amended v0.3.4) |
+| 31 | Comms voice | [`contracts/comms-voice.md`](./contracts/comms-voice.md) | Forward-looking framing in repo artifacts; never name drift or past-tense self-correction in commits, PRs, ADRs, contracts, README, runbooks, release notes. Plan files and conversation are exempt. Hook surfaces at edit time; PR/commit/release-note flows rely on session-start context (ADR-027 + ADR-053) | ✅ landed (Refs #262) |
 
 ### Future contracts — opened at the start of each milestone
 

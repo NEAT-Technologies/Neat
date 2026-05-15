@@ -6655,3 +6655,86 @@ describe('`neat watch` ignore globs + polling fallback (#233)', () => {
     expect(watchSrc).toMatch(/usePolling,/)
   })
 })
+
+// ──────────────────────────────────────────────────────────────────────────
+// Comms-voice contract (Refs #262)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// The contract framework is glob-based on the `governs:` frontmatter of each
+// per-topic contract under docs/contracts/. Adding comms-voice.md with a
+// cross-cutting glob list (contracts corpus + decisions log + README +
+// CLAUDE.md + key docs) makes the existing PreToolUse hook surface the
+// comms rule whenever any of those files is edited — zero change to
+// _hook.sh. These assertions lock the file's shape in place so future
+// edits can't silently weaken the coverage.
+describe('Comms-voice contract (Refs #262)', () => {
+  const CONTRACT_PATH = join(__dirname, '../../../../docs/contracts/comms-voice.md')
+
+  it('docs/contracts/comms-voice.md exists', () => {
+    expect(existsSync(CONTRACT_PATH)).toBe(true)
+  })
+
+  // Tiny frontmatter parser — the per-topic contracts use a fixed shape
+  // (name, description, governs list, adr list). The hook parses it with
+  // awk; mirroring its approach here avoids pulling yaml just to assert
+  // four fields. Anything sturdier than this would over-spec the format.
+  function parseFrontmatter(src: string): {
+    name?: string
+    description?: string
+    governs: string[]
+    adr: string[]
+  } {
+    const match = src.match(/^---\n([\s\S]*?)\n---/)
+    if (!match) return { governs: [], adr: [] }
+    const body = match[1]
+    const name = body.match(/^name:\s*(.+)$/m)?.[1]?.trim()
+    const description = body.match(/^description:\s*(.+)$/m)?.[1]?.trim()
+    const governsBlock = body.match(/^governs:\n((?:  - .+\n?)+)/m)?.[1] ?? ''
+    const governs = [...governsBlock.matchAll(/^  - "?([^"\n]+)"?$/gm)].map((m) => m[1].trim())
+    const adrMatch = body.match(/^adr:\s*\[([^\]]*)\]/m)?.[1] ?? ''
+    const adr = adrMatch
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    return { name, description, governs, adr }
+  }
+
+  it('frontmatter has name, description, governs (array), adr (array)', () => {
+    const src = readFileSync(CONTRACT_PATH, 'utf8')
+    const fm = parseFrontmatter(src)
+    expect(fm.name).toBe('comms-voice')
+    expect(fm.description, 'description present').toBeTruthy()
+    expect(Array.isArray(fm.governs)).toBe(true)
+    expect(fm.governs.length).toBeGreaterThan(0)
+    expect(Array.isArray(fm.adr)).toBe(true)
+    expect(fm.adr.length).toBeGreaterThan(0)
+  })
+
+  it('governs list covers the contract corpus, ADR log, README, and CLAUDE.md', () => {
+    // These four are the floor: contracts, decisions, README, CLAUDE.md.
+    // The hook walks `docs/contracts/*.md` and matches against every glob
+    // in this list. Dropping any of these four would leave a class of
+    // repo-visible artifact uncovered by the comms rule.
+    const src = readFileSync(CONTRACT_PATH, 'utf8')
+    const fm = parseFrontmatter(src)
+    for (const required of ['docs/contracts/*.md', 'docs/decisions.md', 'README.md', 'CLAUDE.md']) {
+      expect(fm.governs, `comms-voice governs missing ${required}`).toContain(required)
+    }
+  })
+
+  it('body carries the forward-looking-framing rule', () => {
+    // Canary phrase. The body can be re-organised freely; this token has
+    // to land somewhere in the prose so the rule survives future edits.
+    const src = readFileSync(CONTRACT_PATH, 'utf8')
+    expect(src.toLowerCase()).toContain('forward-looking framing')
+  })
+
+  it('contracts.md index references the new contract', () => {
+    // Sanity check that the index row landed alongside the new file —
+    // a contract not in the index is invisible to a reader skimming the
+    // table.
+    const indexPath = join(__dirname, '../../../../docs/contracts.md')
+    const index = readFileSync(indexPath, 'utf8')
+    expect(index).toContain('contracts/comms-voice.md')
+  })
+})
