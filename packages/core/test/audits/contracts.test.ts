@@ -387,7 +387,7 @@ describe('Lifecycle contract — mutation authority (ADR-030)', () => {
 })
 
 describe('Lifecycle contract — STALE → OBSERVED resurrection (ADR-030)', () => {
-  it('a span on a STALE edge flips provenance back to OBSERVED with confidence 1.0', async () => {
+  it('a span on a STALE edge flips provenance back to OBSERVED with a fresh graded confidence', async () => {
     const { observedEdgeId } = await import('@neat.is/types')
     const { handleSpan } = await import('../../src/ingest.js')
     const { mkdtempSync } = await import('node:fs')
@@ -443,7 +443,11 @@ describe('Lifecycle contract — STALE → OBSERVED resurrection (ADR-030)', () 
 
     const after = g.getEdgeAttributes(id) as GraphEdge
     expect(after.provenance).toBe(Provenance.OBSERVED)
-    expect(after.confidence).toBe(1.0)
+    // ADR-066 — confidence grades from the signal block. The resurrection
+    // restores OBSERVED provenance; the grade reflects how much fresh signal
+    // came in. Bounded above STALE's 0.3 floor and below the strong tier's
+    // 1.0 ceiling.
+    expect(after.confidence).toBeGreaterThan(0.3)
     expect(after.callCount).toBeGreaterThanOrEqual(6)
   })
 })
@@ -6229,9 +6233,53 @@ describe('OBSERVED-led divergence weighting + graded confidence (ADR-066)', () =
     expect(degraded).toBeLessThan(clean)
   })
 
-  it.todo(
-    'OBSERVED never emits flat confidence: 1.0 unless the signal block warrants it — flips live with #258',
-  )
+  it('OBSERVED grades at ingest by signal block — a single-span edge does not emit flat 1.0 (ADR-066 §2)', async () => {
+    const { MultiDirectedGraph } = await import('graphology')
+    const { handleSpan, resetParentSpanCache } = await import('../../src/ingest.js')
+    const pathMod = await import('node:path')
+    const os = await import('node:os')
+    const fs = await import('node:fs/promises')
+    resetParentSpanCache()
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', {
+      id: 'service:caller',
+      type: NodeType.ServiceNode,
+      name: 'caller',
+      language: 'javascript',
+    })
+    g.addNode('service:callee', {
+      id: 'service:callee',
+      type: NodeType.ServiceNode,
+      name: 'callee',
+      language: 'javascript',
+    })
+    const tmp = await fs.mkdtemp(pathMod.join(os.tmpdir(), 'neat-066-observed-'))
+    await handleSpan(
+      {
+        graph: g,
+        errorsPath: pathMod.join(tmp, 'errors.ndjson'),
+        writeErrorEventInline: false,
+      },
+      {
+        traceId: 't1',
+        spanId: 's1',
+        service: 'caller',
+        name: 'GET /work',
+        kind: 3,
+        startTimeUnixNano: '0',
+        endTimeUnixNano: '0',
+        durationNanos: 0n,
+        startTimeIso: new Date().toISOString(),
+        statusCode: 0,
+        attributes: { 'server.address': 'callee', 'http.method': 'GET' },
+      },
+    )
+    const id = `${EdgeType.CALLS}:OBSERVED:service:caller->service:callee`
+    expect(g.hasEdge(id)).toBe(true)
+    const e = g.getEdgeAttributes(id) as GraphEdge
+    expect(e.confidence).toBeDefined()
+    expect(e.confidence as number).toBeLessThan(1.0)
+  })
 
   it('precision floor: a fixture with above- and below-threshold EXTRACTED candidates produces only above-threshold edges in the graph (ADR-066 §3)', async () => {
     // Demo graph contains a hostname-shape CALLS edge (0.2, below default
