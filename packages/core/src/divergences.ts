@@ -103,15 +103,6 @@ function nodeIsFrontier(graph: NeatGraph, nodeId: string): boolean {
   return attrs.type === NodeType.FrontierNode
 }
 
-function hasAnyObservedFromSource(graph: NeatGraph, sourceId: string): boolean {
-  if (!graph.hasNode(sourceId)) return false
-  for (const edgeId of graph.outboundEdges(sourceId)) {
-    const e = graph.getEdgeAttributes(edgeId) as GraphEdge
-    if (e.provenance === Provenance.OBSERVED) return true
-  }
-  return false
-}
-
 function clampConfidence(n: number): number {
   if (!Number.isFinite(n)) return 0
   return Math.max(0, Math.min(1, n))
@@ -132,6 +123,22 @@ const RECOMMENDATION_MISSING_EXTRACTED =
 const RECOMMENDATION_HOST_MISMATCH =
   'Check environment-specific config overrides — the runtime host differs from what static configuration declares.'
 
+// ADR-066 §4 — reweight against graded confidence.
+//
+// `missing-extracted` (OBSERVED-led) cascades from the OBSERVED edge's
+// graded confidence (signal-block grade per ADR-066 §2). `missing-observed`
+// weights by the EXTRACTED edge's graded confidence (per-extractor grade
+// per ADR-066 §1). Sub-floor EXTRACTED candidates never enter the graph
+// (precision floor, §3) so what surfaces here is backed by structural or
+// verified-call-site evidence.
+//
+// Falls back to confidenceForEdge for legacy edges loaded from a pre-v0.3.4
+// snapshot that don't carry a stored `confidence` field.
+function gradedConfidence(edge: GraphEdge): number {
+  if (typeof edge.confidence === 'number') return clampConfidence(edge.confidence)
+  return clampConfidence(confidenceForEdge(edge))
+}
+
 function detectMissingDivergences(
   graph: NeatGraph,
   bucket: EdgeBucket,
@@ -144,14 +151,16 @@ function detectMissingDivergences(
     // to. The coexistence contract is between EXTRACTED and OBSERVED on
     // real nodes; FRONTIER is unknown territory.
     if (!nodeIsFrontier(graph, bucket.target)) {
-      const sourceHasTraffic = hasAnyObservedFromSource(graph, bucket.source)
+      // ADR-066 §4 — weight by the EXTRACTED edge's graded confidence.
+      // Substring/hostname-shape candidates already dropped at the precision
+      // floor; what remains is structural or verified-call-site evidence.
       out.push({
         type: 'missing-observed',
         source: bucket.source,
         target: bucket.target,
         edgeType: bucket.type,
         extracted: bucket.extracted,
-        confidence: sourceHasTraffic ? 1.0 : 0.5,
+        confidence: gradedConfidence(bucket.extracted),
         reason: reasonForMissingObserved(bucket.source, bucket.target, bucket.type),
         recommendation: RECOMMENDATION_MISSING_OBSERVED,
       })
@@ -159,14 +168,15 @@ function detectMissingDivergences(
   }
 
   if (bucket.observed && !bucket.extracted) {
-    const cascaded = clampConfidence(confidenceForEdge(bucket.observed))
+    // ADR-066 §4 — cascade from the OBSERVED edge's graded confidence.
+    // OBSERVED-led finding; the headline divergence type.
     out.push({
       type: 'missing-extracted',
       source: bucket.source,
       target: bucket.target,
       edgeType: bucket.type,
       observed: bucket.observed,
-      confidence: cascaded,
+      confidence: gradedConfidence(bucket.observed),
       reason: reasonForMissingExtracted(bucket.source, bucket.target, bucket.type),
       recommendation: RECOMMENDATION_MISSING_EXTRACTED,
     })
@@ -351,8 +361,20 @@ export function computeDivergences(
     filtered = filtered.filter((d) => involvesNode(d, target))
   }
 
+  // ADR-066 §4 / §5 — confidence desc; missing-extracted leads
+  // missing-observed at equal confidence (OBSERVED-led tiebreaker); then
+  // stable on (type, source, target).
+  const TYPE_LEADERSHIP: Record<DivergenceType, number> = {
+    'missing-extracted': 0,
+    'missing-observed': 1,
+    'version-mismatch': 2,
+    'host-mismatch': 3,
+    'compat-violation': 4,
+  }
   filtered.sort((a, b) => {
     if (b.confidence !== a.confidence) return b.confidence - a.confidence
+    const lead = TYPE_LEADERSHIP[a.type] - TYPE_LEADERSHIP[b.type]
+    if (lead !== 0) return lead
     if (a.type !== b.type) return a.type.localeCompare(b.type)
     if (a.source !== b.source) return a.source.localeCompare(b.source)
     return a.target.localeCompare(b.target)

@@ -6337,29 +6337,242 @@ describe('OBSERVED-led divergence weighting + graded confidence (ADR-066)', () =
     }
   })
 
-  it.todo(
-    'computeDivergences orders `missing-extracted` ahead of `missing-observed` when both surface at equal confidence (ADR-066 §4)',
-  )
+  it('computeDivergences orders `missing-extracted` ahead of `missing-observed` when both surface at equal confidence (ADR-066 §4)', async () => {
+    const { MultiDirectedGraph } = await import('graphology')
+    const { computeDivergences } = await import('../../src/divergences.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:a', {
+      id: 'service:a',
+      type: NodeType.ServiceNode,
+      name: 'a',
+      language: 'javascript',
+    })
+    g.addNode('service:b', {
+      id: 'service:b',
+      type: NodeType.ServiceNode,
+      name: 'b',
+      language: 'javascript',
+    })
+    g.addNode('service:c', {
+      id: 'service:c',
+      type: NodeType.ServiceNode,
+      name: 'c',
+      language: 'javascript',
+    })
+    // EXTRACTED-only: missing-observed candidate. Confidence 0.85 (structural).
+    const eId = `${EdgeType.CALLS}:service:a->service:b`
+    g.addEdgeWithKey(eId, 'service:a', 'service:b', {
+      id: eId,
+      source: 'service:a',
+      target: 'service:b',
+      type: EdgeType.CALLS,
+      provenance: Provenance.EXTRACTED,
+      confidence: 0.85,
+      evidence: { file: 'a/index.ts' },
+    })
+    // OBSERVED-only (different pair): missing-extracted candidate. Confidence 0.85.
+    const oId = `${EdgeType.CALLS}:OBSERVED:service:a->service:c`
+    g.addEdgeWithKey(oId, 'service:a', 'service:c', {
+      id: oId,
+      source: 'service:a',
+      target: 'service:c',
+      type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED,
+      confidence: 0.85,
+      lastObserved: new Date().toISOString(),
+      callCount: 50,
+      signal: { spanCount: 50, errorCount: 0, lastObservedAgeMs: 0 },
+    })
+    const result = computeDivergences(g)
+    expect(result.divergences.length).toBeGreaterThanOrEqual(2)
+    const me = result.divergences.findIndex((d) => d.type === 'missing-extracted')
+    const mo = result.divergences.findIndex((d) => d.type === 'missing-observed')
+    expect(me).toBeGreaterThanOrEqual(0)
+    expect(mo).toBeGreaterThanOrEqual(0)
+    expect(me).toBeLessThan(mo)
+  })
 
-  it.todo(
-    '`missing-observed` rows backed by sub-floor EXTRACTED candidates never surface — the underlying edge was never added to the graph (ADR-066 §4)',
-  )
+  it('`missing-observed` rows backed by sub-floor EXTRACTED candidates never surface — the underlying edge was never added to the graph (ADR-066 §4)', async () => {
+    const { resetGraph, getGraph } = await import('../../src/graph.js')
+    const { extractFromDirectory } = await import('../../src/extract.js')
+    const { computeDivergences } = await import('../../src/divergences.js')
+    const path = await import('node:path')
+    const DEMO_PATH = path.resolve(__dirname, '../../../../demo')
+    const prev = process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    try {
+      resetGraph()
+      const g = getGraph()
+      await extractFromDirectory(g, DEMO_PATH)
+      // The demo's service-a → service-b CALLS edge is the canonical
+      // hostname-shape candidate (0.2). With the default floor it never
+      // entered the graph, so no missing-observed row for it can surface.
+      const result = computeDivergences(g)
+      const offending = result.divergences.filter(
+        (d) =>
+          d.type === 'missing-observed' &&
+          d.source === 'service:service-a' &&
+          d.target === 'service:service-b',
+      )
+      expect(offending).toEqual([])
+    } finally {
+      if (prev === undefined) delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+      else process.env.NEAT_EXTRACTED_PRECISION_FLOOR = prev
+    }
+  })
 
-  it.todo(
-    'GET /graph/divergences returns DivergenceResultSchema on a freshly-loaded snapshot (NEAT-BUG-8 — ADR-066 §6)',
-  )
+  it('GET /graph/divergences returns DivergenceResultSchema on a freshly-loaded snapshot (NEAT-BUG-8 — ADR-066 §6)', async () => {
+    const { resetGraph, getGraph, DEFAULT_PROJECT } = await import('../../src/graph.js')
+    const { buildApi } = await import('../../src/api.js')
+    const { Projects } = await import('../../src/projects.js')
+    const { saveGraphToDisk, loadGraphFromDisk } = await import('../../src/persist.js')
+    const { DivergenceResultSchema } = await import('@neat.is/types')
+    const path = await import('node:path')
+    const os = await import('node:os')
+    const fs = await import('node:fs/promises')
 
-  it.todo(
-    'GET /graph/divergences returns DivergenceResultSchema on a graph with no detectable divergences (zero-result; never null, never a bare value) (NEAT-BUG-8 — ADR-066 §6)',
-  )
+    resetGraph()
+    const seed = getGraph()
+    seed.addNode('service:a', {
+      id: 'service:a',
+      type: NodeType.ServiceNode,
+      name: 'a',
+      language: 'javascript',
+    })
+    seed.addNode('service:b', {
+      id: 'service:b',
+      type: NodeType.ServiceNode,
+      name: 'b',
+      language: 'javascript',
+    })
+    const eId = `${EdgeType.CALLS}:service:a->service:b`
+    seed.addEdgeWithKey(eId, 'service:a', 'service:b', {
+      id: eId,
+      source: 'service:a',
+      target: 'service:b',
+      type: EdgeType.CALLS,
+      provenance: Provenance.EXTRACTED,
+      confidence: 0.85,
+      evidence: { file: 'a/index.ts' },
+    })
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-bug8-'))
+    const snapPath = path.join(tmp, 'graph.json')
+    await saveGraphToDisk(seed, snapPath)
 
-  it.todo(
-    'GET /projects/:project/graph/divergences returns DivergenceResultSchema on snapshot-load + zero-result paths (dual-mount per ADR-026 — ADR-066 §6)',
-  )
+    // Reload — the production snapshot-load path. The divergence endpoint
+    // must compute against the live graph regardless of when the load
+    // happened.
+    resetGraph()
+    const reloaded = getGraph()
+    await loadGraphFromDisk(reloaded, snapPath)
+    const registry = new Projects()
+    registry.set(DEFAULT_PROJECT, {
+      graph: reloaded,
+      paths: {
+        snapshotPath: snapPath,
+        errorsPath: path.join(tmp, 'errors.ndjson'),
+        staleEventsPath: path.join(tmp, 'stale.ndjson'),
+        embeddingsCachePath: path.join(tmp, 'emb.json'),
+        policyViolationsPath: path.join(tmp, 'policies.ndjson'),
+      },
+    })
+    const app = await buildApi({ projects: registry })
+    try {
+      const res = await app.inject({ method: 'GET', url: '/graph/divergences' })
+      expect(res.statusCode).toBe(200)
+      const body = res.json()
+      const parsed = DivergenceResultSchema.safeParse(body)
+      expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error?.format())).toBe(
+        true,
+      )
+    } finally {
+      await app.close()
+      await fs.rm(tmp, { recursive: true, force: true })
+    }
+  })
 
-  it.todo(
-    'every documented GET endpoint returns a JSON object matching its declared schema on snapshot-load + zero-result paths (ADR-066 §6 — broader ADR-061 envelope assertion)',
-  )
+  it('GET /graph/divergences returns DivergenceResultSchema on a graph with no detectable divergences (zero-result; never null, never a bare value) (NEAT-BUG-8 — ADR-066 §6)', async () => {
+    const { resetGraph, getGraph } = await import('../../src/graph.js')
+    const { buildApi } = await import('../../src/api.js')
+    const { DivergenceResultSchema } = await import('@neat.is/types')
+    resetGraph()
+    const g = getGraph()
+    // Empty graph — no edges to disagree about; the query should still
+    // return the documented envelope shape, not null and not a bare value.
+    const app = await buildApi({ graph: g })
+    try {
+      const res = await app.inject({ method: 'GET', url: '/graph/divergences' })
+      expect(res.statusCode).toBe(200)
+      const body = res.json()
+      expect(body).not.toBeNull()
+      expect(typeof body).toBe('object')
+      const parsed = DivergenceResultSchema.safeParse(body)
+      expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error?.format())).toBe(
+        true,
+      )
+      expect(body.divergences).toEqual([])
+      expect(body.totalAffected).toBe(0)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('GET /projects/:project/graph/divergences returns DivergenceResultSchema on snapshot-load + zero-result paths (dual-mount per ADR-026 — ADR-066 §6)', async () => {
+    const { resetGraph, getGraph, DEFAULT_PROJECT } = await import('../../src/graph.js')
+    const { buildApi } = await import('../../src/api.js')
+    const { Projects } = await import('../../src/projects.js')
+    const { DivergenceResultSchema } = await import('@neat.is/types')
+    const path = await import('node:path')
+    const os = await import('node:os')
+    const fs = await import('node:fs/promises')
+
+    resetGraph()
+    const g = getGraph()
+    const registry = new Projects()
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'neat-bug8-proj-'))
+    registry.set(DEFAULT_PROJECT, {
+      graph: g,
+      paths: {
+        snapshotPath: path.join(tmp, 'graph.json'),
+        errorsPath: path.join(tmp, 'errors.ndjson'),
+        staleEventsPath: path.join(tmp, 'stale.ndjson'),
+        embeddingsCachePath: path.join(tmp, 'emb.json'),
+        policyViolationsPath: path.join(tmp, 'policies.ndjson'),
+      },
+    })
+    const app = await buildApi({ projects: registry })
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/projects/${DEFAULT_PROJECT}/graph/divergences`,
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json()
+      const parsed = DivergenceResultSchema.safeParse(body)
+      expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error?.format())).toBe(
+        true,
+      )
+    } finally {
+      await app.close()
+      await fs.rm(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('the divergence response is never null and never a bare array — the envelope is a JSON object (ADR-066 §6 — ADR-061 envelope rule)', () => {
+    // Structural scan of divergences.ts. The output goes through
+    // DivergenceResultSchema.parse at the bottom of computeDivergences, so
+    // any code path that returned null or a bare array would fail the parse
+    // before reaching the wire. Lock the shape: no `return null` at the
+    // module level and no `return []` from computeDivergences.
+    const src = readFileSync(join(CORE_SRC, 'divergences.ts'), 'utf8')
+    // Find the computeDivergences function block.
+    const fnStart = src.indexOf('export function computeDivergences')
+    expect(fnStart, 'computeDivergences exported').toBeGreaterThanOrEqual(0)
+    const fnSrc = src.slice(fnStart)
+    expect(fnSrc).not.toMatch(/^\s*return\s+null\s*;?\s*$/m)
+    expect(fnSrc).not.toMatch(/^\s*return\s+\[\s*\]\s*;?\s*$/m)
+    expect(fnSrc).toMatch(/DivergenceResultSchema\.parse/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
