@@ -36,15 +36,26 @@ describe('call extraction beyond HTTP', () => {
   })
 
   it('emits redis InfraNode + CALLS edge from a redis:// URL', async () => {
-    const graph = getGraph()
-    await extractFromDirectory(graph, FIXTURES)
+    // ADR-066 — `redis://host` URL literals grade at the url-with-structural-
+    // support tier (0.5) and drop below the default precision floor (0.7).
+    // The detector still runs; flip the floor off here so the test exercises
+    // full recall and proves the matcher works.
+    const prev = process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    process.env.NEAT_EXTRACTED_PRECISION_FLOOR = '0'
+    try {
+      const graph = getGraph()
+      await extractFromDirectory(graph, FIXTURES)
 
-    expect(graph.hasNode('infra:redis:cache.internal')).toBe(true)
-    const redisNode = graph.getNodeAttributes('infra:redis:cache.internal') as InfraNode
-    expect(redisNode.kind).toBe('redis')
+      expect(graph.hasNode('infra:redis:cache.internal')).toBe(true)
+      const redisNode = graph.getNodeAttributes('infra:redis:cache.internal') as InfraNode
+      expect(redisNode.kind).toBe('redis')
 
-    const edgeId = 'CALLS:service:fixture-redis-service->infra:redis:cache.internal'
-    expect(graph.hasEdge(edgeId)).toBe(true)
+      const edgeId = 'CALLS:service:fixture-redis-service->infra:redis:cache.internal'
+      expect(graph.hasEdge(edgeId)).toBe(true)
+    } finally {
+      if (prev === undefined) delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+      else process.env.NEAT_EXTRACTED_PRECISION_FLOOR = prev
+    }
   })
 
   it('emits S3 + DynamoDB InfraNodes from AWS SDK calls', async () => {

@@ -50,10 +50,20 @@ describe('Python service extraction', () => {
   })
 
   it('emits a CALLS edge between two Python services via tree-sitter-python', async () => {
-    const graph = getGraph()
-    await extractFromDirectory(graph, PY_FIXTURES)
+    // ADR-066 — Python http URL match grades at the hostname-shape tier
+    // (0.2) and drops below the default precision floor (0.7). Flip the
+    // floor off here so the test exercises full recall.
+    const prev = process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    process.env.NEAT_EXTRACTED_PRECISION_FLOOR = '0'
+    try {
+      const graph = getGraph()
+      await extractFromDirectory(graph, PY_FIXTURES)
 
-    const callId = 'CALLS:service:payments-api->service:orders-api'
-    expect(graph.hasEdge(callId)).toBe(true)
+      const callId = 'CALLS:service:payments-api->service:orders-api'
+      expect(graph.hasEdge(callId)).toBe(true)
+    } finally {
+      if (prev === undefined) delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+      else process.env.NEAT_EXTRACTED_PRECISION_FLOOR = prev
+    }
   })
 })

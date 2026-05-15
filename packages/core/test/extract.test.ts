@@ -68,15 +68,26 @@ describe('extractFromDirectory against demo/', () => {
   })
 
   it('emits a CALLS edge from service-a to service-b (tree-sitter URL match)', async () => {
-    const graph = getGraph()
-    await extractFromDirectory(graph, DEMO_PATH)
+    // ADR-066 — the cross-service URL/hostname match grades at the
+    // hostname-shape tier (0.2) and drops below the default precision floor
+    // (0.7). The detector still runs; flip the floor off here so the test
+    // exercises full recall and proves the matcher works.
+    const prev = process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    process.env.NEAT_EXTRACTED_PRECISION_FLOOR = '0'
+    try {
+      const graph = getGraph()
+      await extractFromDirectory(graph, DEMO_PATH)
 
-    const edges = graph.outboundEdges('service:service-a')
-    const callEdges = edges.filter(
-      (e) => graph.getEdgeAttribute(e, 'type') === 'CALLS',
-    )
-    expect(callEdges.length).toBeGreaterThanOrEqual(1)
-    expect(callEdges.map((e) => graph.target(e))).toContain('service:service-b')
+      const edges = graph.outboundEdges('service:service-a')
+      const callEdges = edges.filter(
+        (e) => graph.getEdgeAttribute(e, 'type') === 'CALLS',
+      )
+      expect(callEdges.length).toBeGreaterThanOrEqual(1)
+      expect(callEdges.map((e) => graph.target(e))).toContain('service:service-b')
+    } finally {
+      if (prev === undefined) delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+      else process.env.NEAT_EXTRACTED_PRECISION_FLOOR = prev
+    }
   })
 
   it('emits a ConfigNode for service-b/db-config.yaml with a CONFIGURED_BY edge', async () => {

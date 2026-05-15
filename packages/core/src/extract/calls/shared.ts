@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { EdgeEvidence } from '@neat.is/types'
+import type { EdgeEvidence, ExtractedConfidenceKind } from '@neat.is/types'
 import { IGNORED_DIRS, SERVICE_FILE_EXTENSIONS } from '../shared.js'
 
 export interface SourceFile {
@@ -17,6 +17,10 @@ export interface ExternalEndpoint {
   kind: string
   edgeType: 'CALLS' | 'PUBLISHES_TO' | 'CONSUMES_FROM'
   evidence: EdgeEvidence
+  // Confidence grade per ADR-066 — set by the per-shape detector. The
+  // orchestrator (calls/index.ts) writes this onto the EXTRACTED edge and
+  // applies the precision floor before adding the edge to the graph.
+  confidenceKind: ExtractedConfidenceKind
 }
 
 export async function walkSourceFiles(dir: string): Promise<string[]> {

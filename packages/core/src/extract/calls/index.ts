@@ -1,5 +1,12 @@
 import type { GraphEdge, InfraNode } from '@neat.is/types'
-import { EdgeType, NodeType, Provenance } from '@neat.is/types'
+import {
+  EdgeType,
+  NodeType,
+  Provenance,
+  confidenceForExtracted,
+  passesExtractedFloor,
+} from '@neat.is/types'
+import { noteExtractedDropped } from '../errors.js'
 import type { NeatGraph } from '../../graph.js'
 import {
   isTestPath,
@@ -88,6 +95,20 @@ async function addExternalEndpointEdges(
       const edgeId = makeEdgeId(service.node.id, ep.infraId, edgeType)
       if (seenEdges.has(edgeId)) continue
       seenEdges.add(edgeId)
+      const confidence = confidenceForExtracted(ep.confidenceKind)
+      // Precision floor (ADR-066 §3). Sub-threshold candidates are computed
+      // but never added to the graph; the banner reports the drop count.
+      if (!passesExtractedFloor(confidence)) {
+        noteExtractedDropped({
+          source: service.node.id,
+          target: ep.infraId,
+          type: edgeType,
+          confidence,
+          confidenceKind: ep.confidenceKind,
+          evidence: ep.evidence,
+        })
+        continue
+      }
       if (!graph.hasEdge(edgeId)) {
         const edge: GraphEdge = {
           id: edgeId,
@@ -95,6 +116,7 @@ async function addExternalEndpointEdges(
           target: ep.infraId,
           type: edgeType,
           provenance: Provenance.EXTRACTED,
+          confidence,
           evidence: ep.evidence,
         }
         graph.addEdgeWithKey(edgeId, edge.source, edge.target, edge)

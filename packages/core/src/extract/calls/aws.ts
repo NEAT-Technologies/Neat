@@ -41,6 +41,10 @@ export function awsEndpointsFromFile(
       name,
       kind,
       edgeType: 'CALLS',
+      // SDK marker (S3Client, GetCommand, etc.) plus a Bucket/TableName
+      // literal — framework-aware recognizer, verified-call-site tier
+      // (ADR-066).
+      confidenceKind: 'verified-call-site',
       evidence: {
         file: path.relative(serviceDir, file.path),
         line,

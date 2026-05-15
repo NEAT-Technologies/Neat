@@ -6171,53 +6171,123 @@ describe('Divergence query (ADR-060)', () => {
 // PRs land (#257 EXTRACTED grading, #258 OBSERVED grading, #259 reweighting +
 // NEAT-BUG-8 envelope).
 describe('OBSERVED-led divergence weighting + graded confidence (ADR-066)', () => {
-  it.todo(
-    '`@neat.is/types/confidence.ts` exports a single grading helper for EXTRACTED and OBSERVED tiers (ADR-066 §1 + §2)',
-  )
+  it('`@neat.is/types/confidence.ts` exports a single grading helper for EXTRACTED and OBSERVED tiers (ADR-066 §1 + §2)', async () => {
+    const mod = (await import('@neat.is/types')) as Record<string, unknown>
+    expect(typeof mod.confidenceForExtracted).toBe('function')
+    expect(typeof mod.confidenceForObservedSignal).toBe('function')
+    expect(typeof mod.passesExtractedFloor).toBe('function')
+    expect(typeof mod.extractedPrecisionFloor).toBe('function')
+  })
+
+  it('EXTRACTED grades structural file facts at ~0.85 (ADR-066 §1)', async () => {
+    const { confidenceForExtracted } = await import('@neat.is/types')
+    expect(confidenceForExtracted('structural')).toBeCloseTo(0.85, 2)
+  })
+
+  it('EXTRACTED grades verified call sites at ~0.85 when a framework-aware recognizer matched (ADR-066 §1)', async () => {
+    const { confidenceForExtracted } = await import('@neat.is/types')
+    expect(confidenceForExtracted('verified-call-site')).toBeCloseTo(0.85, 2)
+  })
+
+  it('EXTRACTED grades string-shaped candidates with structural support at ~0.5 (ADR-066 §1)', async () => {
+    const { confidenceForExtracted } = await import('@neat.is/types')
+    expect(confidenceForExtracted('url-with-structural-support')).toBeCloseTo(0.5, 2)
+  })
+
+  it('EXTRACTED grades string-shaped candidates without structural support at ~0.2 — these fall below the precision floor by default (ADR-066 §1)', async () => {
+    const { confidenceForExtracted, passesExtractedFloor } = await import('@neat.is/types')
+    const v = confidenceForExtracted('hostname-shape-match')
+    expect(v).toBeCloseTo(0.2, 2)
+    expect(passesExtractedFloor(v)).toBe(false)
+  })
+
+  it('no `confidence: 0.5` literal remains in packages/core/src/extract/ (the flat-coarse emission pattern is a contract violation under ADR-066)', () => {
+    const offenders: string[] = []
+    const EXTRACT_DIR = join(CORE_SRC, 'extract')
+    for (const file of walkSrc(EXTRACT_DIR)) {
+      const lines = readFileSync(file, 'utf8').split('\n')
+      lines.forEach((line, i) => {
+        if (/\bconfidence\s*:\s*0\.5\b/.test(line)) {
+          offenders.push(`${file}:${i + 1}: ${line.trim()}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('OBSERVED grades by signal block: spanCount: 500 + recent grades strictly above spanCount: 5 + recent (ADR-066 §2)', async () => {
+    const { confidenceForObservedSignal } = await import('@neat.is/types')
+    const strong = confidenceForObservedSignal({ spanCount: 500, errorCount: 0, lastObservedAgeMs: 0 })
+    const weak = confidenceForObservedSignal({ spanCount: 5, errorCount: 0, lastObservedAgeMs: 0 })
+    expect(strong).toBeGreaterThan(weak)
+  })
+
+  it('OBSERVED grades by signal block: errorCount: 4 / spanCount: 5 grades strictly below errorCount: 0 / spanCount: 5 (ADR-066 §2)', async () => {
+    const { confidenceForObservedSignal } = await import('@neat.is/types')
+    const clean = confidenceForObservedSignal({ spanCount: 5, errorCount: 0, lastObservedAgeMs: 0 })
+    const degraded = confidenceForObservedSignal({ spanCount: 5, errorCount: 4, lastObservedAgeMs: 0 })
+    expect(degraded).toBeLessThan(clean)
+  })
 
   it.todo(
-    'EXTRACTED grades structural file facts at ~0.85: package.json deps, AST imports, Dockerfile RUNS_ON, ConfigNode existence (ADR-066 §1)',
+    'OBSERVED never emits flat confidence: 1.0 unless the signal block warrants it — flips live with #258',
   )
 
-  it.todo(
-    'EXTRACTED grades verified call sites at ~0.85 when a framework-aware recognizer matched (ADR-066 §1)',
-  )
+  it('precision floor: a fixture with above- and below-threshold EXTRACTED candidates produces only above-threshold edges in the graph (ADR-066 §3)', async () => {
+    // Demo graph contains a hostname-shape CALLS edge (0.2, below default
+    // floor) and structural CONFIGURED_BY / CONNECTS_TO / DEPENDS_ON /
+    // RUNS_ON edges (0.85, above floor). With default floor, only the
+    // structural edges land.
+    const { resetGraph, getGraph } = await import('../../src/graph.js')
+    const { extractFromDirectory } = await import('../../src/extract.js')
+    const path = await import('node:path')
+    const DEMO_PATH = path.resolve(__dirname, '../../../../demo')
+    const prev = process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    try {
+      resetGraph()
+      const g = getGraph()
+      await extractFromDirectory(g, DEMO_PATH)
+      let aboveFloor = 0
+      let belowFloor = 0
+      g.forEachEdge((_id, attrs) => {
+        const e = attrs as GraphEdge
+        if (e.provenance !== Provenance.EXTRACTED) return
+        if ((e.confidence ?? 0) >= 0.7) aboveFloor++
+        else belowFloor++
+      })
+      expect(aboveFloor).toBeGreaterThanOrEqual(1)
+      expect(belowFloor).toBe(0)
+    } finally {
+      if (prev === undefined) delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+      else process.env.NEAT_EXTRACTED_PRECISION_FLOOR = prev
+    }
+  })
 
-  it.todo(
-    'EXTRACTED grades string-shaped candidates with structural support at ~0.5 (ADR-066 §1)',
-  )
+  it('precision floor: NEAT_EXTRACTED_PRECISION_FLOOR overrides the default 0.7 threshold (ADR-066 §3)', async () => {
+    const { extractedPrecisionFloor } = await import('@neat.is/types')
+    const prev = process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    process.env.NEAT_EXTRACTED_PRECISION_FLOOR = '0.4'
+    try {
+      expect(extractedPrecisionFloor()).toBeCloseTo(0.4, 2)
+    } finally {
+      if (prev === undefined) delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+      else process.env.NEAT_EXTRACTED_PRECISION_FLOOR = prev
+    }
+  })
 
-  it.todo(
-    'EXTRACTED grades string-shaped candidates without structural support at ~0.2 (ADR-066 §1) — these fall below the precision floor by default',
-  )
-
-  it.todo(
-    'no `confidence: 0.5` literal remains in packages/core/src/extract/ (the flat-coarse emission pattern is a contract violation under ADR-066)',
-  )
-
-  it.todo(
-    'OBSERVED grades by signal block: spanCount: 500 + recent grades strictly above spanCount: 5 + recent on otherwise-identical edges (ADR-066 §2)',
-  )
-
-  it.todo(
-    'OBSERVED grades by signal block: errorCount: 4 / spanCount: 5 grades strictly below errorCount: 0 / spanCount: 5 (ADR-066 §2)',
-  )
-
-  it.todo(
-    'OBSERVED never emits flat confidence: 1.0 unless the signal block warrants it (spanCount >= 100 + lastObservedAgeMs < 1h) (ADR-066 §2)',
-  )
-
-  it.todo(
-    'precision floor: a fixture with above- and below-threshold EXTRACTED candidates produces only above-threshold edges in the graph (ADR-066 §3)',
-  )
-
-  it.todo(
-    'precision floor: NEAT_EXTRACTED_PRECISION_FLOOR overrides the default 0.7 threshold (ADR-066 §3)',
-  )
-
-  it.todo(
-    'precision floor: NEAT_EXTRACTED_PRECISION_FLOOR=0.0 keeps every candidate (diagnostic mode) (ADR-066 §3)',
-  )
+  it('precision floor: NEAT_EXTRACTED_PRECISION_FLOOR=0.0 keeps every candidate (diagnostic mode) (ADR-066 §3)', async () => {
+    const { passesExtractedFloor } = await import('@neat.is/types')
+    const prev = process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    process.env.NEAT_EXTRACTED_PRECISION_FLOOR = '0'
+    try {
+      expect(passesExtractedFloor(0)).toBe(true)
+      expect(passesExtractedFloor(0.1)).toBe(true)
+    } finally {
+      if (prev === undefined) delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+      else process.env.NEAT_EXTRACTED_PRECISION_FLOOR = prev
+    }
+  })
 
   it.todo(
     'computeDivergences orders `missing-extracted` ahead of `missing-observed` when both surface at equal confidence (ADR-066 §4)',

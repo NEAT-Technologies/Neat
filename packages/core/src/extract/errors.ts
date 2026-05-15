@@ -102,3 +102,57 @@ export function formatExtractionBanner(count: number): string {
   if (count === 1) return `[neat] 1 file skipped due to parse errors`
   return `[neat] ${count} files skipped due to parse errors`
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// ADR-066 — precision-floor drop accounting.
+//
+// EXTRACTED candidates whose graded confidence falls below
+// NEAT_EXTRACTED_PRECISION_FLOOR (default 0.7) are computed but never added
+// to the graph. The drop count surfaces on the extraction banner;
+// NEAT_EXTRACTED_REJECTED_LOG=1 routes the per-candidate detail to
+// `<projectDir>/neat-out/rejected.ndjson`. The default keeps the sidecar
+// surface quiet.
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface DroppedExtractedEdge {
+  source: string
+  target: string
+  type: string
+  confidence: number
+  confidenceKind: string
+  evidence: { file: string; line?: number; snippet?: string }
+}
+
+const droppedSink: DroppedExtractedEdge[] = []
+
+export function noteExtractedDropped(edge: DroppedExtractedEdge): void {
+  droppedSink.push(edge)
+}
+
+export function drainDroppedExtracted(): DroppedExtractedEdge[] {
+  return droppedSink.splice(0, droppedSink.length)
+}
+
+export function pendingDroppedExtracted(): number {
+  return droppedSink.length
+}
+
+export function isRejectedLogEnabled(): boolean {
+  const raw = process.env.NEAT_EXTRACTED_REJECTED_LOG
+  return raw === '1' || raw === 'true'
+}
+
+export async function writeRejectedExtracted(
+  drops: DroppedExtractedEdge[],
+  rejectedPath: string,
+): Promise<void> {
+  if (drops.length === 0) return
+  await fs.mkdir(path.dirname(rejectedPath), { recursive: true })
+  const lines = drops.map((d) => JSON.stringify({ ...d, ts: new Date().toISOString() })).join('\n') + '\n'
+  await fs.appendFile(rejectedPath, lines, 'utf8')
+}
+
+export function formatPrecisionFloorBanner(count: number): string {
+  if (count === 1) return `[neat] 1 extracted edge dropped below precision floor`
+  return `[neat] ${count} extracted edges dropped below precision floor`
+}

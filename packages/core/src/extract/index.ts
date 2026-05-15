@@ -24,8 +24,13 @@ import { addInfra } from './infra/index.js'
 import {
   drainExtractionErrors,
   writeExtractionErrors,
+  drainDroppedExtracted,
+  isRejectedLogEnabled,
+  writeRejectedExtracted,
   type ExtractionError,
+  type DroppedExtractedEdge,
 } from './errors.js'
+import path from 'node:path'
 import { retireExtractedEdgesByMissingFile } from './retire.js'
 
 export interface ExtractResult {
@@ -42,6 +47,13 @@ export interface ExtractResult {
   // evidence.file no longer exists on disk. Zero on a clean pass; non-zero
   // means the snapshot was carrying ghosts from deleted source.
   ghostsRetired: number
+  // ADR-066 — count of EXTRACTED candidates dropped at emit time because
+  // their graded confidence fell below NEAT_EXTRACTED_PRECISION_FLOOR.
+  // Always reported (zero is observable). Detail entries surface in
+  // `droppedEntries` and route to rejected.ndjson when
+  // NEAT_EXTRACTED_REJECTED_LOG=1.
+  extractedDropped: number
+  droppedEntries: DroppedExtractedEdge[]
 }
 
 export interface ExtractOptions {
@@ -111,6 +123,27 @@ export async function extractFromDirectory(
     }
   }
 
+  // ADR-066 — drain the precision-floor drops. Always returned; only
+  // persisted when NEAT_EXTRACTED_REJECTED_LOG=1 (opt-in to keep the
+  // default sidecar surface quiet).
+  const droppedEntries = drainDroppedExtracted()
+  if (
+    isRejectedLogEnabled() &&
+    opts.errorsPath &&
+    droppedEntries.length > 0
+  ) {
+    // rejected.ndjson lives alongside errors.ndjson under neat-out/. Derive
+    // from errorsPath rather than re-plumbing a new option.
+    const rejectedPath = path.join(path.dirname(opts.errorsPath), 'rejected.ndjson')
+    try {
+      await writeRejectedExtracted(droppedEntries, rejectedPath)
+    } catch (err) {
+      console.warn(
+        `[neat] failed to write rejected extracted edges to ${rejectedPath}: ${(err as Error).message}`,
+      )
+    }
+  }
+
   const result: ExtractResult = {
     nodesAdded:
       phase1Nodes +
@@ -124,6 +157,8 @@ export async function extractFromDirectory(
     extractionErrors: errorEntries.length,
     errorEntries,
     ghostsRetired,
+    extractedDropped: droppedEntries.length,
+    droppedEntries,
   }
 
   // extraction-complete (ADR-051). fileCount is the number of services
