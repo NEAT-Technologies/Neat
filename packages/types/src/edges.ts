@@ -42,6 +42,12 @@ export const EdgeSignalSchema = z.object({
 })
 export type EdgeSignal = z.infer<typeof EdgeSignalSchema>
 
+// `confidence` is in [0, 1] and graded per provenance tier (ADR-066). Producers
+// write it on every EXTRACTED and OBSERVED edge via the helpers in
+// confidence.ts; flat coarse values (the old `0.5` / `1.0` shape) are a
+// contract violation. The field stays `.optional()` for snapshot back-compat —
+// older snapshots may carry edges without confidence and persist.ts loads them
+// on the documented growth path (ADR-031).
 export const GraphEdgeSchema = z.object({
   id: z.string(),
   source: z.string(),

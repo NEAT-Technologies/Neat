@@ -11,7 +11,7 @@ This file is the index. Each rule has a short summary and a link to its full per
 | # | Contract | File | Governs | Status |
 |---|----------|------|---------|--------|
 | 1 | Node identity | [`contracts/identity.md`](./contracts/identity.md) | Node ids constructed via `@neat.is/types/identity` helpers, never literals (ADR-028) | ✅ landed |
-| 2 | Edge identity + provenance | [`contracts/provenance.md`](./contracts/provenance.md) | Edge id wire format per provenance, `PROV_RANK` ordering, coexistence, confidence semantics (ADR-029) | ✅ landed |
+| 2 | Edge identity + provenance | [`contracts/provenance.md`](./contracts/provenance.md) | Edge id wire format per provenance, `PROV_RANK` ordering, coexistence, graded confidence per tier (ADR-029 + ADR-066) | ✅ landed (graded confidence amended v0.3.4) |
 | 3 | Node + edge lifecycle | [`contracts/lifecycle.md`](./contracts/lifecycle.md) | Creation, transition, retirement. Mutation authority locked to `ingest.ts` and `extract/*` (ADR-030) | ✅ landed |
 | 4 | Schema growth vs shape | [`contracts/schema.md`](./contracts/schema.md) | Growth = commit-and-go (snapshot diff). Shape change = ADR + `persist.ts` migration (ADR-031) | ✅ landed |
 | 5 | Static extraction | [`contracts/static-extraction.md`](./contracts/static-extraction.md) | Producer interface, evidence on every EXTRACTED edge, ghost-edge cleanup keyed on `evidence.file`, language dispatch, idempotency, five precision filters (test-scope / comment-body / JSX-link / .env.template / no-substring-matching), loud failure mode via errors.ndjson + banner + NEAT_STRICT_EXTRACTION (ADR-032 + ADR-065) | ✅ landed (v0.2.1 opens; precision + loud-failure amended v0.3.3) |
@@ -39,7 +39,7 @@ This file is the index. Each rule has a short summary and a link to its full per
 | 27 | Web shell multi-project routing | [`contracts/web-multi-project.md`](./contracts/web-multi-project.md) | AppShell owns project state; URL → localStorage → /projects → 'default' resolution chain; project change triggers data refresh; no hardcoded project names; AppShell mounts client-only via `dynamic({ ssr: false })` (ADR-057 + ADR-062) | ✅ landed (Track 1 frontend) |
 | 28 | Web shell debugging surface | [`contracts/web-debugging.md`](./contracts/web-debugging.md) | StatusBar shows daemon + SSE connection state; no silent API failures; debug panel toggleable via Ctrl+Shift+D; read-only (ADR-058) | ✅ landed (Track 1 frontend) |
 | 29 | Web UI bootstrap from neatd | [`contracts/web-bootstrap.md`](./contracts/web-bootstrap.md) | `neatd start` launches the web UI on port 6328 (T9 NEAT); `NEAT_WEB_PORT` overrides; fail-loud on collision; `@neat.is/web` joins the lockstep (ADR-059) | ✅ landed (Track 1 frontend) |
-| 30 | Divergence query | [`contracts/divergence-query.md`](./contracts/divergence-query.md) | `get_divergences` as a first-class graph operation across REST + MCP + CLI; five divergence types; read-only; derived not persisted; amends ADR-039 + ADR-050 allowlists from nine to ten (ADR-060) | ✅ landed (the thesis surface; we waited until the end) |
+| 30 | Divergence query | [`contracts/divergence-query.md`](./contracts/divergence-query.md) | `get_divergences` as a first-class graph operation across REST + MCP + CLI; five divergence types; read-only; derived not persisted; OBSERVED-led weighting + graded EXTRACTED/OBSERVED confidence + precision floor at emit (ADR-060 + ADR-066) | ✅ landed (OBSERVED-led weighting amended v0.3.4) |
 
 ### Future contracts — opened at the start of each milestone
 

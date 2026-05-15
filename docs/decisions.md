@@ -2188,3 +2188,97 @@ The assertions land as `it.todo` in this PR (Phase 3A — contract only) and fli
 - **Tree-sitter upgrade or grammar swap to fix the "Invalid argument" cause.** The loud failure mode surfaces the failures; the underlying parser fix lives in the implementation PR (#239) and may end up as an upstream issue against `tree-sitter-typescript` if the cause is in the grammar.
 
 Full rationale and the v0.3.0 failure-mode evidence: `~/neat-experiment/bugs/NEAT-BUG-4-ghost-edges-from-strings.md`, `~/neat-experiment/bugs/NEAT-BUG-6-http-extraction-invalid-argument.md`, `~/neat-experiment/bugs/INDEX.md`.
+
+## ADR-066 — OBSERVED-led divergence query weighting + graded confidence
+
+**Date:** 2026-05-15
+**Status:** Active. Amends ADR-029 (provenance confidence semantics), ADR-060 (divergence query weighting). Extends ADR-065's precision filters with a confidence-based emit floor on top of the same producer surface.
+
+**Context.** The thesis surface (`get_divergences`, ADR-060) treats all five divergence types as symmetric peers, and it operates on edges that all carry the same coarse confidence — flat `0.5` on every EXTRACTED edge, flat `1.0` on every OBSERVED edge. The original provenance ranking — `OBSERVED > EXTRACTED > INFERRED > STALE` — treats EXTRACTED as a high-trust direct signal when its claims are structurally derived (file existence, package.json deps, AST imports, Dockerfile facts). A single coarse `0.5` for every EXTRACTED edge conflates structural emissions with heuristic ones (URL-string pattern matches), and a single `1.0` for every OBSERVED edge treats a single span as evidence equivalent to a thousand recent ones. Grading confidence within each provenance tier restores honest signal so the divergence query can lead with findings that warrant action.
+
+The ADR formalises three pieces:
+
+1. EXTRACTED is graded at emit time per extractor.
+2. OBSERVED is graded by signal block.
+3. The divergence query consumes the graded values and surfaces OBSERVED-led findings first.
+
+PROV_RANK stays as it is. The grading lives within tiers, not across them.
+
+**Decision.**
+
+### 1. EXTRACTED confidence is graded at emit time
+
+Every producer under `packages/core/src/extract/` emits a `confidence` value reflecting how the edge was derived. The grading helper lives in `@neat.is/types/confidence.ts` so producers and tests share one source of truth.
+
+| Source of the EXTRACTED edge | Confidence |
+|---|---|
+| Structural file fact (import, package.json dep, Dockerfile `RUNS_ON`, ConfigNode existence per ADR-016) | `0.85` |
+| Verified call site (framework-aware recognizer matched the call expression) | `0.85` |
+| String-shaped candidate with structural support (URL near a known call expression) | `0.5` |
+| String-shaped candidate without structural support (substring or hostname-shape alone) | `0.2` |
+
+ADR-065's five precision filters still gate emission upstream of this scale; what passes the filters is then graded here.
+
+### 2. OBSERVED confidence is graded by signal block
+
+`upsertObservedEdge` in `packages/core/src/ingest.ts` writes confidence at the same point it writes the `signal` block (`spanCount`, `errorCount`, `lastObservedAgeMs`). The grading shape:
+
+- `spanCount >= 100` and `lastObservedAgeMs < 1h` → `0.95–1.0` (strong)
+- `spanCount 10–99` and `lastObservedAgeMs < 1h` → `0.7–0.9` (good)
+- `spanCount < 10` and `lastObservedAgeMs < 1h` → `0.4–0.6` (weak — a single span could be a misconfig)
+- `errorCount / spanCount > 0` subtracts up to `0.2` (degraded edge)
+
+The exact piecewise function lives in the confidence helper; the ADR sets the buckets and the direction (more volume + more recent = higher confidence; more errors = lower). PROV_RANK is preserved — OBSERVED still outranks INFERRED + EXTRACTED for traversal preference. The grading sits within the OBSERVED tier.
+
+### 3. Precision floor on EXTRACTED at emit time
+
+EXTRACTED edges with `confidence` below `NEAT_EXTRACTED_PRECISION_FLOOR` (default `0.7`) are computed but never added to the graph. The check sits at the single producer chokepoint that hands edges to the graph — sub-threshold candidates increment a counter that surfaces on the extraction banner (`[neat] M extracted edges dropped below precision floor`). Optional logging to `<projectDir>/neat-out/rejected.ndjson` activates when `NEAT_EXTRACTED_REJECTED_LOG=1`; the default keeps the rejected sidecar quiet.
+
+Today's URL/hostname-shape matchers produce mostly `0.2` candidates — the floor means almost nothing crosses into the graph for cross-service EXTRACTED until framework-aware recognizers land in a later milestone. Intra-codebase structural edges keep flowing because they grade above the floor. That is the intended outcome; 10 trustworthy edges beats 20 edges with 10 lies in them.
+
+`NEAT_EXTRACTED_PRECISION_FLOOR=0.0` flips off the floor for diagnostics — useful when reproducing a missing edge.
+
+### 4. Divergence query reweighting
+
+`computeDivergences` (`packages/core/src/divergences.ts`) reweights against the graded values:
+
+- **`missing-extracted`** (OBSERVED found something EXTRACTED missed) is the headline finding type. Its confidence cascades from the underlying OBSERVED edge's graded confidence. When OBSERVED is graded high, the divergence surfaces high.
+- **`missing-observed`** (EXTRACTED claims an edge OBSERVED never confirmed) is weighted by the EXTRACTED edge's confidence grade. Substring-match-only EXTRACTED candidates never enter the graph in the first place (rule 3 above), so the only `missing-observed` rows that surface are backed by structural or verified-call-site facts.
+- **`version-mismatch` / `host-mismatch` / `compat-violation`** retain symmetric weighting — both sides are specific about a versioned or hostname-identified entity, and definitive compat rules fire at `1.0`.
+
+Default sort order remains `confidence` descending (ADR-060 §5). Within the same confidence, `missing-extracted` ties break ahead of `missing-observed` so the OBSERVED-led finding leads when grades are otherwise equal. Callers can re-sort.
+
+The existing `?minConfidence` query parameter is unchanged. The reweighting does not introduce a hidden default floor; consumers that want one apply it via the existing parameter.
+
+### 5. Edge schema
+
+`EdgeSchema.confidence` in `packages/types/src/edges.ts` stays at `z.number().min(0).max(1).optional()` for snapshot back-compat (older snapshots may carry edges without a `confidence` field; persist.ts loads them on the documented growth path per ADR-031). Producers going forward write `confidence` on every EXTRACTED and OBSERVED edge; the contract test enforces presence.
+
+### 6. Response envelope
+
+ADR-061's envelope rule applies to `/graph/divergences` as a structured-result endpoint (ADR-061 §2 b). The documented shape — `{ divergences, totalAffected, computedAt }` — is the only valid response on snapshot-load, zero-result, and live-state. No `null`, no bare values. The contract scan extends to assert this shape for the divergence endpoint at both mount points (default + project-scoped).
+
+**Authority.**
+
+- Schema + grading helpers: `packages/types/src/confidence.ts` (new), `packages/types/src/edges.ts`.
+- EXTRACTED grading at emit: `packages/core/src/extract/services.ts`, `packages/core/src/extract/configs.ts`, `packages/core/src/extract/infra/*.ts`, `packages/core/src/extract/calls/*.ts`.
+- Precision floor: `packages/core/src/ingest.ts` (or the producer-side emit helper feeding it; the chokepoint is wherever EXTRACTED edges land in the graph).
+- OBSERVED grading: `packages/core/src/ingest.ts` (`upsertObservedEdge`).
+- Reweighting: `packages/core/src/divergences.ts`.
+
+**Enforcement.** New describe block in `packages/core/test/audits/contracts.test.ts` for ADR-066. Initial `it.todo` entries flip live as the v0.3.4 implementation lands:
+
+- EXTRACTED edges in the live graph carry confidence per the grading helper; the flat-`0.5` emission pattern is forbidden (regex scan of `packages/core/src/extract/` for `confidence: 0.5` literals).
+- OBSERVED edges grade by signal block — an edge with `spanCount: 5` grades below an otherwise-identical edge with `spanCount: 500`; an edge with `errorCount: 4, spanCount: 5` grades below `errorCount: 0, spanCount: 5`.
+- The precision floor drops sub-threshold EXTRACTED candidates at emit; a fixture with both above- and below-threshold candidate edges produces only above-threshold edges in the graph.
+- `computeDivergences` returns rows with `missing-extracted` leading `missing-observed` when both types are present at comparable confidence.
+- `/graph/divergences` returns the `DivergenceResultSchema` shape on snapshot-load, zero-result, and live-state paths at both mount points — never `null`, never a bare value.
+
+**Out of scope.**
+
+- **Framework-aware call-site recognition.** Today's grading treats every cross-service URL-string match as a `0.2` candidate; the precision floor means most cross-service EXTRACTED disappears until per-framework recognizers land in a later milestone. That is the intended outcome.
+- **PROV_RANK ordering.** ADR-066 grades within tiers; the rank stays `OBSERVED > INFERRED > EXTRACTED > STALE | FRONTIER`.
+- **Persisted divergence history.** ADR-060 §2 stands — derived, not persisted. ADR-066 changes how confidence is graded; it does not add a sidecar.
+- **Confidence-grade enum in `@neat.is/types`.** Free-float `[0, 1]` confidence is enough for the divergence query to reweight against. Whether the grading buckets earn a typed enum is a later question once the v0.3.4 medusa re-run produces signal.
+
+**First application.** v0.3.4.

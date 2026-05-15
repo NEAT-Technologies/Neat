@@ -8,7 +8,7 @@ governs:
   - "packages/core/src/cli.ts"
   - "packages/core/src/cli-client.ts"
   - "packages/mcp/src/index.ts"
-adr: [ADR-060, ADR-029, ADR-039, ADR-050, ADR-027]
+adr: [ADR-060, ADR-066, ADR-029, ADR-039, ADR-050, ADR-027, ADR-061]
 ---
 
 # Divergence query contract
@@ -32,8 +32,8 @@ Computed against the live graph at request time. No persistence; pure derivation
 
 | Type | Detection | Confidence |
 |---|---|---|
-| `missing-observed` | EXTRACTED edge exists; no OBSERVED edge for the same `(source, target, edgeType)` triple | `1.0` if any traffic observed on source else `0.5` |
-| `missing-extracted` | OBSERVED edge exists; no EXTRACTED edge for the same triple | cascaded from OBSERVED edge confidence |
+| `missing-observed` | EXTRACTED edge exists; no OBSERVED edge for the same `(source, target, edgeType)` triple | weighted by the EXTRACTED edge's graded confidence (ADR-066) |
+| `missing-extracted` | OBSERVED edge exists; no EXTRACTED edge for the same triple | cascaded from the OBSERVED edge's graded confidence (ADR-066) |
 | `version-mismatch` | ServiceNode has declared dependency version; OBSERVED edge to a DatabaseNode (or similar) with incompatible engineVersion per compat.json | `1.0` (compat rule definitive) |
 | `host-mismatch` | EXTRACTED CONFIGURED_BY edge points at a config declaring host X; OBSERVED CONNECTS_TO target's host is Y | cascaded from CONNECTS_TO confidence |
 | `compat-violation` | Any compat.json rule fires against an OBSERVED edge (broader than version mismatch) | rule-determined |
@@ -103,9 +103,17 @@ No `divergences.ndjson` sidecar. Each query computes fresh against the live grap
 
 `packages/core/src/divergences.ts` exports `computeDivergences(graph: NeatGraph, opts?: DivergenceQueryOpts): DivergenceResult`. Pure function: no I/O, no mutation, no async. Operates entirely on the in-memory graph reference.
 
-### 5. Sorted by confidence
+### 5. Sorted by confidence; OBSERVED-led ties
 
-Default order is `confidence` descending. Consumer can re-sort. No type-specific severity weights in the contract.
+Default order is `confidence` descending. When confidence ties, `missing-extracted` orders ahead of `missing-observed` so the OBSERVED-led finding leads at the same confidence (ADR-066 §4). Consumer can re-sort.
+
+### 5a. Weighting (ADR-066)
+
+The five divergence types are not symmetric peers. `missing-extracted` is the headline finding type — OBSERVED found an edge that static analysis missed, and that gap is exactly what NEAT's thesis surface exists to surface. `missing-observed` is weighted by the EXTRACTED edge's graded confidence; sub-floor heuristic candidates never enter the graph in the first place (per the static-extraction contract's precision floor), so what surfaces is backed by structural or verified-call-site evidence. `version-mismatch`, `host-mismatch`, and `compat-violation` retain their existing weighting because both sides are specific about a versioned or hostname-identified entity.
+
+### 5b. Envelope (ADR-061)
+
+`/graph/divergences` is a structured-result endpoint per ADR-061 §2 b — it returns the documented `DivergenceResultSchema` shape (`{ divergences, totalAffected, computedAt }`) on snapshot-load, zero-result, and live-state paths at both mount points (default + project-scoped). No `null`, no bare values. The contract scan asserts the shape end-to-end.
 
 ### 6. Allowlist amendments are explicit
 
@@ -123,7 +131,17 @@ The frontend surfaces for this query are real and several — `/divergences` pag
 - **MCP surface:** `packages/mcp/src/index.ts` — register tenth tool, route via REST client
 - **CLI surface:** `packages/core/src/cli.ts` + `packages/core/src/cli-client.ts` — register tenth verb, plumb through
 
-## Enforcement
+## Enforcement (ADR-066 additions)
+
+New live assertions in the `Divergence query (ADR-060)` describe block of `contracts.test.ts`:
+
+- `missing-extracted` orders ahead of `missing-observed` at the same confidence grade.
+- `missing-observed` rows whose EXTRACTED edge graded below the precision floor never enter the graph, and therefore never appear in `computeDivergences` output.
+- `/graph/divergences` returns `DivergenceResultSchema` on snapshot-load (graph reconstructed from `graph.json`), zero-result (no divergences detected), and live-state paths — at both mount points.
+
+Initial entries are `it.todo` in the contract PR; they flip live in the v0.3.4 implementation PRs.
+
+## Enforcement (ADR-060 baseline)
 
 `it.todo` block in `contracts.test.ts` for ADR-060:
 
