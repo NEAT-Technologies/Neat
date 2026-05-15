@@ -142,7 +142,11 @@ describe('handleSpan', () => {
     const edge = ctx.graph.getEdgeAttributes(id) as GraphEdge
     expect(edge.provenance).toBe(Provenance.OBSERVED)
     expect(edge.callCount).toBe(1)
-    expect(edge.confidence).toBe(1)
+    // ADR-066 — confidence grades from the signal block. A single span lands
+    // in the weak tier (< 1.0); 1.0 is reserved for the strong tier
+    // (spanCount >= 100 + recent).
+    expect(edge.confidence).toBeGreaterThan(0)
+    expect(edge.confidence).toBeLessThan(1)
     expect(edge.lastObserved).toBeTruthy()
   })
 

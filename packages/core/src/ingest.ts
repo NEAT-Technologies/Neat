@@ -15,6 +15,7 @@ import {
   EdgeType,
   NodeType,
   Provenance,
+  confidenceForObservedSignal,
   databaseId,
   extractedEdgeId,
   frontierEdgeId,
@@ -355,36 +356,41 @@ function upsertObservedEdge(
     const existing = graph.getEdgeAttributes(id) as GraphEdge
     const newSpanCount = (existing.signal?.spanCount ?? existing.callCount ?? 0) + 1
     const newErrorCount = (existing.signal?.errorCount ?? 0) + (isError ? 1 : 0)
+    const newSignal = {
+      spanCount: newSpanCount,
+      errorCount: newErrorCount,
+      lastObservedAgeMs: 0,
+    }
+    // ADR-066 §2 — confidence grades from the signal block. PROV_RANK stays;
+    // the grade reflects volume + recency + error ratio within the OBSERVED
+    // tier.
     const updated: GraphEdge = {
       ...existing,
       provenance: Provenance.OBSERVED,
       lastObserved: ts,
       callCount: newSpanCount,
-      signal: {
-        spanCount: newSpanCount,
-        errorCount: newErrorCount,
-        lastObservedAgeMs: 0,
-      },
-      confidence: 1.0,
+      signal: newSignal,
+      confidence: confidenceForObservedSignal(newSignal),
     }
     graph.replaceEdgeAttributes(id, updated)
     return { edge: updated, created: false }
   }
 
+  const signal = {
+    spanCount: 1,
+    errorCount: isError ? 1 : 0,
+    lastObservedAgeMs: 0,
+  }
   const edge: GraphEdge = {
     id,
     source,
     target,
     type,
     provenance: Provenance.OBSERVED,
-    confidence: 1.0,
+    confidence: confidenceForObservedSignal(signal),
     lastObserved: ts,
     callCount: 1,
-    signal: {
-      spanCount: 1,
-      errorCount: isError ? 1 : 0,
-      lastObservedAgeMs: 0,
-    },
+    signal,
   }
   graph.addEdgeWithKey(id, source, target, edge)
   return { edge, created: true }
