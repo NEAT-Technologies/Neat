@@ -97,6 +97,10 @@ export function grpcEndpointsFromFile(
       name,
       kind,
       edgeType: 'CALLS',
+      // `new <Name>Client(...)` with @aws-sdk/* or @grpc/grpc-js import
+      // context — import-aware classification per #238. Verified-call-site
+      // tier (ADR-066).
+      confidenceKind: 'verified-call-site',
       evidence: {
         file: path.relative(serviceDir, file.path),
         line,

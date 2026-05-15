@@ -37,6 +37,10 @@ export function kafkaEndpointsFromFile(
       name: topic,
       kind: 'kafka-topic',
       edgeType,
+      // `producer.send({topic: 'x'})` / `consumer.subscribe({topic: 'x'})` —
+      // framework-aware (kafkajs / node-rdkafka shape). Verified-call-site
+      // tier (ADR-066).
+      confidenceKind: 'verified-call-site',
       evidence: {
         file: path.relative(serviceDir, file.path),
         line,

@@ -1,7 +1,13 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ConfigNode, GraphEdge } from '@neat.is/types'
-import { EdgeType, NodeType, Provenance, configId } from '@neat.is/types'
+import {
+  EdgeType,
+  NodeType,
+  Provenance,
+  configId,
+  confidenceForExtracted,
+} from '@neat.is/types'
 import type { NeatGraph } from '../graph.js'
 import { IGNORED_DIRS, isConfigFile, makeEdgeId, type DiscoveredService } from './shared.js'
 
@@ -50,12 +56,15 @@ export async function addConfigNodes(
         graph.addNode(node.id, node)
         nodesAdded++
       }
+      // ConfigNode existence is a direct file fact (ADR-016) — graded at the
+      // structural tier per ADR-066.
       const edge: GraphEdge = {
         id: makeEdgeId(service.node.id, node.id, EdgeType.CONFIGURED_BY),
         source: service.node.id,
         target: node.id,
         type: EdgeType.CONFIGURED_BY,
         provenance: Provenance.EXTRACTED,
+        confidence: confidenceForExtracted('structural'),
         evidence: { file: relPath.split(path.sep).join('/') },
       }
       if (!graph.hasEdge(edge.id)) {

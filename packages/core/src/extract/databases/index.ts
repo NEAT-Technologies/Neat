@@ -6,7 +6,13 @@ import type {
   GraphNode,
   ServiceNode,
 } from '@neat.is/types'
-import { EdgeType, NodeType, Provenance, databaseId } from '@neat.is/types'
+import {
+  EdgeType,
+  NodeType,
+  Provenance,
+  databaseId,
+  confidenceForExtracted,
+} from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
 import {
   checkCompatibility,
@@ -221,12 +227,15 @@ export async function addDatabasesAndCompat(
           discoveredVia: mergedDiscoveredVia,
         })
       }
+      // DB connection from a parsed config file is a direct AST/file fact —
+      // structural tier per ADR-066.
       const edge: GraphEdge = {
         id: makeEdgeId(service.node.id, dbNode.id, EdgeType.CONNECTS_TO),
         source: service.node.id,
         target: dbNode.id,
         type: EdgeType.CONNECTS_TO,
         provenance: Provenance.EXTRACTED,
+        confidence: confidenceForExtracted('structural'),
         // ADR-032 / #140 — every EXTRACTED edge carries evidence.file.
         // Ghost-edge cleanup keys retirement on this; the conditional
         // sourceFile spread that used to live here was a v0.1.x leftover.

@@ -3,7 +3,12 @@ import Parser from 'tree-sitter'
 import JavaScript from 'tree-sitter-javascript'
 import Python from 'tree-sitter-python'
 import type { GraphEdge } from '@neat.is/types'
-import { EdgeType, Provenance } from '@neat.is/types'
+import {
+  EdgeType,
+  Provenance,
+  confidenceForExtracted,
+  passesExtractedFloor,
+} from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
 import {
   isTestPath,
@@ -11,7 +16,7 @@ import {
   urlMatchesHost,
   type DiscoveredService,
 } from '../shared.js'
-import { recordExtractionError } from '../errors.js'
+import { recordExtractionError, noteExtractedDropped } from '../errors.js'
 import { loadSourceFiles, lineOf, snippet } from './shared.js'
 
 // JS uses `string_fragment` for the textual interior of a template/string;
@@ -150,17 +155,37 @@ export async function addHttpCallEdges(
     for (const [targetId, evidenceFile] of seenTargets) {
       const fileContent = files.find((f) => f.path === evidenceFile.file)?.content ?? ''
       const line = lineOf(fileContent, `//${evidenceFile.host}`)
+      // URL-string match against a registered service hostname is the
+      // hostname-shape tier per ADR-066 — structurally tight (urlMatchesHost
+      // requires scheme + exact hostname) but no framework-aware recognizer
+      // confirms the call. Drops below the default precision floor (0.7) and
+      // never enters the graph unless the floor is lowered for diagnostics.
+      const confidence = confidenceForExtracted('hostname-shape-match')
+      const ev = {
+        file: path.relative(service.dir, evidenceFile.file),
+        line,
+        snippet: snippet(fileContent, line),
+      }
+      const edgeId = makeEdgeId(service.node.id, targetId, EdgeType.CALLS)
+      if (!passesExtractedFloor(confidence)) {
+        noteExtractedDropped({
+          source: service.node.id,
+          target: targetId,
+          type: EdgeType.CALLS,
+          confidence,
+          confidenceKind: 'hostname-shape-match',
+          evidence: ev,
+        })
+        continue
+      }
       const edge: GraphEdge = {
-        id: makeEdgeId(service.node.id, targetId, EdgeType.CALLS),
+        id: edgeId,
         source: service.node.id,
         target: targetId,
         type: EdgeType.CALLS,
         provenance: Provenance.EXTRACTED,
-        evidence: {
-          file: path.relative(service.dir, evidenceFile.file),
-          line,
-          snippet: snippet(fileContent, line),
-        },
+        confidence,
+        evidence: ev,
       }
       if (!graph.hasEdge(edge.id)) {
         graph.addEdgeWithKey(edge.id, edge.source, edge.target, edge)

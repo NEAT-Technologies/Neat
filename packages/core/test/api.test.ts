@@ -10,8 +10,16 @@ const DEMO_PATH = path.resolve(__dirname, '../../../demo')
 
 describe('REST API (fastify.inject)', () => {
   let app: FastifyInstance
+  let prevFloor: string | undefined
 
   beforeEach(async () => {
+    // The demo's service-a → service-b CALLS edge comes from the hostname-
+    // shape matcher and grades at 0.2 — below the default precision floor
+    // (0.7) per ADR-066. Flip the floor off so the API tests against the
+    // demo see the full edge set the root-cause / blast-radius assertions
+    // depend on. Restored in afterEach.
+    prevFloor = process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    process.env.NEAT_EXTRACTED_PRECISION_FLOOR = '0'
     resetGraph()
     const graph = getGraph()
     await extractFromDirectory(graph, DEMO_PATH)
@@ -20,6 +28,8 @@ describe('REST API (fastify.inject)', () => {
 
   afterEach(async () => {
     await app.close()
+    if (prevFloor === undefined) delete process.env.NEAT_EXTRACTED_PRECISION_FLOOR
+    else process.env.NEAT_EXTRACTED_PRECISION_FLOOR = prevFloor
   })
 
   it('GET /health returns the expected shape', async () => {

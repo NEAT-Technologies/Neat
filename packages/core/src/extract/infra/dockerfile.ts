@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import type { GraphEdge } from '@neat.is/types'
-import { EdgeType, Provenance } from '@neat.is/types'
+import { EdgeType, Provenance, confidenceForExtracted } from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
 import { exists, makeEdgeId, type DiscoveredService } from '../shared.js'
 import { recordExtractionError } from '../errors.js'
@@ -62,12 +62,14 @@ export async function addDockerfileRuntimes(
 
     const edgeId = makeEdgeId(service.node.id, node.id, EdgeType.RUNS_ON)
     if (!graph.hasEdge(edgeId)) {
+      // Dockerfile FROM line — direct file fact, structural tier per ADR-066.
       const edge: GraphEdge = {
         id: edgeId,
         source: service.node.id,
         target: node.id,
         type: EdgeType.RUNS_ON,
         provenance: Provenance.EXTRACTED,
+        confidence: confidenceForExtracted('structural'),
         evidence: {
           file: path.relative(scanPath, dockerfilePath).split(path.sep).join('/'),
         },

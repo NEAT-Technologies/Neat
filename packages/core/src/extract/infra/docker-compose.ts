@@ -1,6 +1,6 @@
 import path from 'node:path'
 import type { GraphEdge } from '@neat.is/types'
-import { EdgeType, Provenance } from '@neat.is/types'
+import { EdgeType, Provenance, confidenceForExtracted } from '@neat.is/types'
 import type { NeatGraph } from '../../graph.js'
 import { exists, makeEdgeId, readYaml, type DiscoveredService } from '../shared.js'
 import { recordExtractionError } from '../errors.js'
@@ -94,12 +94,15 @@ export async function addComposeInfra(
       if (!targetId) continue
       const edgeId = makeEdgeId(sourceId, targetId, EdgeType.DEPENDS_ON)
       if (graph.hasEdge(edgeId)) continue
+      // depends_on declaration from docker-compose.yml — structural deployment
+      // fact, structural tier per ADR-066.
       const edge: GraphEdge = {
         id: edgeId,
         source: sourceId,
         target: targetId,
         type: EdgeType.DEPENDS_ON,
         provenance: Provenance.EXTRACTED,
+        confidence: confidenceForExtracted('structural'),
         evidence: { file: evidenceFile },
       }
       graph.addEdgeWithKey(edgeId, edge.source, edge.target, edge)

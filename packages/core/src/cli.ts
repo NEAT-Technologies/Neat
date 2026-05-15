@@ -7,6 +7,7 @@ import { DEFAULT_PROJECT, getGraph, resetGraph } from './graph.js'
 import { extractFromDirectory } from './extract.js'
 import {
   formatExtractionBanner,
+  formatPrecisionFloorBanner,
   isStrictExtractionEnabled,
 } from './extract/errors.js'
 import { discoverServices } from './extract/services.js'
@@ -464,6 +465,10 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
   if (result.extractionErrors > 0) {
     console.log(`errors:   ${errorsPath}`)
   }
+  // ADR-066 — precision-floor drop banner. Always emitted; 0 is observable
+  // as a positive signal that no cross-service heuristic edges grew the
+  // graph this pass.
+  console.log(formatPrecisionFloorBanner(result.extractedDropped))
 
   const incompatibilities = findIncompatibilities(nodes)
   if (incompatibilities.length > 0) {

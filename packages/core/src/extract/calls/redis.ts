@@ -25,6 +25,10 @@ export function redisEndpointsFromFile(
       name: host,
       kind: 'redis',
       edgeType: 'CALLS',
+      // `redis://host` URL literal — the scheme is structural support, but no
+      // call expression is verified to wire it through. URL-with-structural-
+      // support tier (ADR-066).
+      confidenceKind: 'url-with-structural-support',
       evidence: {
         file: path.relative(serviceDir, file.path),
         line,
