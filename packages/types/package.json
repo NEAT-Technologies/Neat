@@ -1,6 +1,6 @@
 {
   "name": "@neat.is/types",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Shared Zod schemas, types, and runtime constants for NEAT",
   "license": "BUSL-1.1",
   "homepage": "https://neat.is",
@@ -26,7 +26,9 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "prepublishOnly": "npm run build",

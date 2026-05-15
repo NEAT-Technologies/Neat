@@ -1,6 +1,6 @@
 {
   "name": "@neat.is/mcp",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "NEAT MCP server: exposes graph queries to AI agents over stdio",
   "license": "BUSL-1.1",
   "homepage": "https://neat.is",
@@ -30,7 +30,9 @@
   "bin": {
     "neat-mcp": "./dist/index.cjs"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "prepublishOnly": "npm run build",
@@ -42,7 +44,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@neat.is/types": "^0.3.3",
+    "@neat.is/types": "^0.3.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {
