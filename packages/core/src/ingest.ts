@@ -436,21 +436,46 @@ async function appendErrorEvent(ctx: IngestContext, ev: ErrorEvent): Promise<voi
 // originating service because graph state isn't available at this point —
 // the queued handleSpan path may reach a more precise target later, but the
 // durable record is what the receiver writes here.
+//
+// errorMessage prefers the exception event's `exception.message` (OTel
+// semconv), falls back to the span name, then the literal 'unknown error'.
+// `span.status.message` is intentionally not in the chain — OTel
+// auto-instrumentation often pollutes that field with the HTTP method for
+// HTTP server errors, which is misleading at the incident surface.
+// Span attributes pass through verbatim so consumers can read source
+// attribution (`code.filepath`, `code.lineno`, `code.function`) and other
+// SDK-emitted context without ingest enumerating every key it cares about.
+// Coerce span attributes to a JSON-safe shape — bigint values from the
+// parsed span (long ids, high-cardinality counters) become strings so the
+// passthrough record can be serialised to the ErrorEvent shape and round-
+// tripped through ErrorEventSchema. All other types pass through verbatim.
+function sanitizeAttributes(
+  attrs: ParsedSpan['attributes'],
+): Record<string, string | number | boolean | null | string[] | number[] | boolean[]> {
+  const out: Record<string, string | number | boolean | null | string[] | number[] | boolean[]> = {}
+  for (const [k, v] of Object.entries(attrs)) {
+    if (typeof v === 'bigint') out[k] = v.toString()
+    else out[k] = v as string | number | boolean | null | string[] | number[] | boolean[]
+  }
+  return out
+}
+
 export function buildErrorEventForReceiver(span: ParsedSpan): ErrorEvent | null {
   if (span.statusCode !== 2) return null
   const ts = span.startTimeIso ?? new Date().toISOString()
+  const attrs = sanitizeAttributes(span.attributes)
   return {
     id: `${span.traceId}:${span.spanId}`,
     timestamp: ts,
     service: span.service,
     traceId: span.traceId,
     spanId: span.spanId,
-    errorMessage:
-      span.exception?.message ?? span.errorMessage ?? span.name ?? 'unknown error',
+    errorMessage: span.exception?.message ?? span.name ?? 'unknown error',
     ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
     ...(span.exception?.stacktrace
       ? { exceptionStacktrace: span.exception.stacktrace }
       : {}),
+    ...(Object.keys(attrs).length > 0 ? { attributes: attrs } : {}),
     affectedNode: serviceId(span.service),
   }
 }
@@ -575,18 +600,19 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     // for the optional opt-in path below — daemon-less callers (CLI tests,
     // ad-hoc scripts) that skip the receiver hook still get a write here.
     if (ctx.writeErrorEventInline !== false) {
+      const attrs = sanitizeAttributes(span.attributes)
       const ev: ErrorEvent = {
         id: `${span.traceId}:${span.spanId}`,
         timestamp: ts,
         service: span.service,
         traceId: span.traceId,
         spanId: span.spanId,
-        errorMessage:
-          span.exception?.message ?? span.errorMessage ?? span.name ?? 'unknown error',
+        errorMessage: span.exception?.message ?? span.name ?? 'unknown error',
         ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
         ...(span.exception?.stacktrace
           ? { exceptionStacktrace: span.exception.stacktrace }
           : {}),
+        ...(Object.keys(attrs).length > 0 ? { attributes: attrs } : {}),
         affectedNode,
       }
       await appendErrorEvent(ctx, ev)
