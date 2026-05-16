@@ -16,9 +16,28 @@
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { startDaemon } from './daemon.js'
 import { listProjects, registryPath } from './registry.js'
 import { spawnWebUI, DEFAULT_WEB_PORT, type WebHandle } from './web-spawn.js'
+import { checkVersionSkew } from './version-skew.js'
+
+// Resolve the running @neat.is/core version from the bundled package.json.
+// Lockstep publishing (ADR-052) keeps this in step with the `neat.is` meta
+// package, which is what the operator installs globally. Tests stub by
+// setting NEAT_LOCAL_VERSION.
+function localVersion(): string {
+  if (process.env.NEAT_LOCAL_VERSION && process.env.NEAT_LOCAL_VERSION.length > 0) {
+    return process.env.NEAT_LOCAL_VERSION
+  }
+  try {
+    const req = createRequire(import.meta.url)
+    const pkg = req('../package.json') as { version?: string }
+    return typeof pkg.version === 'string' ? pkg.version : '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+}
 
 function neatHome(): string {
   if (process.env.NEAT_HOME && process.env.NEAT_HOME.length > 0) {
@@ -55,6 +74,18 @@ async function cmdStart(): Promise<void> {
   // the documented happy path without grepping startup logs.
   if (handle.restAddress) console.log(`neatd: REST  → ${handle.restAddress}`)
   if (handle.otlpAddress) console.log(`neatd: OTLP  → ${handle.otlpAddress}`)
+
+  // Version-skew advisory — non-fatal, fail-open. Surfaces the gap when the
+  // operator's globally installed `neat.is` binary lags the published
+  // version. Set NEAT_DISABLE_VERSION_CHECK=1 to silence the check (e.g. in
+  // air-gapped environments).
+  if (process.env.NEAT_DISABLE_VERSION_CHECK !== '1') {
+    void checkVersionSkew({ localVersion: localVersion() }).catch(() => {
+      // Fail-open: any thrown error from the helper resolves silently. The
+      // helper already catches its own internals; this catches anything
+      // exotic the Promise chain bubbles up.
+    })
+  }
 
   // ADR-059 — bring up the web UI alongside the daemon. Failure here aborts
   // start with the clear-error pattern from ADR-049 instead of silently
