@@ -17,8 +17,8 @@ import {
 } from '../src/index.js'
 
 describe('runtime constants', () => {
-  it('Provenance has 5 values', () => {
-    expect(Object.values(Provenance)).toHaveLength(5)
+  it('Provenance has 4 values (ADR-068)', () => {
+    expect(Object.values(Provenance)).toHaveLength(4)
   })
   it('EdgeType has 7 values', () => {
     expect(Object.values(EdgeType)).toHaveLength(7)

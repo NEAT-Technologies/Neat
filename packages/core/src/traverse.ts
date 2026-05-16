@@ -14,7 +14,6 @@ import {
   BlastRadiusResultSchema,
   NodeType,
   PROV_RANK,
-  Provenance,
   RootCauseResultSchema,
   TransitiveDependenciesResultSchema,
 } from '@neat.is/types'
@@ -30,8 +29,10 @@ import {
 
 // Contract anchors (see /docs/contracts.md + docs/contracts/provenance.md):
 //   * Rule 2 — Coexistence: walk by provenance priority, never collapse edges.
-//   * Rule 3 — FRONTIER edges must be skipped, not merely deprioritized.
-//     If a node's only edges are FRONTIER, traversal stops there.
+//   * Rule 3 — FrontierNodes terminate traversal — edges to/from FrontierNodes
+//     are skipped, not merely deprioritized. If a node's only neighbour is a
+//     FrontierNode, traversal stops there. ADR-068 makes node-type the gating
+//     property, independent of edge provenance.
 //   * Rule 5 — Validate results against RootCauseResultSchema /
 //     BlastRadiusResultSchema before returning.
 //   * Rule 8 — No demo-name hardcoding: driver/engine identifiers come from
@@ -42,17 +43,23 @@ import {
 const ROOT_CAUSE_MAX_DEPTH = 5
 const BLAST_RADIUS_DEFAULT_DEPTH = 10
 
+function isFrontierNode(graph: NeatGraph, nodeId: string): boolean {
+  if (!graph.hasNode(nodeId)) return false
+  const attrs = graph.getNodeAttributes(nodeId) as GraphNode
+  return attrs.type === NodeType.FrontierNode
+}
+
 // Multiple edges between the same pair coexist by provenance (EXTRACTED next to
 // OBSERVED next to INFERRED). Traversal walks the system as the graph "sees it
 // best", so for any neighbour pair we pick the highest-provenance edge.
-// FRONTIER means unknown territory — ADR-036 / Rule 3 require these edges to
-// be skipped, not merely deprioritized. Filtering happens here so the rest of
-// traversal can stay generic.
+// Edges connecting to FrontierNodes are skipped at the node level (ADR-068):
+// FrontierNodes are unresolved peers, traversal terminates at them rather than
+// pretending the path continues into unknown territory.
 function bestEdgeBySource(graph: NeatGraph, edgeIds: string[]): Map<string, GraphEdge> {
   const best = new Map<string, GraphEdge>()
   for (const id of edgeIds) {
     const e = graph.getEdgeAttributes(id) as GraphEdge
-    if (e.provenance === Provenance.FRONTIER) continue
+    if (isFrontierNode(graph, e.source)) continue
     const cur = best.get(e.source)
     if (!cur || PROV_RANK[e.provenance] > PROV_RANK[cur.provenance]) {
       best.set(e.source, e)
@@ -65,7 +72,7 @@ function bestEdgeByTarget(graph: NeatGraph, edgeIds: string[]): Map<string, Grap
   const best = new Map<string, GraphEdge>()
   for (const id of edgeIds) {
     const e = graph.getEdgeAttributes(id) as GraphEdge
-    if (e.provenance === Provenance.FRONTIER) continue
+    if (isFrontierNode(graph, e.target)) continue
     const cur = best.get(e.target)
     if (!cur || PROV_RANK[e.provenance] > PROV_RANK[cur.provenance]) {
       best.set(e.target, e)
@@ -76,7 +83,7 @@ function bestEdgeByTarget(graph: NeatGraph, edgeIds: string[]): Map<string, Grap
 
 // Per-edge confidence is provenance × volume × recency × cleanliness.
 //   * provenance gives a ceiling: OBSERVED 1.0, INFERRED 0.7, EXTRACTED 0.5,
-//     STALE/FRONTIER 0.3.
+//     STALE 0.3.
 //   * volume: log-scaled span count, saturating quickly so 1 span ≈ 0.55 and
 //     ~1k spans ≈ 1.0.
 //   * recency: 1.0 within an hour; decays toward 0.5 by 24h, toward 0.3 past.
@@ -88,7 +95,6 @@ const PROVENANCE_CEILING: Record<string, number> = {
   INFERRED: 0.7,
   EXTRACTED: 0.5,
   STALE: 0.3,
-  FRONTIER: 0.3,
 }
 
 function volumeWeight(spanCount: number | undefined): number {

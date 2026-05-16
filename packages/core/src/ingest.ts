@@ -18,7 +18,6 @@ import {
   confidenceForObservedSignal,
   databaseId,
   extractedEdgeId,
-  frontierEdgeId,
   frontierId,
   inferredEdgeId,
   observedEdgeId,
@@ -304,38 +303,6 @@ function ensureFrontierNode(graph: NeatGraph, host: string, ts: string): string 
   return id
 }
 
-function upsertFrontierEdge(
-  graph: NeatGraph,
-  type: EdgeTypeValue,
-  source: string,
-  target: string,
-  ts: string,
-): void {
-  const id = frontierEdgeId(source, target, type)
-  if (graph.hasEdge(id)) {
-    const existing = graph.getEdgeAttributes(id) as GraphEdge
-    const updated: GraphEdge = {
-      ...existing,
-      provenance: Provenance.FRONTIER,
-      lastObserved: ts,
-      callCount: (existing.callCount ?? 0) + 1,
-    }
-    graph.replaceEdgeAttributes(id, updated)
-    return
-  }
-  const edge: GraphEdge = {
-    id,
-    source,
-    target,
-    type,
-    provenance: Provenance.FRONTIER,
-    confidence: 1.0,
-    lastObserved: ts,
-    callCount: 1,
-  }
-  graph.addEdgeWithKey(id, source, target, edge)
-}
-
 interface UpsertResult {
   edge: GraphEdge
   created: boolean
@@ -469,21 +436,46 @@ async function appendErrorEvent(ctx: IngestContext, ev: ErrorEvent): Promise<voi
 // originating service because graph state isn't available at this point —
 // the queued handleSpan path may reach a more precise target later, but the
 // durable record is what the receiver writes here.
+//
+// errorMessage prefers the exception event's `exception.message` (OTel
+// semconv), falls back to the span name, then the literal 'unknown error'.
+// `span.status.message` is intentionally not in the chain — OTel
+// auto-instrumentation often pollutes that field with the HTTP method for
+// HTTP server errors, which is misleading at the incident surface.
+// Span attributes pass through verbatim so consumers can read source
+// attribution (`code.filepath`, `code.lineno`, `code.function`) and other
+// SDK-emitted context without ingest enumerating every key it cares about.
+// Coerce span attributes to a JSON-safe shape — bigint values from the
+// parsed span (long ids, high-cardinality counters) become strings so the
+// passthrough record can be serialised to the ErrorEvent shape and round-
+// tripped through ErrorEventSchema. All other types pass through verbatim.
+function sanitizeAttributes(
+  attrs: ParsedSpan['attributes'],
+): Record<string, string | number | boolean | null | string[] | number[] | boolean[]> {
+  const out: Record<string, string | number | boolean | null | string[] | number[] | boolean[]> = {}
+  for (const [k, v] of Object.entries(attrs)) {
+    if (typeof v === 'bigint') out[k] = v.toString()
+    else out[k] = v as string | number | boolean | null | string[] | number[] | boolean[]
+  }
+  return out
+}
+
 export function buildErrorEventForReceiver(span: ParsedSpan): ErrorEvent | null {
   if (span.statusCode !== 2) return null
   const ts = span.startTimeIso ?? new Date().toISOString()
+  const attrs = sanitizeAttributes(span.attributes)
   return {
     id: `${span.traceId}:${span.spanId}`,
     timestamp: ts,
     service: span.service,
     traceId: span.traceId,
     spanId: span.spanId,
-    errorMessage:
-      span.exception?.message ?? span.errorMessage ?? span.name ?? 'unknown error',
+    errorMessage: span.exception?.message ?? span.name ?? 'unknown error',
     ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
     ...(span.exception?.stacktrace
       ? { exceptionStacktrace: span.exception.stacktrace }
       : {}),
+    ...(Object.keys(attrs).length > 0 ? { attributes: attrs } : {}),
     affectedNode: serviceId(span.service),
   }
 }
@@ -539,11 +531,15 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     }
   } else {
     // Possibly a cross-service call. Resolve the peer; if it matches a known
-    // ServiceNode, record an OBSERVED CALLS edge. If it matches nothing — pod
-    // IP, ingress hostname, AWS PrivateLink endpoint — drop a FRONTIER
-    // placeholder so the call isn't lost. promoteFrontierNodes (run by the
-    // extract orchestrator) replaces it once a later round records the host
-    // as an alias on a real service.
+    // ServiceNode, record an OBSERVED CALLS edge to the typed target. If it
+    // matches nothing — pod IP, ingress hostname, AWS PrivateLink endpoint —
+    // create a FrontierNode placeholder and record an OBSERVED edge to that
+    // FrontierNode so the call carries the same provenance + signal-block +
+    // graded confidence as any other OBSERVED edge (ADR-068). The target ref
+    // identifies the node-type; provenance describes how the edge was learned.
+    // promoteFrontierNodes (run by the extract orchestrator) rewrites the
+    // target ref once a later round resolves the host; the edge's provenance
+    // stays OBSERVED across promotion.
     const host = pickAddress(span)
     let resolvedViaAddress = false
     if (host && host !== span.service) {
@@ -560,11 +556,16 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
         affectedNode = targetId
         resolvedViaAddress = true
       } else if (!targetId) {
-        const frontierId = ensureFrontierNode(ctx.graph, host, ts)
-        if (ctx.graph.hasNode(sourceId)) {
-          upsertFrontierEdge(ctx.graph, EdgeType.CALLS, sourceId, frontierId, ts)
-        }
-        affectedNode = frontierId
+        const frontierNodeId = ensureFrontierNode(ctx.graph, host, ts)
+        upsertObservedEdge(
+          ctx.graph,
+          EdgeType.CALLS,
+          sourceId,
+          frontierNodeId,
+          ts,
+          isError,
+        )
+        affectedNode = frontierNodeId
         resolvedViaAddress = true
       }
     }
@@ -599,18 +600,19 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     // for the optional opt-in path below — daemon-less callers (CLI tests,
     // ad-hoc scripts) that skip the receiver hook still get a write here.
     if (ctx.writeErrorEventInline !== false) {
+      const attrs = sanitizeAttributes(span.attributes)
       const ev: ErrorEvent = {
         id: `${span.traceId}:${span.spanId}`,
         timestamp: ts,
         service: span.service,
         traceId: span.traceId,
         spanId: span.spanId,
-        errorMessage:
-          span.exception?.message ?? span.errorMessage ?? span.name ?? 'unknown error',
+        errorMessage: span.exception?.message ?? span.name ?? 'unknown error',
         ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
         ...(span.exception?.stacktrace
           ? { exceptionStacktrace: span.exception.stacktrace }
           : {}),
+        ...(Object.keys(attrs).length > 0 ? { attributes: attrs } : {}),
         affectedNode,
       }
       await appendErrorEvent(ctx, ev)
@@ -708,19 +710,15 @@ function rebuildEdge(
   oldEdgeId: string,
 ): void {
   graph.dropEdge(oldEdgeId)
-  // FRONTIER provenance gets upgraded to OBSERVED on promotion: the call
-  // certainty was always there; only the target identity was unknown, and now
-  // it isn't.
-  const promotedProvenance =
-    edge.provenance === Provenance.FRONTIER ? Provenance.OBSERVED : edge.provenance
+  // ADR-068 — promotion rewrites the target ref; provenance carries forward.
+  // An OBSERVED edge to a FrontierNode promotes to an OBSERVED edge to the
+  // matched typed node; an INFERRED edge stays INFERRED; etc.
   const newId =
-    promotedProvenance === Provenance.OBSERVED
+    edge.provenance === Provenance.OBSERVED
       ? observedEdgeId(newSource, newTarget, edge.type)
-      : promotedProvenance === Provenance.INFERRED
+      : edge.provenance === Provenance.INFERRED
         ? inferredEdgeId(newSource, newTarget, edge.type)
-        : promotedProvenance === Provenance.EXTRACTED
-          ? extractedEdgeId(newSource, newTarget, edge.type)
-          : frontierEdgeId(newSource, newTarget, edge.type)
+        : extractedEdgeId(newSource, newTarget, edge.type)
 
   if (graph.hasEdge(newId)) {
     const existing = graph.getEdgeAttributes(newId) as GraphEdge
@@ -738,7 +736,6 @@ function rebuildEdge(
     id: newId,
     source: newSource,
     target: newTarget,
-    provenance: promotedProvenance,
   }
   graph.addEdgeWithKey(newId, newSource, newTarget, rebuilt)
 }
