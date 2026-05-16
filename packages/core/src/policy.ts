@@ -15,7 +15,6 @@ import {
   EdgeType,
   NodeType,
   PolicyFileSchema,
-  Provenance,
 } from '@neat.is/types'
 import type { NeatGraph } from './graph.js'
 import { DEFAULT_PROJECT } from './graph.js'
@@ -108,8 +107,10 @@ const evaluateStructural: RuleEvaluator<Extract<PolicyRule, { type: 'structural'
     for (const edgeId of graph.outboundEdges(id)) {
       const e = graph.getEdgeAttributes(edgeId) as GraphEdge
       if (e.type !== rule.edgeType) continue
-      if (e.provenance === Provenance.FRONTIER) continue
       const target = graph.getNodeAttributes(e.target) as GraphNode
+      // FrontierNodes are unresolved peers (ADR-068) — skip; the rule
+      // counts edges that resolve to a real typed node only.
+      if (target.type === NodeType.FrontierNode) continue
       if (target.type === rule.toNodeType) {
         satisfied = true
         break
@@ -242,8 +243,10 @@ const evaluateCompatibility: RuleEvaluator<Extract<PolicyRule, { type: 'compatib
       for (const edgeId of graph.outboundEdges(svcId)) {
         const e = graph.getEdgeAttributes(edgeId) as GraphEdge
         if (e.type !== EdgeType.CONNECTS_TO) continue
-        if (e.provenance === Provenance.FRONTIER) continue
         const dbAttrs = graph.getNodeAttributes(e.target) as GraphNode
+        // FrontierNodes are unresolved peers (ADR-068) — skip; compat
+        // checking needs a typed DatabaseNode.
+        if (dbAttrs.type === NodeType.FrontierNode) continue
         if (dbAttrs.type !== NodeType.DatabaseNode) continue
         const db = dbAttrs as { engine: string; engineVersion: string }
         for (const pair of compatPairs()) {

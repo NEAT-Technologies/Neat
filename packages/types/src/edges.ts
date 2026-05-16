@@ -6,7 +6,6 @@ export const ProvenanceSchema = z.enum([
   Provenance.INFERRED,
   Provenance.OBSERVED,
   Provenance.STALE,
-  Provenance.FRONTIER,
 ])
 
 export const EdgeTypeSchema = z.enum([

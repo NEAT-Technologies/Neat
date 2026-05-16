@@ -18,7 +18,6 @@ import {
   confidenceForObservedSignal,
   databaseId,
   extractedEdgeId,
-  frontierEdgeId,
   frontierId,
   inferredEdgeId,
   observedEdgeId,
@@ -304,38 +303,6 @@ function ensureFrontierNode(graph: NeatGraph, host: string, ts: string): string 
   return id
 }
 
-function upsertFrontierEdge(
-  graph: NeatGraph,
-  type: EdgeTypeValue,
-  source: string,
-  target: string,
-  ts: string,
-): void {
-  const id = frontierEdgeId(source, target, type)
-  if (graph.hasEdge(id)) {
-    const existing = graph.getEdgeAttributes(id) as GraphEdge
-    const updated: GraphEdge = {
-      ...existing,
-      provenance: Provenance.FRONTIER,
-      lastObserved: ts,
-      callCount: (existing.callCount ?? 0) + 1,
-    }
-    graph.replaceEdgeAttributes(id, updated)
-    return
-  }
-  const edge: GraphEdge = {
-    id,
-    source,
-    target,
-    type,
-    provenance: Provenance.FRONTIER,
-    confidence: 1.0,
-    lastObserved: ts,
-    callCount: 1,
-  }
-  graph.addEdgeWithKey(id, source, target, edge)
-}
-
 interface UpsertResult {
   edge: GraphEdge
   created: boolean
@@ -539,11 +506,15 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
     }
   } else {
     // Possibly a cross-service call. Resolve the peer; if it matches a known
-    // ServiceNode, record an OBSERVED CALLS edge. If it matches nothing — pod
-    // IP, ingress hostname, AWS PrivateLink endpoint — drop a FRONTIER
-    // placeholder so the call isn't lost. promoteFrontierNodes (run by the
-    // extract orchestrator) replaces it once a later round records the host
-    // as an alias on a real service.
+    // ServiceNode, record an OBSERVED CALLS edge to the typed target. If it
+    // matches nothing — pod IP, ingress hostname, AWS PrivateLink endpoint —
+    // create a FrontierNode placeholder and record an OBSERVED edge to that
+    // FrontierNode so the call carries the same provenance + signal-block +
+    // graded confidence as any other OBSERVED edge (ADR-068). The target ref
+    // identifies the node-type; provenance describes how the edge was learned.
+    // promoteFrontierNodes (run by the extract orchestrator) rewrites the
+    // target ref once a later round resolves the host; the edge's provenance
+    // stays OBSERVED across promotion.
     const host = pickAddress(span)
     let resolvedViaAddress = false
     if (host && host !== span.service) {
@@ -560,11 +531,16 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
         affectedNode = targetId
         resolvedViaAddress = true
       } else if (!targetId) {
-        const frontierId = ensureFrontierNode(ctx.graph, host, ts)
-        if (ctx.graph.hasNode(sourceId)) {
-          upsertFrontierEdge(ctx.graph, EdgeType.CALLS, sourceId, frontierId, ts)
-        }
-        affectedNode = frontierId
+        const frontierNodeId = ensureFrontierNode(ctx.graph, host, ts)
+        upsertObservedEdge(
+          ctx.graph,
+          EdgeType.CALLS,
+          sourceId,
+          frontierNodeId,
+          ts,
+          isError,
+        )
+        affectedNode = frontierNodeId
         resolvedViaAddress = true
       }
     }
@@ -708,19 +684,15 @@ function rebuildEdge(
   oldEdgeId: string,
 ): void {
   graph.dropEdge(oldEdgeId)
-  // FRONTIER provenance gets upgraded to OBSERVED on promotion: the call
-  // certainty was always there; only the target identity was unknown, and now
-  // it isn't.
-  const promotedProvenance =
-    edge.provenance === Provenance.FRONTIER ? Provenance.OBSERVED : edge.provenance
+  // ADR-068 — promotion rewrites the target ref; provenance carries forward.
+  // An OBSERVED edge to a FrontierNode promotes to an OBSERVED edge to the
+  // matched typed node; an INFERRED edge stays INFERRED; etc.
   const newId =
-    promotedProvenance === Provenance.OBSERVED
+    edge.provenance === Provenance.OBSERVED
       ? observedEdgeId(newSource, newTarget, edge.type)
-      : promotedProvenance === Provenance.INFERRED
+      : edge.provenance === Provenance.INFERRED
         ? inferredEdgeId(newSource, newTarget, edge.type)
-        : promotedProvenance === Provenance.EXTRACTED
-          ? extractedEdgeId(newSource, newTarget, edge.type)
-          : frontierEdgeId(newSource, newTarget, edge.type)
+        : extractedEdgeId(newSource, newTarget, edge.type)
 
   if (graph.hasEdge(newId)) {
     const existing = graph.getEdgeAttributes(newId) as GraphEdge
@@ -738,7 +710,6 @@ function rebuildEdge(
     id: newId,
     source: newSource,
     target: newTarget,
-    provenance: promotedProvenance,
   }
   graph.addEdgeWithKey(newId, newSource, newTarget, rebuilt)
 }

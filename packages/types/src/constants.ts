@@ -3,7 +3,6 @@ export const Provenance = {
   INFERRED: 'INFERRED',
   OBSERVED: 'OBSERVED',
   STALE: 'STALE',
-  FRONTIER: 'FRONTIER',
 } as const
 
 export type ProvenanceValue = (typeof Provenance)[keyof typeof Provenance]
