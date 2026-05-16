@@ -1,8 +1,9 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { Provenance, observedEdgeId } from '@neat.is/types'
 import type { NeatGraph } from './graph.js'
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 interface PersistedGraph {
   schemaVersion: number
@@ -24,6 +25,44 @@ function migrateV1ToV2(payload: PersistedGraph): PersistedGraph {
     }
   }
   return { ...payload, schemaVersion: 2 }
+}
+
+// v2 → v3: Provenance enum shrinks to four values (ADR-068). Any edge whose
+// provenance still carries the pre-v0.3.5 'FRONTIER' literal is rewritten to
+// Provenance.OBSERVED on load. The target ref is unchanged — FrontierNodes
+// remain placeholders for unresolved peers; only how the edge was labelled
+// changes. If the edge id still carries the legacy provenance segment, it
+// is re-keyed to the OBSERVED wire format so consumers that parse the id
+// (traversal, divergence query, MCP) see the same shape downstream.
+//
+// The 'FRONTIER' string literal here is the only place in the codebase that
+// recognises the legacy value; the Rule 1 contract scan exempts persist.ts
+// for exactly this reason.
+function migrateV2ToV3(payload: PersistedGraph): PersistedGraph {
+  const edges = (payload.graph as {
+    edges?: Array<{
+      key?: string
+      attributes?: Record<string, unknown>
+    }>
+  }).edges
+  if (Array.isArray(edges)) {
+    for (const edge of edges) {
+      const attrs = edge.attributes
+      // 'FRONTIER' is the pre-v0.3.5 literal — read-only here, never written
+      // by current producers. The rewrite swaps to Provenance.OBSERVED.
+      if (!attrs || attrs.provenance !== 'FRONTIER') continue
+      attrs.provenance = Provenance.OBSERVED
+      const type = typeof attrs.type === 'string' ? attrs.type : undefined
+      const source = typeof attrs.source === 'string' ? attrs.source : undefined
+      const target = typeof attrs.target === 'string' ? attrs.target : undefined
+      if (type && source && target) {
+        const newId = observedEdgeId(source, target, type)
+        attrs.id = newId
+        if (edge.key) edge.key = newId
+      }
+    }
+  }
+  return { ...payload, schemaVersion: 3 }
 }
 
 async function ensureDir(filePath: string): Promise<void> {
@@ -55,6 +94,9 @@ export async function loadGraphFromDisk(graph: NeatGraph, outPath: string): Prom
   let payload = JSON.parse(raw) as PersistedGraph
   if (payload.schemaVersion === 1) {
     payload = migrateV1ToV2(payload)
+  }
+  if (payload.schemaVersion === 2) {
+    payload = migrateV2ToV3(payload)
   }
   if (payload.schemaVersion !== SCHEMA_VERSION) {
     throw new Error(

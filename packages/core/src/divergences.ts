@@ -56,7 +56,6 @@ interface EdgeBucket {
   observed?: GraphEdge
   inferred?: GraphEdge
   stale?: GraphEdge
-  frontier?: GraphEdge
 }
 
 function bucketKey(source: string, target: string, type: string): string {
@@ -83,9 +82,6 @@ function bucketEdges(graph: NeatGraph): Map<string, EdgeBucket> {
         break
       case Provenance.INFERRED:
         cur.inferred = e
-        break
-      case Provenance.FRONTIER:
-        cur.frontier = e
         break
       default:
         // STALE rides on what used to be an OBSERVED edge — the id format

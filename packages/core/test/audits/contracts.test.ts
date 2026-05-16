@@ -48,21 +48,23 @@ function walkSrc(dir: string, files: string[] = []): string[] {
 // Rule 1 — Provenance is a shared const; no raw string literals outside @neat.is/types
 // ──────────────────────────────────────────────────────────────────────────
 describe('Rule 1 — Provenance contract', () => {
-  it('Provenance enum includes the five MVP values', () => {
+  it('Provenance enum has exactly four values (ADR-068)', () => {
     expect(Provenance.OBSERVED).toBe('OBSERVED')
     expect(Provenance.INFERRED).toBe('INFERRED')
     expect(Provenance.EXTRACTED).toBe('EXTRACTED')
     expect(Provenance.STALE).toBe('STALE')
-    expect(Provenance.FRONTIER).toBe('FRONTIER')
-    expect(ProvenanceSchema.options).toEqual(
-      expect.arrayContaining(['OBSERVED', 'INFERRED', 'EXTRACTED', 'STALE', 'FRONTIER']),
-    )
+    expect(Object.keys(Provenance).sort()).toEqual(['EXTRACTED', 'INFERRED', 'OBSERVED', 'STALE'])
+    expect(ProvenanceSchema.options.slice().sort()).toEqual(['EXTRACTED', 'INFERRED', 'OBSERVED', 'STALE'])
   })
 
   it('no raw provenance string literals in core/src or mcp/src', () => {
     const offenders: string[] = []
     const re = /['"](OBSERVED|INFERRED|EXTRACTED|STALE|FRONTIER)['"]/
+    // persist.ts is the single allowed site — its v2 → v3 migration matches
+    // the legacy 'FRONTIER' literal and writes 'OBSERVED' as part of the
+    // schema rewrite (ADR-068). No other code reads or writes raw provenance.
     for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC)]) {
+      if (file.endsWith('persist.ts')) continue
       const content = readFileSync(file, 'utf8')
       content.split('\n').forEach((line, i) => {
         if (
@@ -115,14 +117,13 @@ describe('Rule 2 — OBSERVED/EXTRACTED coexistence', () => {
 // ──────────────────────────────────────────────────────────────────────────
 // Rule 3 — FRONTIER edges excluded from traversal
 // ──────────────────────────────────────────────────────────────────────────
-describe('Rule 3 — FRONTIER exclusion from traversal', () => {
-  it('getRootCause returns null when the only path to a candidate root cause is via FRONTIER (issue #136)', async () => {
-    const { frontierId, frontierEdgeId, extractedEdgeId, databaseId } = await import('@neat.is/types')
+describe('Rule 3 — FrontierNode termination in traversal (ADR-068)', () => {
+  it('getRootCause returns null when the only inbound path is through a FrontierNode (issue #136)', async () => {
+    const { observedEdgeId, frontierId, databaseId } = await import('@neat.is/types')
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
-    // Origin is a DatabaseNode (the only origin getRootCause currently handles).
-    // The would-be culprit ServiceNode sits behind a FRONTIER edge — if FRONTIER
-    // were traversed, the walk would reach the service and check compat. With
-    // FRONTIER filtered, the walk halts at the database and returns null.
+    // Origin is a DatabaseNode. The would-be culprit sits behind a
+    // FrontierNode hop — traversal terminates at the FrontierNode per Rule 3
+    // and the walk returns null without checking compat.
     const dbId = databaseId('payments')
     g.addNode(dbId, {
       id: dbId,
@@ -134,31 +135,34 @@ describe('Rule 3 — FRONTIER exclusion from traversal', () => {
     })
     const fid = frontierId('mystery-host')
     g.addNode(fid, { id: fid, type: NodeType.FrontierNode, name: 'mystery-host', host: 'mystery-host' })
-    const eId = frontierEdgeId(fid, dbId, EdgeType.CONNECTS_TO)
+    const eId = observedEdgeId(fid, dbId, EdgeType.CONNECTS_TO)
     g.addEdgeWithKey(eId, fid, dbId, {
       id: eId,
       source: fid,
       target: dbId,
       type: EdgeType.CONNECTS_TO,
-      provenance: Provenance.FRONTIER,
+      provenance: Provenance.OBSERVED,
+      lastObserved: '2026-05-16T00:00:00.000Z',
+      callCount: 1,
     })
     expect(getRootCause(g, dbId)).toBeNull()
-    void extractedEdgeId
   })
 
-  it('getBlastRadius does not enqueue past a FRONTIER edge (issue #136)', async () => {
-    const { frontierId, frontierEdgeId } = await import('@neat.is/types')
+  it('getBlastRadius does not enqueue a FrontierNode target (issue #136)', async () => {
+    const { observedEdgeId, frontierId } = await import('@neat.is/types')
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
     g.addNode('service:origin', { id: 'service:origin', type: NodeType.ServiceNode, name: 'origin', language: 'javascript' })
     const fid = frontierId('unknown:8080')
     g.addNode(fid, { id: fid, type: NodeType.FrontierNode, name: 'unknown:8080', host: 'unknown:8080' })
-    const eId = frontierEdgeId('service:origin', fid, EdgeType.CALLS)
+    const eId = observedEdgeId('service:origin', fid, EdgeType.CALLS)
     g.addEdgeWithKey(eId, 'service:origin', fid, {
       id: eId,
       source: 'service:origin',
       target: fid,
       type: EdgeType.CALLS,
-      provenance: Provenance.FRONTIER,
+      provenance: Provenance.OBSERVED,
+      lastObserved: '2026-05-16T00:00:00.000Z',
+      callCount: 1,
     })
     const result = getBlastRadius(g, 'service:origin')
     expect(result.affectedNodes.find((n) => n.nodeId === fid)).toBeUndefined()
@@ -452,9 +456,9 @@ describe('Lifecycle contract — STALE → OBSERVED resurrection (ADR-030)', () 
   })
 })
 
-describe('Lifecycle contract — FRONTIER → OBSERVED on promotion (ADR-030)', () => {
-  it('promoteFrontierNodes upgrades a FRONTIER edge to OBSERVED', async () => {
-    const { frontierId, frontierEdgeId } = await import('@neat.is/types')
+describe('Lifecycle contract — FrontierNode promotion preserves provenance (ADR-030 + ADR-068)', () => {
+  it('promoteFrontierNodes rewires target ref; OBSERVED edge stays OBSERVED', async () => {
+    const { frontierId, observedEdgeId } = await import('@neat.is/types')
     const { promoteFrontierNodes } = await import('../../src/ingest.js')
 
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
@@ -479,13 +483,13 @@ describe('Lifecycle contract — FRONTIER → OBSERVED on promotion (ADR-030)', 
       host: 'callee.internal',
     })
 
-    const oldEdgeId = frontierEdgeId('service:caller', fid, EdgeType.CALLS)
+    const oldEdgeId = observedEdgeId('service:caller', fid, EdgeType.CALLS)
     g.addEdgeWithKey(oldEdgeId, 'service:caller', fid, {
       id: oldEdgeId,
       source: 'service:caller',
       target: fid,
       type: EdgeType.CALLS,
-      provenance: Provenance.FRONTIER,
+      provenance: Provenance.OBSERVED,
       lastObserved: '2026-05-05T12:00:00.000Z',
       callCount: 3,
     })
@@ -495,13 +499,13 @@ describe('Lifecycle contract — FRONTIER → OBSERVED on promotion (ADR-030)', 
     expect(g.hasNode(fid)).toBe(false)
     expect(g.hasEdge(oldEdgeId)).toBe(false)
 
-    // After promotion, an OBSERVED edge from caller to callee exists.
-    const promotedEdges = g.outboundEdges('service:caller').map((id) => g.getEdgeAttributes(id) as GraphEdge)
-    const callsCallee = promotedEdges.find(
-      (e) => e.target === 'service:callee' && e.type === EdgeType.CALLS,
-    )
-    expect(callsCallee).toBeDefined()
-    expect(callsCallee!.provenance).toBe(Provenance.OBSERVED)
+    // After promotion, an OBSERVED edge from caller to callee exists at the
+    // canonical observedEdgeId; provenance carried through unchanged.
+    const newId = observedEdgeId('service:caller', 'service:callee', EdgeType.CALLS)
+    expect(g.hasEdge(newId)).toBe(true)
+    const rebuilt = g.getEdgeAttributes(newId) as GraphEdge
+    expect(rebuilt.provenance).toBe(Provenance.OBSERVED)
+    expect(rebuilt.target).toBe('service:callee')
   })
 })
 
@@ -1599,8 +1603,8 @@ describe('FrontierNode promotion contract (ADR-035)', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 
-  it('rebuildEdge constructs ids via canonical helpers — promoted FRONTIER→OBSERVED edge id matches observedEdgeId()', async () => {
-    const { observedEdgeId, frontierId, frontierEdgeId } = await import('@neat.is/types')
+  it('rebuildEdge constructs ids via canonical helpers — promoted OBSERVED-to-FrontierNode edge id matches observedEdgeId() (ADR-068)', async () => {
+    const { observedEdgeId, frontierId } = await import('@neat.is/types')
     const { promoteFrontierNodes } = await import('../../src/ingest.js')
 
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
@@ -1624,13 +1628,13 @@ describe('FrontierNode promotion contract (ADR-035)', () => {
       name: 'callee.internal',
       host: 'callee.internal',
     })
-    const oldEdgeId = frontierEdgeId('service:caller', fid, EdgeType.CALLS)
+    const oldEdgeId = observedEdgeId('service:caller', fid, EdgeType.CALLS)
     g.addEdgeWithKey(oldEdgeId, 'service:caller', fid, {
       id: oldEdgeId,
       source: 'service:caller',
       target: fid,
       type: EdgeType.CALLS,
-      provenance: Provenance.FRONTIER,
+      provenance: Provenance.OBSERVED,
       lastObserved: '2026-05-05T12:00:00.000Z',
       callCount: 3,
     })
@@ -1638,6 +1642,7 @@ describe('FrontierNode promotion contract (ADR-035)', () => {
     expect(promoteFrontierNodes(g)).toBe(1)
     const expectedId = observedEdgeId('service:caller', 'service:callee', EdgeType.CALLS)
     expect(g.hasEdge(expectedId)).toBe(true)
+    expect((g.getEdgeAttributes(expectedId) as GraphEdge).provenance).toBe(Provenance.OBSERVED)
   })
 })
 
@@ -1652,14 +1657,15 @@ describe('Traversal contract (ADR-036)', () => {
     expect(re.test(content), 'traverse.ts must be read-only').toBe(false)
   })
 
-  it('FRONTIER edges are filtered (not just deprioritized) by bestEdgeBySource / bestEdgeByTarget (issue #136)', () => {
+  it('FrontierNode-targeted edges terminate traversal in bestEdgeBySource / bestEdgeByTarget (ADR-068, issue #136)', () => {
     const content = readFileSync(join(CORE_SRC, 'traverse.ts'), 'utf8')
-    // Both helpers must guard with `Provenance.FRONTIER`. The contract is "skip,
-    // not deprioritize" — relying on PROV_RANK alone is the v0.1.x bug.
+    // Both helpers must guard via isFrontierNode (node-type check), which is
+    // the ADR-068 expression of the "skip, not deprioritize" rule. PROV_RANK
+    // alone is the v0.1.x bug.
     const helpers = ['bestEdgeBySource', 'bestEdgeByTarget']
     for (const helper of helpers) {
-      const re = new RegExp(`function\\s+${helper}\\b[\\s\\S]*?provenance\\s*===\\s*Provenance\\.FRONTIER`)
-      expect(re.test(content), `${helper} must filter FRONTIER edges explicitly`).toBe(true)
+      const re = new RegExp(`function\\s+${helper}\\b[\\s\\S]*?isFrontierNode\\s*\\(`)
+      expect(re.test(content), `${helper} must guard via isFrontierNode`).toBe(true)
     }
   })
   it('confidenceFromMix multiplies per-edge confidences (multiplicative cascade)', () => {
@@ -1978,15 +1984,22 @@ describe('getBlastRadius contract (ADR-038)', () => {
 // Provenance contract — Edge identity helpers + PROV_RANK (ADR-029)
 // ──────────────────────────────────────────────────────────────────────────
 describe('Provenance contract — edge identity (ADR-029)', () => {
-  it('no hand-rolled `:OBSERVED:`/`:INFERRED:`/`:FRONTIER:` edge id template literals', () => {
+  it('no hand-rolled `:OBSERVED:`/`:INFERRED:` edge id template literals (ADR-068)', () => {
     const offenders: string[] = []
-    // Match a template literal with `:OBSERVED:` / `:INFERRED:` / `:FRONTIER:` followed by `${...}`.
-    const re = /`[^`]*:(OBSERVED|INFERRED|FRONTIER):\$\{/
+    // Match a template literal with `:OBSERVED:` / `:INFERRED:` followed by `${...}`.
+    // Allow the v2 → v3 persist migration which rebuilds the legacy id form
+    // as a one-time rewrite at snapshot-load time.
+    const re = /`[^`]*:(OBSERVED|INFERRED):\$\{/
     for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC)]) {
       const content = readFileSync(file, 'utf8')
       content.split('\n').forEach((line, i) => {
         const trimmed = line.trim()
-        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+        if (
+          re.test(line) &&
+          !trimmed.startsWith('//') &&
+          !trimmed.startsWith('*') &&
+          !file.endsWith('persist.ts')
+        ) {
           offenders.push(`${file}:${i + 1}: ${trimmed}`)
         }
       })
@@ -2012,24 +2025,23 @@ describe('Provenance contract — edge identity (ADR-029)', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 
-  it('edge id helpers produce stable wire format', async () => {
-    const { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierEdgeId } = await import('@neat.is/types')
+  it('edge id helpers produce stable wire format; OBSERVED-to-FrontierNode is just observedEdgeId (ADR-068)', async () => {
+    const { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierId } = await import('@neat.is/types')
     expect(extractedEdgeId('service:a', 'service:b', 'CALLS')).toBe('CALLS:service:a->service:b')
     expect(observedEdgeId('service:a', 'service:b', 'CALLS')).toBe('CALLS:OBSERVED:service:a->service:b')
     expect(inferredEdgeId('service:a', 'service:b', 'CALLS')).toBe('CALLS:INFERRED:service:a->service:b')
-    expect(frontierEdgeId('service:a', 'frontier:unknown:8080', 'CALLS')).toBe(
-      'CALLS:FRONTIER:service:a->frontier:unknown:8080',
+    expect(observedEdgeId('service:a', frontierId('unknown:8080'), 'CALLS')).toBe(
+      'CALLS:OBSERVED:service:a->frontier:unknown:8080',
     )
   })
 
-  it('parseEdgeId round-trips all four provenance variants', async () => {
-    const { extractedEdgeId, observedEdgeId, inferredEdgeId, frontierEdgeId, parseEdgeId } =
+  it('parseEdgeId round-trips the three creation variants (ADR-068)', async () => {
+    const { extractedEdgeId, observedEdgeId, inferredEdgeId, parseEdgeId } =
       await import('@neat.is/types')
     const cases = [
       { make: extractedEdgeId, prov: 'EXTRACTED' as const },
       { make: observedEdgeId, prov: 'OBSERVED' as const },
       { make: inferredEdgeId, prov: 'INFERRED' as const },
-      { make: frontierEdgeId, prov: 'FRONTIER' as const },
     ]
     for (const { make, prov } of cases) {
       const id = make('service:a', 'service:b', 'CALLS')
@@ -2044,12 +2056,12 @@ describe('Provenance contract — edge identity (ADR-029)', () => {
     expect(parseEdgeId('CALLS:no-arrow')).toBe(null)
   })
 
-  it('PROV_RANK ordering is OBSERVED > INFERRED > EXTRACTED > {STALE, FRONTIER}', async () => {
+  it('PROV_RANK has exactly four entries with ordering OBSERVED > INFERRED > EXTRACTED > STALE (ADR-068)', async () => {
     const { PROV_RANK } = await import('@neat.is/types')
+    expect(Object.keys(PROV_RANK).sort()).toEqual(['EXTRACTED', 'INFERRED', 'OBSERVED', 'STALE'])
     expect(PROV_RANK.OBSERVED).toBeGreaterThan(PROV_RANK.INFERRED)
     expect(PROV_RANK.INFERRED).toBeGreaterThan(PROV_RANK.EXTRACTED)
     expect(PROV_RANK.EXTRACTED).toBeGreaterThan(PROV_RANK.STALE)
-    expect(PROV_RANK.FRONTIER).toBe(0)
     expect(PROV_RANK.STALE).toBe(0)
   })
 
@@ -2581,7 +2593,7 @@ describe('Policy contracts (ADRs 042-045)', () => {
 
   it('promoteFrontierNodes honors canPromoteFrontier and skips block-gated frontiers (ADR-044)', async () => {
     const { promoteFrontierNodes } = await import('../../src/ingest.js')
-    const { frontierId, frontierEdgeId } = await import('@neat.is/types')
+    const { frontierId, observedEdgeId } = await import('@neat.is/types')
     const fid = frontierId('blocked.host')
     const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
     g.addNode('service:caller', {
@@ -2604,13 +2616,13 @@ describe('Policy contracts (ADRs 042-045)', () => {
       name: 'blocked.host',
       host: 'blocked.host',
     })
-    const eId = frontierEdgeId('service:caller', fid, EdgeType.CALLS)
+    const eId = observedEdgeId('service:caller', fid, EdgeType.CALLS)
     g.addEdgeWithKey(eId, 'service:caller', fid, {
       id: eId,
       source: 'service:caller',
       target: fid,
       type: EdgeType.CALLS,
-      provenance: Provenance.FRONTIER,
+      provenance: Provenance.OBSERVED,
       lastObserved: '2026-05-07T00:00:00.000Z',
       callCount: 1,
     })
@@ -7004,26 +7016,196 @@ describe('Comms-voice contract (Refs #262)', () => {
 // ADR-068 — FrontierNode and OBSERVED provenance are orthogonal (#267)
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Provenance shrinks to four values; FrontierNode stays as a node type but
-// no longer doubles as a provenance value. Span-derived edges to unresolved
-// peers carry OBSERVED provenance with the FrontierNode id as the target
-// string. The `frontierEdgeId` helper retires; OBSERVED-with-FrontierNode-
-// target uses `observedEdgeId`. `persist.ts` carries a v2 → v3 migration
-// that rewrites legacy FRONTIER-provenance edges to OBSERVED on load.
-//
-// These assertions flip from `it.todo` to live as the v0.3.5 implementation
-// lands (ingest swap, enum shrink, identity helper drop, persist migration).
+// Provenance is four values; FrontierNode is a node type that no longer
+// doubles as a provenance value. Span-derived edges to unresolved peers
+// carry OBSERVED provenance with the FrontierNode id as the target string.
+// The frontierEdgeId helper retires; OBSERVED-with-FrontierNode-target uses
+// observedEdgeId. persist.ts carries a v2 → v3 migration that rewrites
+// legacy FRONTIER-provenance edges to OBSERVED on load.
 describe('ADR-068 — FrontierNode + OBSERVED orthogonality (#267)', () => {
-  it.todo('Provenance enum has exactly four values (OBSERVED, INFERRED, EXTRACTED, STALE)')
-  it.todo('ProvenanceSchema.options matches the four-value enum')
-  it.todo('PROV_RANK has exactly four entries and the OBSERVED > INFERRED > EXTRACTED > STALE ordering')
-  it.todo('@neat.is/types/identity exports no frontierEdgeId symbol')
-  it.todo('no source file under packages/core/src/, packages/mcp/src/, packages/types/src/ references Provenance.FRONTIER')
-  it.todo('no source file under packages/core/src/, packages/mcp/src/, packages/types/src/ references the frontierEdgeId helper')
-  it.todo('observedEdgeId(source, frontierId(host), type) round-trips through parseEdgeId with provenance=OBSERVED and FrontierNode target preserved')
-  it.todo('OTLP span to an unresolved peer produces a single OBSERVED edge with FrontierNode target, signal block populated, graded confidence')
-  it.todo('promoteFrontierNodes rewires target ref without changing provenance: OBSERVED-to-FrontierNode edge promotes to OBSERVED-to-typed-node edge')
-  it.todo('persist.ts SCHEMA_VERSION bumps to 3')
-  it.todo('persist v2 → v3 migration rewrites edges with provenance=FRONTIER to provenance=OBSERVED; target ref preserved; id re-keyed via observedEdgeId')
-  it.todo('contracts/provenance.md and contracts/frontier-promotion.md reference ADR-068 in their adr: list')
+  it('Provenance enum has exactly four values (OBSERVED, INFERRED, EXTRACTED, STALE)', () => {
+    expect(Object.keys(Provenance).sort()).toEqual(['EXTRACTED', 'INFERRED', 'OBSERVED', 'STALE'])
+  })
+
+  it('ProvenanceSchema.options matches the four-value enum', () => {
+    expect(ProvenanceSchema.options.slice().sort()).toEqual(['EXTRACTED', 'INFERRED', 'OBSERVED', 'STALE'])
+  })
+
+  it('PROV_RANK has exactly four entries and the OBSERVED > INFERRED > EXTRACTED > STALE ordering', async () => {
+    const { PROV_RANK } = await import('@neat.is/types')
+    expect(Object.keys(PROV_RANK).sort()).toEqual(['EXTRACTED', 'INFERRED', 'OBSERVED', 'STALE'])
+    expect(PROV_RANK.OBSERVED).toBeGreaterThan(PROV_RANK.INFERRED)
+    expect(PROV_RANK.INFERRED).toBeGreaterThan(PROV_RANK.EXTRACTED)
+    expect(PROV_RANK.EXTRACTED).toBeGreaterThan(PROV_RANK.STALE)
+  })
+
+  it('@neat.is/types exports no frontierEdgeId symbol', async () => {
+    const mod = (await import('@neat.is/types')) as Record<string, unknown>
+    expect(mod.frontierEdgeId).toBeUndefined()
+  })
+
+  it('no source file under packages/core/src/, packages/mcp/src/, packages/types/src/ references Provenance.FRONTIER', () => {
+    const offenders: string[] = []
+    const re = /\bProvenance\.FRONTIER\b/
+    for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC), ...walkSrc(TYPES_SRC)]) {
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim()
+        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+          offenders.push(`${file}:${i + 1}: ${trimmed}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('no source file references the frontierEdgeId helper', () => {
+    const offenders: string[] = []
+    const re = /\bfrontierEdgeId\b/
+    for (const file of [...walkSrc(CORE_SRC), ...walkSrc(MCP_SRC), ...walkSrc(TYPES_SRC)]) {
+      const content = readFileSync(file, 'utf8')
+      content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim()
+        if (re.test(line) && !trimmed.startsWith('//') && !trimmed.startsWith('*')) {
+          offenders.push(`${file}:${i + 1}: ${trimmed}`)
+        }
+      })
+    }
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('observedEdgeId(source, frontierId(host), type) round-trips through parseEdgeId with provenance=OBSERVED and FrontierNode target preserved', async () => {
+    const { observedEdgeId, frontierId, parseEdgeId } = await import('@neat.is/types')
+    const id = observedEdgeId('service:checkout', frontierId('api.github.com'), EdgeType.CALLS)
+    expect(id).toBe('CALLS:OBSERVED:service:checkout->frontier:api.github.com')
+    expect(parseEdgeId(id)).toEqual({
+      type: EdgeType.CALLS,
+      provenance: 'OBSERVED',
+      source: 'service:checkout',
+      target: 'frontier:api.github.com',
+    })
+  })
+
+  it('OTLP span to an unresolved peer produces an OBSERVED edge with FrontierNode target, signal block populated, graded confidence', async () => {
+    const { handleSpan } = await import('../../src/ingest.js')
+    const { frontierId, observedEdgeId } = await import('@neat.is/types')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:hello-smoke', {
+      id: 'service:hello-smoke',
+      type: NodeType.ServiceNode,
+      name: 'hello-smoke',
+      language: 'javascript',
+    })
+    const errorsPath = `/tmp/neat-adr068-${Date.now()}.ndjson`
+    await handleSpan(
+      { graph: g, errorsPath, writeErrorEventInline: false },
+      {
+        service: 'hello-smoke',
+        traceId: 't1',
+        spanId: 's1',
+        name: 'GET /work',
+        startTimeUnixNano: '1747400400000000000',
+        endTimeUnixNano: '1747400400100000000',
+        startTimeIso: '2026-05-16T14:00:00.000Z',
+        durationNanos: 0n,
+        attributes: { 'server.address': 'api.github.com' },
+      },
+    )
+    const fid = frontierId('api.github.com')
+    expect(g.hasNode(fid)).toBe(true)
+    const id = observedEdgeId('service:hello-smoke', fid, EdgeType.CALLS)
+    expect(g.hasEdge(id)).toBe(true)
+    const edge = g.getEdgeAttributes(id) as GraphEdge
+    expect(edge.provenance).toBe(Provenance.OBSERVED)
+    expect(edge.signal).toBeDefined()
+    expect(edge.signal!.spanCount).toBe(1)
+    expect(edge.signal!.errorCount).toBe(0)
+    expect(typeof edge.confidence).toBe('number')
+  })
+
+  it('promoteFrontierNodes preserves provenance: OBSERVED-to-FrontierNode promotes to OBSERVED-to-typed-node (already asserted in lifecycle block)', async () => {
+    const { observedEdgeId, frontierId } = await import('@neat.is/types')
+    const { promoteFrontierNodes } = await import('../../src/ingest.js')
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', { id: 'service:caller', type: NodeType.ServiceNode, name: 'caller', language: 'javascript' })
+    g.addNode('service:callee', {
+      id: 'service:callee', type: NodeType.ServiceNode, name: 'callee', language: 'javascript', aliases: ['callee.host'],
+    })
+    const fid = frontierId('callee.host')
+    g.addNode(fid, { id: fid, type: NodeType.FrontierNode, name: 'callee.host', host: 'callee.host' })
+    const oldId = observedEdgeId('service:caller', fid, EdgeType.CALLS)
+    g.addEdgeWithKey(oldId, 'service:caller', fid, {
+      id: oldId, source: 'service:caller', target: fid, type: EdgeType.CALLS,
+      provenance: Provenance.OBSERVED, lastObserved: '2026-05-16T00:00:00.000Z', callCount: 1,
+    })
+    expect(promoteFrontierNodes(g)).toBe(1)
+    const newId = observedEdgeId('service:caller', 'service:callee', EdgeType.CALLS)
+    expect(g.hasEdge(newId)).toBe(true)
+    expect((g.getEdgeAttributes(newId) as GraphEdge).provenance).toBe(Provenance.OBSERVED)
+  })
+
+  it('persist.ts SCHEMA_VERSION is 3', () => {
+    const content = readFileSync(join(CORE_SRC, 'persist.ts'), 'utf8')
+    expect(content).toMatch(/const\s+SCHEMA_VERSION\s*=\s*3/)
+  })
+
+  it('persist v2 → v3 migration rewrites edges with provenance=FRONTIER to provenance=OBSERVED; target ref preserved; id re-keyed via OBSERVED wire format', async () => {
+    const { writeFile, mkdtemp, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join: pathJoin } = await import('node:path')
+    const { loadGraphFromDisk } = await import('../../src/persist.js')
+    const { MultiDirectedGraph: MDG } = await import('graphology')
+
+    const tmp = await mkdtemp(pathJoin(tmpdir(), 'neat-adr068-'))
+    try {
+      const snapshotPath = pathJoin(tmp, 'graph.json')
+      const legacy = {
+        schemaVersion: 2,
+        exportedAt: '2026-05-16T14:00:00.000Z',
+        graph: {
+          attributes: {},
+          options: { allowSelfLoops: false, multi: true, type: 'directed' },
+          nodes: [
+            { key: 'service:caller', attributes: { id: 'service:caller', type: NodeType.ServiceNode, name: 'caller', language: 'javascript' } },
+            { key: 'frontier:peer.host', attributes: { id: 'frontier:peer.host', type: NodeType.FrontierNode, name: 'peer.host', host: 'peer.host' } },
+          ],
+          edges: [
+            {
+              key: 'CALLS:FRONTIER:service:caller->frontier:peer.host',
+              source: 'service:caller',
+              target: 'frontier:peer.host',
+              attributes: {
+                id: 'CALLS:FRONTIER:service:caller->frontier:peer.host',
+                source: 'service:caller',
+                target: 'frontier:peer.host',
+                type: EdgeType.CALLS,
+                provenance: 'FRONTIER',
+                lastObserved: '2026-05-16T13:59:00.000Z',
+                callCount: 5,
+              },
+            },
+          ],
+        },
+      }
+      await writeFile(snapshotPath, JSON.stringify(legacy), 'utf8')
+      const g = new MDG<GraphNode, GraphEdge>({ allowSelfLoops: false })
+      await loadGraphFromDisk(g as unknown as NeatGraph, snapshotPath)
+
+      const expectedId = 'CALLS:OBSERVED:service:caller->frontier:peer.host'
+      expect(g.hasEdge(expectedId)).toBe(true)
+      const edge = g.getEdgeAttributes(expectedId) as GraphEdge
+      expect(edge.provenance).toBe(Provenance.OBSERVED)
+      expect(edge.target).toBe('frontier:peer.host')
+      expect(edge.callCount).toBe(5)
+    } finally {
+      await rm(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('contracts/provenance.md and contracts/frontier-promotion.md reference ADR-068 in their adr: list', () => {
+    const provFm = readFileSync(join(__dirname, '../../../../docs/contracts/provenance.md'), 'utf8')
+    const frontierFm = readFileSync(join(__dirname, '../../../../docs/contracts/frontier-promotion.md'), 'utf8')
+    expect(provFm).toMatch(/adr:.*ADR-068/)
+    expect(frontierFm).toMatch(/adr:.*ADR-068/)
+  })
 })
