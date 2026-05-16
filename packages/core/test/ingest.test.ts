@@ -164,6 +164,51 @@ describe('handleSpan', () => {
     expect(edge.signal?.lastObservedAgeMs).toBe(0)
   })
 
+  it('OBSERVED confidence grades higher with more spans (ADR-066 #2)', async () => {
+    // 100 spans lands in the strong tier (~0.95+); 3 spans lands in the
+    // weak tier (~0.4-0.5). The grading helper in @neat.is/types/confidence
+    // is the single source of truth — this fixture proves the wiring.
+    const lowCtx = ctx
+    for (let i = 0; i < 3; i++) {
+      await handleSpan(lowCtx, clientHttpSpan({ spanId: `low-${i}` }))
+    }
+    const lowId = `${EdgeType.CALLS}:OBSERVED:service:service-a->service:service-b`
+    const lowConfidence = (lowCtx.graph.getEdgeAttributes(lowId) as GraphEdge).confidence!
+
+    // Reset the same graph state by clearing the edge and replaying.
+    lowCtx.graph.dropEdge(lowId)
+    for (let i = 0; i < 100; i++) {
+      await handleSpan(lowCtx, clientHttpSpan({ spanId: `high-${i}` }))
+    }
+    const highConfidence = (lowCtx.graph.getEdgeAttributes(lowId) as GraphEdge).confidence!
+
+    expect(highConfidence).toBeGreaterThan(lowConfidence)
+    expect(highConfidence).toBeGreaterThanOrEqual(0.95)
+  })
+
+  it('OBSERVED confidence drops when error ratio climbs (ADR-066 #2)', async () => {
+    // 5 clean spans vs 5 spans with 2 errors. Clean grades higher.
+    for (let i = 0; i < 5; i++) {
+      await handleSpan(ctx, clientHttpSpan({ spanId: `clean-${i}` }))
+    }
+    const id = `${EdgeType.CALLS}:OBSERVED:service:service-a->service:service-b`
+    const cleanConfidence = (ctx.graph.getEdgeAttributes(id) as GraphEdge).confidence!
+
+    ctx.graph.dropEdge(id)
+    for (let i = 0; i < 5; i++) {
+      const isError = i < 2
+      await handleSpan(
+        ctx,
+        clientHttpSpan({
+          spanId: `err-${i}`,
+          ...(isError ? { statusCode: 2, exception: { message: 'boom' } } : {}),
+        }),
+      )
+    }
+    const erroringConfidence = (ctx.graph.getEdgeAttributes(id) as GraphEdge).confidence!
+    expect(erroringConfidence).toBeLessThan(cleanConfidence)
+  })
+
   it('increments callCount on repeat observations without duplicating the edge', async () => {
     await handleSpan(ctx, clientHttpSpan())
     await handleSpan(ctx, clientHttpSpan({ spanId: 'span-a2' }))
@@ -275,7 +320,13 @@ describe('handleSpan', () => {
   it('writes an ErrorEvent line to the ndjson file when status.code === 2', async () => {
     await handleSpan(
       ctx,
-      dbSpan({ statusCode: 2, errorMessage: 'SASL: SCRAM-SERVER-FIRST-MESSAGE' }),
+      dbSpan({
+        statusCode: 2,
+        // ADR-068 follow-up — errorMessage reads exception.message per OTel
+        // semconv; the polluted status.message fallback is gone, so the
+        // exception event has to carry the actual error string.
+        exception: { message: 'SASL: SCRAM-SERVER-FIRST-MESSAGE' },
+      }),
     )
     const events = await readErrorEvents(ctx.errorsPath)
     expect(events).toHaveLength(1)
@@ -286,6 +337,65 @@ describe('handleSpan', () => {
       affectedNode: 'database:payments-db',
       errorMessage: expect.stringContaining('SCRAM'),
     } as ErrorEvent)
+  })
+
+  it('preserves span attributes on the ErrorEvent (ADR-068 follow-up)', async () => {
+    await handleSpan(
+      ctx,
+      dbSpan({
+        statusCode: 2,
+        exception: { message: 'boom' },
+        attributes: {
+          'db.system': 'postgresql',
+          'db.name': 'neatdemo',
+          'server.address': 'payments-db',
+          'code.filepath': 'src/payment.ts',
+          'code.lineno': 84,
+          'code.function': 'processPayment',
+        },
+      }),
+    )
+    const events = await readErrorEvents(ctx.errorsPath)
+    expect(events).toHaveLength(1)
+    const ev = events[0]!
+    expect(ev.attributes).toBeDefined()
+    expect(ev.attributes!['code.filepath']).toBe('src/payment.ts')
+    expect(ev.attributes!['code.lineno']).toBe(84)
+    expect(ev.attributes!['code.function']).toBe('processPayment')
+  })
+
+  it('errorMessage prefers exception.message over span.name; ignores status.message (ADR-068 follow-up)', async () => {
+    // Mirror the NEAT-BUG-11 reproduction: OTel auto-instrumentation can
+    // surface the HTTP method in status.message for HTTP server errors.
+    // The receiver must read exception.message, not span.errorMessage.
+    await handleSpan(
+      ctx,
+      dbSpan({
+        statusCode: 2,
+        errorMessage: 'GET', // polluted status.message
+        name: 'POST /payments',
+        exception: { message: 'synthetic failure (counter=3)' },
+      }),
+    )
+    const events = await readErrorEvents(ctx.errorsPath)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.errorMessage).toBe('synthetic failure (counter=3)')
+  })
+
+  it('errorMessage falls back to span.name when no exception event is recorded (ADR-068 follow-up)', async () => {
+    // No exception event — falls through to span.name. status.message
+    // (the auto-instrumentation pollution from NEAT-BUG-11) is not used.
+    await handleSpan(
+      ctx,
+      dbSpan({
+        statusCode: 2,
+        errorMessage: 'GET', // polluted status.message
+        name: 'pg.query',
+      }),
+    )
+    const events = await readErrorEvents(ctx.errorsPath)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.errorMessage).toBe('pg.query')
   })
 
   it('does not log an ErrorEvent for a successful span', async () => {

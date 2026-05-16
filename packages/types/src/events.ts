@@ -1,5 +1,17 @@
 import { z } from 'zod'
 
+// Passthrough of OTel span attributes. Records source-attribution
+// (`code.filepath`, `code.lineno`, `code.function`), HTTP context
+// (`http.method`, `http.target`, `http.status_code`), DB context
+// (`db.system`, `db.statement`), and any other span attribute the SDK
+// emitted. Consumers (incident UI, MCP getRootCause) filter what they
+// surface. Schema growth per ADR-031 — optional, additive only.
+export const SpanAttributesSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.string()), z.array(z.number()), z.array(z.boolean())]),
+)
+export type SpanAttributes = z.infer<typeof SpanAttributesSchema>
+
 export const ErrorEventSchema = z.object({
   id: z.string(),
   timestamp: z.string().datetime(),
@@ -14,6 +26,10 @@ export const ErrorEventSchema = z.object({
   // growth — added without a shape change because both fields are optional.
   exceptionType: z.string().optional(),
   exceptionStacktrace: z.string().optional(),
+  // Span attributes passthrough (ADR-068 follow-up). Surfaces `code.*`
+  // semconv attributes for source attribution, plus the rest of the
+  // attribute set for downstream filtering.
+  attributes: SpanAttributesSchema.optional(),
   affectedNode: z.string(),
 })
 export type ErrorEvent = z.infer<typeof ErrorEventSchema>

@@ -903,6 +903,29 @@
   "ErrorEventSchema": {
     "_object": {
       "affectedNode": "_string",
+      "attributes": {
+        "_optional": {
+          "_record": {
+            "_union": [
+              "_string",
+              "_number",
+              "_boolean",
+              {
+                "_other": "ZodNull"
+              },
+              {
+                "_array": "_string"
+              },
+              {
+                "_array": "_number"
+              },
+              {
+                "_array": "_boolean"
+              }
+            ]
+          }
+        }
+      },
       "errorMessage": "_string",
       "errorType": {
         "_optional": "_string"
