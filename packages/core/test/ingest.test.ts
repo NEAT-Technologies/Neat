@@ -214,16 +214,11 @@ describe('handleSpan', () => {
     ).toBe(true)
   })
 
-  it('emits a FRONTIER placeholder when the span peer matches no service node', async () => {
+  it('emits an OBSERVED edge to a FrontierNode placeholder when the span peer matches no service node (ADR-068)', async () => {
     await handleSpan(
       ctx,
       clientHttpSpan({ attributes: { 'server.address': 'payments-api.cluster.local' } }),
     )
-    let observedCalls = 0
-    ctx.graph.forEachEdge((k) => {
-      if (k.startsWith(`${EdgeType.CALLS}:OBSERVED:`)) observedCalls++
-    })
-    expect(observedCalls).toBe(0)
 
     expect(ctx.graph.hasNode('frontier:payments-api.cluster.local')).toBe(true)
     const frontier = ctx.graph.getNodeAttributes(
@@ -233,11 +228,15 @@ describe('handleSpan', () => {
     expect(frontier.host).toBe('payments-api.cluster.local')
     expect(frontier.firstObserved).toBeTruthy()
 
-    const frontierEdgeId = `${EdgeType.CALLS}:FRONTIER:service:service-a->frontier:payments-api.cluster.local`
-    expect(ctx.graph.hasEdge(frontierEdgeId)).toBe(true)
-    const edge = ctx.graph.getEdgeAttributes(frontierEdgeId) as GraphEdge
-    expect(edge.provenance).toBe(Provenance.FRONTIER)
+    const observedFrontierEdgeId = `${EdgeType.CALLS}:OBSERVED:service:service-a->frontier:payments-api.cluster.local`
+    expect(ctx.graph.hasEdge(observedFrontierEdgeId)).toBe(true)
+    const edge = ctx.graph.getEdgeAttributes(observedFrontierEdgeId) as GraphEdge
+    expect(edge.provenance).toBe(Provenance.OBSERVED)
     expect(edge.callCount).toBe(1)
+    expect(edge.signal).toBeDefined()
+    expect(edge.signal!.spanCount).toBe(1)
+    expect(edge.signal!.errorCount).toBe(0)
+    expect(typeof edge.confidence).toBe('number')
   })
 
   it('resolves a span peer through ServiceNode.aliases', async () => {

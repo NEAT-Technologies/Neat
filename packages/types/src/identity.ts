@@ -72,16 +72,20 @@ export function parseFrontierId(id: string): string | null {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Edge ids (ADR-029)
+// Edge ids (ADR-029, ADR-068)
 // ──────────────────────────────────────────────────────────────────────────
 //
 // Edge id wire format per provenance:
 //   EXTRACTED: `${type}:${source}->${target}`
 //   OBSERVED:  `${type}:OBSERVED:${source}->${target}`
 //   INFERRED:  `${type}:INFERRED:${source}->${target}`
-//   FRONTIER:  `${type}:FRONTIER:${source}->${target}`
 //   STALE never appears in an edge id; STALE is a transition of an existing
 //   OBSERVED edge (ADR-024), not a creation pattern.
+//
+// Per ADR-068, edges to FrontierNodes carry whatever provenance describes
+// how the edge was learned — span-derived edges use observedEdgeId with the
+// FrontierNode id as the target string. Node-type is orthogonal to
+// provenance; the wire format reflects provenance only.
 //
 // Multiple edges between the same node pair coexist under distinct provenance
 // ids — that's what makes the EXTRACTED+OBSERVED coexistence rule
@@ -101,19 +105,16 @@ export function inferredEdgeId(source: string, target: string, type: string): st
   return `${type}:INFERRED:${source}${EDGE_ARROW}${target}`
 }
 
-export function frontierEdgeId(source: string, target: string, type: string): string {
-  return `${type}:FRONTIER:${source}${EDGE_ARROW}${target}`
-}
-
 // Parse an edge id into its parts. Returns null if the input is not a
-// well-formed edge id — covers all four provenance variants. Useful for
-// consumers (traversal, MCP, persist) that need to walk back from an id.
+// well-formed edge id — covers all three creation variants (STALE rides on
+// the OBSERVED id format). Useful for consumers (traversal, MCP, persist)
+// that need to walk back from an id.
 //
 // Note: EXTRACTED ids have no provenance segment, so we detect them by
 // checking whether the second segment matches a known provenance marker.
 export function parseEdgeId(id: string): {
   type: string
-  provenance: 'EXTRACTED' | 'OBSERVED' | 'INFERRED' | 'FRONTIER'
+  provenance: 'EXTRACTED' | 'OBSERVED' | 'INFERRED'
   source: string
   target: string
 } | null {
@@ -127,13 +128,12 @@ export function parseEdgeId(id: string): {
   //   `${type}:${source}`             → EXTRACTED
   //   `${type}:OBSERVED:${source}`    → OBSERVED
   //   `${type}:INFERRED:${source}`    → INFERRED
-  //   `${type}:FRONTIER:${source}`    → FRONTIER
   const firstColon = left.indexOf(':')
   if (firstColon === -1) return null
   const type = left.slice(0, firstColon)
   const rest = left.slice(firstColon + 1)
 
-  for (const prov of ['OBSERVED', 'INFERRED', 'FRONTIER'] as const) {
+  for (const prov of ['OBSERVED', 'INFERRED'] as const) {
     if (rest.startsWith(`${prov}:`)) {
       return { type, provenance: prov, source: rest.slice(prov.length + 1), target }
     }
@@ -142,20 +142,19 @@ export function parseEdgeId(id: string): {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Provenance ranking (ADR-029)
+// Provenance ranking (ADR-029, ADR-068)
 // ──────────────────────────────────────────────────────────────────────────
 //
 // Canonical priority used by traversal and any consumer that needs to pick
 // a single edge between two nodes when multiple provenance variants exist.
 // Higher number = higher trust = preferred.
 //
-// FRONTIER is ranked 0 alongside STALE for the case where it does end up in
-// a comparison set, but contracts.md Rule 3 says traversal must skip FRONTIER
-// edges entirely — so this rank is rarely consulted for FRONTIER in practice.
-export const PROV_RANK: Readonly<Record<'OBSERVED' | 'INFERRED' | 'EXTRACTED' | 'STALE' | 'FRONTIER', number>> = Object.freeze({
+// Four entries match the four-value Provenance enum (ADR-068). Node-type
+// gating (e.g. "stop at FrontierNodes" per contracts.md Rule 3) is enforced
+// at the node level by traversal, independent of edge rank.
+export const PROV_RANK: Readonly<Record<'OBSERVED' | 'INFERRED' | 'EXTRACTED' | 'STALE', number>> = Object.freeze({
   OBSERVED: 3,
   INFERRED: 2,
   EXTRACTED: 1,
   STALE: 0,
-  FRONTIER: 0,
 })
