@@ -201,3 +201,18 @@ jobs:
           kill -TERM "$neatd_pid" 2>/dev/null || true
           wait "$neatd_pid" 2>/dev/null || true
           echo "Smoke test passed — neat --help + web build + post-neatd liveness all green."
+
+      - name: Verify npx install path
+        if: env.DRY_RUN != 'true'
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./packages/neat.is/package.json').version")
+          # `npx -y -p neat.is@<v> <bin>` is the one-liner install shape users
+          # reach for first. Each bin must resolve via npx, not just via
+          # `npm install` + node_modules/.bin/, so a bin-name / shim regression
+          # fails publish rather than reaching the registry.
+          npx -y -p "neat.is@${version}" neat --help > /dev/null
+          echo "  npx -p neat.is neat --help exited 0"
+          npx -y -p "neat.is@${version}" neatd status > /dev/null 2>&1 || true
+          echo "  npx -p neat.is neatd status resolved"
+          echo "npx install path verified."
