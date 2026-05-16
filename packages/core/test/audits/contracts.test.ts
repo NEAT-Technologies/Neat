@@ -6999,3 +6999,31 @@ describe('Comms-voice contract (Refs #262)', () => {
     expect(index).toContain('contracts/comms-voice.md')
   })
 })
+
+// ──────────────────────────────────────────────────────────────────────────
+// ADR-068 — FrontierNode and OBSERVED provenance are orthogonal (#267)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Provenance shrinks to four values; FrontierNode stays as a node type but
+// no longer doubles as a provenance value. Span-derived edges to unresolved
+// peers carry OBSERVED provenance with the FrontierNode id as the target
+// string. The `frontierEdgeId` helper retires; OBSERVED-with-FrontierNode-
+// target uses `observedEdgeId`. `persist.ts` carries a v2 → v3 migration
+// that rewrites legacy FRONTIER-provenance edges to OBSERVED on load.
+//
+// These assertions flip from `it.todo` to live as the v0.3.5 implementation
+// lands (ingest swap, enum shrink, identity helper drop, persist migration).
+describe('ADR-068 — FrontierNode + OBSERVED orthogonality (#267)', () => {
+  it.todo('Provenance enum has exactly four values (OBSERVED, INFERRED, EXTRACTED, STALE)')
+  it.todo('ProvenanceSchema.options matches the four-value enum')
+  it.todo('PROV_RANK has exactly four entries and the OBSERVED > INFERRED > EXTRACTED > STALE ordering')
+  it.todo('@neat.is/types/identity exports no frontierEdgeId symbol')
+  it.todo('no source file under packages/core/src/, packages/mcp/src/, packages/types/src/ references Provenance.FRONTIER')
+  it.todo('no source file under packages/core/src/, packages/mcp/src/, packages/types/src/ references the frontierEdgeId helper')
+  it.todo('observedEdgeId(source, frontierId(host), type) round-trips through parseEdgeId with provenance=OBSERVED and FrontierNode target preserved')
+  it.todo('OTLP span to an unresolved peer produces a single OBSERVED edge with FrontierNode target, signal block populated, graded confidence')
+  it.todo('promoteFrontierNodes rewires target ref without changing provenance: OBSERVED-to-FrontierNode edge promotes to OBSERVED-to-typed-node edge')
+  it.todo('persist.ts SCHEMA_VERSION bumps to 3')
+  it.todo('persist v2 → v3 migration rewrites edges with provenance=FRONTIER to provenance=OBSERVED; target ref preserved; id re-keyed via observedEdgeId')
+  it.todo('contracts/provenance.md and contracts/frontier-promotion.md reference ADR-068 in their adr: list')
+})

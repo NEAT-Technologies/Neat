@@ -2282,3 +2282,69 @@ ADR-061's envelope rule applies to `/graph/divergences` as a structured-result e
 - **Confidence-grade enum in `@neat.is/types`.** Free-float `[0, 1]` confidence is enough for the divergence query to reweight against. Whether the grading buckets earn a typed enum is a later question once the v0.3.4 medusa re-run produces signal.
 
 **First application.** v0.3.4.
+
+## ADR-068 — FrontierNode is a node state; provenance and node-type are orthogonal
+
+**Date:** 2026-05-16
+**Status:** Active. Amends ADR-023 (FrontierNode semantics), ADR-029 (edge identity + provenance ranking), ADR-035 (FrontierNode promotion). Sharpens the distinction between FrontierNode-the-node-type and the act of observing traffic to that node.
+
+**Context.** A FrontierNode (ADR-023) represents an OTel peer that has not yet matched a known service — host:port shows up in a span, NEAT creates a placeholder, the next static-extraction round promotes the placeholder to a typed node once an alias resolves. The act of *seeing* the span is direct observation: the call happened, the timestamp is real, the count is real. The peer being unresolved is a separate fact about the target node, not about how the edge was learned.
+
+The divergence query (`get_divergences`, ADR-060 / ADR-066), the OBSERVED-led product orientation, and the source-attributed OBSERVED work all rely on traffic to any peer — resolved or not — carrying OBSERVED provenance with the signal block populated. The thesis surface reads strongest when every span produces an OBSERVED edge: an OBSERVED layer that spans both resolved and unresolved peers is the substrate the divergence query is meant to weight against. ADR-068 reaffirms ADR-023's distinction: FRONTIER is a property of the *node*, not of the *edge*.
+
+**Decision.**
+
+### 1. Provenance and node-type are orthogonal
+
+`Provenance` enumerates four values — `OBSERVED | INFERRED | EXTRACTED | STALE`. FRONTIER is no longer a provenance value; it is a `NodeType` value (FrontierNode), and FrontierNode remains the placeholder for unresolved span peers exactly as ADR-023 specifies.
+
+Edges to FrontierNodes carry whatever provenance describes how the edge was learned: spans produce OBSERVED edges with FrontierNode targets, the trace stitcher produces INFERRED edges with FrontierNode targets where applicable, static analysis never targets FrontierNodes because static analysis can't see them. The target's node-type is independent of the edge's provenance.
+
+### 2. Edge id wire format collapses to four variants
+
+`@neat.is/types/identity.ts` exports `extractedEdgeId`, `observedEdgeId`, `inferredEdgeId`, and `parseEdgeId`. The `frontierEdgeId` helper retires; edges to FrontierNodes use `observedEdgeId(source, frontierId('peer'), type)` and produce the wire format `${type}:OBSERVED:${source}->frontier:${peer}`. The provenance segment in the id reflects how the edge was learned; the `frontier:` prefix on the target string already identifies the node type.
+
+`parseEdgeId` returns one of the four provenance values. `PROV_RANK` lists four entries — `OBSERVED: 3, INFERRED: 2, EXTRACTED: 1, STALE: 0` — matching the enum.
+
+### 3. Schema growth: SCHEMA_VERSION bumps 2 → 3
+
+`packages/core/src/persist.ts` carries a v2 → v3 migration. Snapshots saved under v0.3.4 or earlier may contain edges with `provenance: 'FRONTIER'`; on load, those edges are rewritten to `provenance: 'OBSERVED'` and (if their id still carries the legacy `:FRONTIER:` segment) re-keyed to the OBSERVED wire format. Target refs are unchanged — the FrontierNode is still pointed to. The migration is one-way; v0.3.5+ never writes FRONTIER-provenance edges.
+
+This is a shape change per ADR-031: the persistence format changes, an ADR documents it, `persist.ts` carries the migration, the schema-snapshot guard records the new SCHEMA_VERSION.
+
+### 4. FrontierNode promotion preserves edge provenance
+
+`promoteFrontierNodes` / `rewireFrontierEdges` / `rebuildEdge` in `packages/core/src/ingest.ts` rewrite the target ref from `frontier:peer` to the matched typed-node id and keep provenance as it was. An OBSERVED edge stays OBSERVED across promotion; an INFERRED edge stays INFERRED. The id changes because one endpoint changed, and the canonical helper for the existing provenance computes the new id (`observedEdgeId(source, newTarget, type)` for an OBSERVED edge, etc.). Edges land at their final provenance at creation; promotion is a target-rewrite operation.
+
+### 5. Traversal continues to treat FrontierNodes as terminal
+
+Contracts.md Rule 3 ("FRONTIER edges are not traversed") restates as: traversal walks edges by provenance but does not enter FrontierNodes. The terminal property attaches to the *node*, not the edge — `getRootCause` and `getBlastRadius` consult node type at every step and stop when they reach a FrontierNode. OBSERVED edges with FrontierNode targets are still counted in divergence queries (the OBSERVED layer is no longer empty) but traversal does not descend past the FrontierNode.
+
+### 6. Signal block and graded confidence flow uniformly
+
+OBSERVED edges to FrontierNodes go through the same `upsertObservedEdge` path as OBSERVED edges to typed nodes. The `signal` block (`spanCount`, `errorCount`, `lastObservedAgeMs`) and the ADR-066 graded confidence are populated identically. The OBSERVED layer's confidence story is uniform regardless of target resolution status.
+
+**Authority.**
+
+- Provenance enum and helpers: `packages/types/src/constants.ts`, `packages/types/src/identity.ts`, `packages/types/src/edges.ts`.
+- Schema migration: `packages/core/src/persist.ts`.
+- Ingest swap and rebuild: `packages/core/src/ingest.ts`.
+- Contracts: `docs/contracts/provenance.md`, `docs/contracts/frontier-promotion.md`, `docs/contracts/otel-ingest.md`.
+
+**Enforcement.** New describe block in `packages/core/test/audits/contracts.test.ts` for ADR-068. Initial `it.todo` entries flip live as the v0.3.5 implementation lands:
+
+- `Provenance` enum has exactly four values (`OBSERVED`, `INFERRED`, `EXTRACTED`, `STALE`); `ProvenanceSchema.options` matches.
+- `PROV_RANK` has exactly four entries and ordering stays `OBSERVED > INFERRED > EXTRACTED > STALE`.
+- No source file under `packages/core/src/`, `packages/mcp/src/`, or `packages/types/src/` references `Provenance.FRONTIER` or the `frontierEdgeId` helper.
+- `parseEdgeId` round-trips OBSERVED edges with FrontierNode targets (`observedEdgeId(source, frontierId(host), type)`).
+- An OTLP span to an unresolved peer produces a single OBSERVED edge with a FrontierNode target, signal block populated, graded confidence.
+- A v2 snapshot containing an edge with `provenance: 'FRONTIER'` loads as v3 with that edge rewritten to OBSERVED, target ref preserved.
+- `promoteFrontierNodes` rewires target refs without changing edge provenance — an OBSERVED edge to a FrontierNode stays OBSERVED after promotion to a typed node, and its id moves from `${type}:OBSERVED:${source}->frontier:peer` to `${type}:OBSERVED:${source}->${typedTarget}`.
+
+**Out of scope.**
+
+- **FrontierNode-target divergence semantics.** `get_divergences` already filters `missing-observed` rows whose target is a FrontierNode (per the divergence-query contract). ADR-068 unblocks OBSERVED edges with FrontierNode targets but does not change which rows surface in the divergence query.
+- **External-host alias registry.** B9 in the plan file proposes auto-aliasing common SaaS hosts (`api.github.com → GitHub`, etc.) to reduce FrontierNode noise in the graph view. That work lives in a later milestone; ADR-068 makes those FrontierNodes useful — OBSERVED-grade — without renaming them.
+- **Stitcher behaviour for FrontierNode targets.** The trace stitcher (ADR-034) walks EXTRACTED edges only. Whether INFERRED edges should ever be created with FrontierNode targets is a separate question; current behaviour holds — INFERRED edges target typed nodes only.
+
+**First application.** v0.3.5.

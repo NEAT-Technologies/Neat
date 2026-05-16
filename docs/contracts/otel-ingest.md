@@ -1,11 +1,11 @@
 ---
 name: otel-ingest
-description: OTel receiver replies before mutation, lastObserved derives from span time, parent-span cache correlates cross-service CALLS, exception data is parsed from span events, unseen services and DBs are auto-created.
+description: OTel receiver replies before mutation, lastObserved derives from span time, parent-span cache correlates cross-service CALLS, exception data is parsed from span events, unseen services and DBs are auto-created, span-derived edges always carry OBSERVED provenance.
 governs:
   - "packages/core/src/ingest.ts"
   - "packages/core/src/otel.ts"
   - "packages/core/src/otel-grpc.ts"
-adr: [ADR-033, ADR-029, ADR-030]
+adr: [ADR-033, ADR-029, ADR-030, ADR-068]
 ---
 
 # OTel ingest contract
@@ -44,6 +44,15 @@ When `handleSpan` resolves a `service.name` not present in the graph, it creates
 Auto-created nodes carry `discoveredVia: 'otel'` (schema growth governed by ADR-031 — adds an optional field, snapshot regenerates).
 
 When static extraction later finds the same id, attributes **merge** per ADR-028 §3. Static fields override OTel-derived fields where both exist (because static is more authoritative on declared intent: language, version, dependencies). `discoveredVia` becomes `'merged'` if both layers recorded the node independently. Issue #134.
+
+## OBSERVED provenance for span-derived edges (ADR-068)
+
+Every edge created from an OTel span carries `provenance: 'OBSERVED'`, regardless of whether the peer resolves to a known service. The OTel span is direct observation; the target's resolution status is a separate fact about the target node, not about how the edge was learned.
+
+- **Peer resolves to a known service:** edge id is `observedEdgeId(sourceId, targetServiceId, type)`, target is the typed-node id.
+- **Peer does not resolve:** the receiver creates a FrontierNode placeholder (`frontierId(host)`) and the edge id is `observedEdgeId(sourceId, frontierNodeId, type)`. Target string starts with `frontier:`; provenance stays OBSERVED.
+
+Both paths go through `upsertObservedEdge`, which writes the `signal` block (`spanCount`, `errorCount`, `lastObservedAgeMs`) and the graded confidence per ADR-066. The OBSERVED layer is uniform across resolved and unresolved peers — divergence queries weight both the same way, traversal stops at the FrontierNode by node-type per Rule 3.
 
 ## Exception data from span events
 
