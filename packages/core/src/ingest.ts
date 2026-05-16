@@ -437,11 +437,14 @@ async function appendErrorEvent(ctx: IngestContext, ev: ErrorEvent): Promise<voi
 // the queued handleSpan path may reach a more precise target later, but the
 // durable record is what the receiver writes here.
 //
-// errorMessage prefers the exception event's `exception.message` (OTel
-// semconv), falls back to the span name, then the literal 'unknown error'.
-// `span.status.message` is intentionally not in the chain — OTel
-// auto-instrumentation often pollutes that field with the HTTP method for
-// HTTP server errors, which is misleading at the incident surface.
+// errorMessage reads from the exception event's `exception.message` (OTel
+// semconv) so the incident surface shows the actual thrown error string.
+// When the span carries no exception event the field falls back to the
+// literal 'unknown error' rather than `span.name` — OTel HTTP server
+// instrumentation routinely populates `span.name` with the HTTP method,
+// which produces incidents that read 'GET' or 'POST' instead of the
+// underlying failure. `span.status.message` is intentionally out of the
+// chain for the same reason.
 // Span attributes pass through verbatim so consumers can read source
 // attribution (`code.filepath`, `code.lineno`, `code.function`) and other
 // SDK-emitted context without ingest enumerating every key it cares about.
@@ -470,7 +473,7 @@ export function buildErrorEventForReceiver(span: ParsedSpan): ErrorEvent | null 
     service: span.service,
     traceId: span.traceId,
     spanId: span.spanId,
-    errorMessage: span.exception?.message ?? span.name ?? 'unknown error',
+    errorMessage: span.exception?.message ?? 'unknown error',
     ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
     ...(span.exception?.stacktrace
       ? { exceptionStacktrace: span.exception.stacktrace }
@@ -607,7 +610,7 @@ export async function handleSpan(ctx: IngestContext, span: ParsedSpan): Promise<
         service: span.service,
         traceId: span.traceId,
         spanId: span.spanId,
-        errorMessage: span.exception?.message ?? span.name ?? 'unknown error',
+        errorMessage: span.exception?.message ?? 'unknown error',
         ...(span.exception?.type ? { exceptionType: span.exception.type } : {}),
         ...(span.exception?.stacktrace
           ? { exceptionStacktrace: span.exception.stacktrace }

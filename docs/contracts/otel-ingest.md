@@ -58,12 +58,10 @@ Both paths go through `upsertObservedEdge`, which writes the `signal` block (`sp
 
 `OtlpSpan` is extended with `events: Array<{ name, timeUnixNano, attributes }>`. When a span has an `events[]` entry with `name === 'exception'`, the parser extracts `exception.type`, `exception.message`, and `exception.stacktrace` from its attributes.
 
-`handleSpan`'s ErrorEvent path prefers exception data over `status.message`:
+`handleSpan`'s ErrorEvent path reads exception data directly. `span.name` is intentionally absent from the fallback chain — OTel HTTP server instrumentation populates it with the request method (`"GET"`, `"POST"`), which is misleading at the incident surface. `span.status.message` is similarly absent for the same reason. When neither layer carries an exception, the literal `'unknown error'` keeps the schema's required-string contract intact while surfacing the gap:
 
 ```
 exceptionMessage = events.find(e => e.name === 'exception')?.attributes['exception.message']
-                ?? span.status.message
-                ?? span.name
                 ?? 'unknown error'
 ```
 

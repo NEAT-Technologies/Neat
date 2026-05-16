@@ -382,9 +382,12 @@ describe('handleSpan', () => {
     expect(events[0]!.errorMessage).toBe('synthetic failure (counter=3)')
   })
 
-  it('errorMessage falls back to span.name when no exception event is recorded (ADR-068 follow-up)', async () => {
-    // No exception event — falls through to span.name. status.message
-    // (the auto-instrumentation pollution from NEAT-BUG-11) is not used.
+  it('errorMessage falls back to literal `unknown error`, never span.name (issue #285)', async () => {
+    // No exception event — the field reads the literal 'unknown error' so
+    // the schema's required-string contract holds. span.name is reserved for
+    // OTel HTTP server instrumentation's request-method payload and stays
+    // out of the chain. status.message (the auto-instrumentation pollution
+    // from NEAT-BUG-11) is also out.
     await handleSpan(
       ctx,
       dbSpan({
@@ -395,7 +398,8 @@ describe('handleSpan', () => {
     )
     const events = await readErrorEvents(ctx.errorsPath)
     expect(events).toHaveLength(1)
-    expect(events[0]!.errorMessage).toBe('pg.query')
+    expect(events[0]!.errorMessage).toBe('unknown error')
+    expect(events[0]!.errorMessage).not.toBe('pg.query')
   })
 
   it('does not log an ErrorEvent for a successful span', async () => {
