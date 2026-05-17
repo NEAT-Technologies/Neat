@@ -3251,6 +3251,50 @@ describe('SDK install contract (ADR-047)', () => {
   })
 })
 
+describe('SDK install — apply-side (ADR-069)', () => {
+  // The apply phase of the Node installer matures in v0.3.6 to write the
+  // generated SDK setup, inject the entry-point require/import, and configure
+  // per-package service naming. Assertions land as `it.todo` and flip live
+  // alongside the v0.3.6 implementation PR (#289). ADR-047 §4 (lockfiles
+  // never touched) and ADR-047 §5 (idempotency) stand; ADR-069 §7 extends
+  // the allowed-paths set to {package.json, otel-init.{js,ts}, .env.neat}.
+
+  it.todo('ADR-069 §2 — entry resolution: pkg.main wins when present')
+  it.todo('ADR-069 §2 — entry resolution: pkg.bin (string and map forms) used when pkg.main absent')
+  it.todo('ADR-069 §2 — entry resolution: index.{ts,tsx,js,mjs,cjs} heuristic when neither main nor bin')
+  it.todo('ADR-069 §2 — lib-only package (no resolvable entry) is skipped with reason "lib-only"')
+
+  it.todo('ADR-069 §1 — generated otel-init.{js,ts} lands adjacent to the resolved entry')
+  it.todo('ADR-069 §1 — generated otel-init imports @opentelemetry/auto-instrumentations-node/register')
+  it.todo('ADR-069 §1 — generated otel-init loads .env.neat via dotenv before the auto-instrumentation hook runs')
+
+  it.todo('ADR-069 §1, §3 — ESM dispatch on pkg.type === "module" (inserts `import` form)')
+  it.todo('ADR-069 §1, §3 — ESM dispatch on .mjs entry extension')
+  it.todo('ADR-069 §1, §3 — CJS dispatch otherwise (inserts `require` form)')
+  it.todo('ADR-069 §1 — TS template chosen when entry ends in .ts/.tsx')
+
+  it.todo('ADR-069 §3 — injection lands as the first non-shebang line of the entry')
+  it.todo('ADR-069 §3 — shebang on line 1 is preserved; init line inserted on line 2')
+  it.todo('ADR-069 §6 — re-running --apply when otel-init exists is a no-op (logs "already instrumented")')
+  it.todo('ADR-069 §6 — re-running --apply when first non-shebang line matches injection pattern is a no-op for injection')
+
+  it.todo('ADR-069 §4 — .env.neat written to <package-dir> with OTEL_SERVICE_NAME=<pkg.name>')
+  it.todo('ADR-069 §4 — scoped names (e.g. @medusajs/auth) preserved verbatim, scope not stripped')
+  it.todo('ADR-069 §4 — .env.neat also carries OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318')
+  it.todo('ADR-069 §6 — existing .env.neat is never overwritten')
+
+  it.todo('ADR-069 §5 — Node installer plan includes dotenv as the fourth dependency')
+  it.todo('ADR-069 §5 — four-deps invariant: api + sdk-node + auto-instrumentations-node + dotenv')
+
+  it.todo('ADR-069 §7 — apply writes only package.json, otel-init.{js,ts}, .env.neat (no other paths)')
+  it.todo('ADR-069 §7 — lockfiles still never written (ADR-047 §4 holds through the apply-side extension)')
+
+  it.todo('ADR-069 §8 — dry-run output names the same file paths the apply phase would write')
+  it.todo('ADR-069 §8 — dry-run output includes the exact lines that would land in each file')
+
+  it.todo('ADR-069 §9 — apply summary returns { instrumented, alreadyInstrumented, libOnly } per package')
+})
+
 describe('Machine-level project registry contract (ADR-048)', () => {
   it('registry.ts is the only module reading/writing ~/.neat/projects.json (ADR-048 #8)', () => {
     // Authority is locked to packages/core/src/registry.ts. Nothing else in
