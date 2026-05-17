@@ -2348,3 +2348,65 @@ OBSERVED edges to FrontierNodes go through the same `upsertObservedEdge` path as
 - **Stitcher behaviour for FrontierNode targets.** The trace stitcher (ADR-034) walks EXTRACTED edges only. Whether INFERRED edges should ever be created with FrontierNode targets is a separate question; current behaviour holds — INFERRED edges target typed nodes only.
 
 **First application.** v0.3.5.
+
+---
+
+## ADR-069 — `neat init --apply` produces executable changes
+
+**Date:** 2026-05-17
+**Status:** Active. Amends ADR-047 (SDK install contract).
+
+The SDK installer surface matures to the next layer: `neat init --apply` now writes the SDK setup file, injects the require/import into each service's entry point, configures per-service naming, and lands the dependency additions atomically. ADR-047's plan/apply split and the lockfile-immutability rule stand unchanged.
+
+**Context.** ADR-047 §2 codified the patch shape (dependency edits, entrypoint edits, env edits) for the Node and Python installers. The Node installer at v0.2.5 expressed the entrypoint edit through `scripts.start` and routed env vars through "set in your orchestration layer" — the right level of intervention for the single-service shape that drove the v0.2.5 acceptance fixtures. Real-world monorepos (medusa is the first one NEAT points at end-to-end) want per-package instrumentation: a generated SDK setup file alongside each service's entry, the require/import injected at the entry's first line, and the service name resolved per workspace package without depending on an orchestration layer to fan out env vars. ADR-069 extends the apply surface to write those artifacts directly so `neat init --apply` reaches the threshold where it's the install command, not a list of recommended next steps.
+
+**Decision.**
+
+1. **Generated SDK setup file.** The Node installer writes `otel-init.{js,ts}` adjacent to each service's resolved entry point. The file imports `@opentelemetry/auto-instrumentations-node/register` (the auto-instrumentation hook), loads `.env.neat` via `dotenv`, and emits a short comment block documenting how to configure via env vars. ESM variant uses `import …`; CJS variant uses `require(…)`. The TS variant uses `import` and is emitted when the entry is `.ts`/`.tsx`.
+
+2. **Entry-point detection.** Resolution order: `pkg.main` → `pkg.bin[<name>]` (when `bin` is a string, use that path; when `bin` is a map, use the entry keyed on `pkg.name`) → `index.{ts,tsx,js,mjs,cjs}` heuristic in the package root. Packages with no resolvable entry are lib-only and skipped — the apply summary records each skip with reason `lib-only` so the user can see what was untouched and why.
+
+3. **Entry-point injection.** The installer reads the resolved entry, preserves the shebang on line 1 if present, and inserts the init line as the first non-shebang line. For ESM (when `pkg.type === 'module'` or the entry extension is `.mjs`/`.ts`/`.tsx`), the inserted line is `import './otel-init.js'` (or the `.ts` extensionless form when the entry is TS). For CJS, the inserted line is `require('./otel-init.js')`. The relative path is computed against the entry's directory so the injection works regardless of the entry's depth inside the package.
+
+4. **Per-service `OTEL_SERVICE_NAME`.** The installer writes `<package-dir>/.env.neat` containing `OTEL_SERVICE_NAME=<pkg.name>` (and `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`). Scoped names (`@medusajs/auth`) are preserved verbatim — the scope matches the EXTRACTED ServiceNode id format (ADR-028 + extract/services.ts), so dashboards joining OBSERVED spans against the graph use the same key on both sides. NEAT does not strip scopes. The generated SDK setup file loads `.env.neat` so the service name is in scope before the auto-instrumentation hook runs.
+
+5. **Fourth dependency.** The Node installer's dependency list grows to four packages: `@opentelemetry/api`, `@opentelemetry/sdk-node`, `@opentelemetry/auto-instrumentations-node`, and `dotenv`. The first three are unchanged from ADR-047 §2. `dotenv` is added so the generated `otel-init` can read `.env.neat` without bundling a parser.
+
+6. **Idempotency.** Re-running `--apply` on an already-instrumented package is a no-op for every file-write path:
+   - If `otel-init.{js,ts}` already exists adjacent to the entry, the installer logs `already instrumented` for that package and skips the file write **and** the entry-point injection (treats the package as instrumented end-to-end).
+   - If the entry's first non-shebang line already matches the injection pattern (`import './otel-init…'` or `require('./otel-init…')`), the installer skips the entry-point injection independently.
+   - `.env.neat` is preserved when it already exists; the installer never overwrites a user-edited file. New `.env.neat` writes always include `OTEL_SERVICE_NAME` and `OTEL_EXPORTER_OTLP_ENDPOINT` for the package.
+   - Manifest dep insertion is no-op when the dep is already present at any version (no version bumping; ADR-047 §5 stands).
+
+7. **Lockfiles never touched.** ADR-047 §4 holds. The set of paths the apply phase is permitted to write is restricted to `<package-dir>/package.json`, `<package-dir>/otel-init.{js,ts}`, and `<package-dir>/.env.neat`. Any other write from an installer module is a contract violation.
+
+8. **Dry-run output.** `neat init --dry-run` produces a concrete per-package summary: every file path that would be written, the exact lines that would land in each file, and the lib-only-skip list. The patch text is reviewable byte-for-byte (ADR-047 §6 stands) and describes the same set of writes the apply phase would land. The previous bullet-list summary is the v0.2.5 surface; v0.3.6 replaces it with a diff-shaped emission so the user can review before `--apply`.
+
+9. **Apply summary.** The Node installer's apply phase returns a structured summary (instrumented, skipped-already, skipped-lib-only) per package. The CLI logs the counts at the end of `neat init --apply` so the user sees coverage at a glance: e.g. `instrumented 42, already-instrumented 3, lib-only 17`. The structured shape lives in `installers/shared.ts` so successor language installers can return the same.
+
+**Authority.** `packages/core/src/installers/javascript.ts` (the load-bearing edits). Generated-file templates live alongside as `installers/templates/otel-init.{cjs,esm,ts}.template` (or equivalent inline constants — the choice is implementation, not contract). The four-deps list, the entry-detection heuristic, and the injection pattern are codified in `contracts.test.ts` so regressions fail the audit.
+
+**Enforcement.** New `it.todo` entries under the existing `describe('SDK install contract (ADR-047)')` block, plus a new `describe('SDK install — apply-side (ADR-069)')` block that covers:
+
+- entry-point resolution order (`main` → `bin` → `index.*`),
+- ESM-vs-CJS dispatch on `pkg.type` and entry extension,
+- TS-vs-JS dispatch on entry extension,
+- generated `otel-init` file presence + content shape (auto-instrumentation hook, dotenv load),
+- entry-point first-non-shebang-line injection (with shebang preservation),
+- `.env.neat` write with `OTEL_SERVICE_NAME=<pkg.name>` (scope-preserved),
+- four-deps invariant (`@opentelemetry/api`, `sdk-node`, `auto-instrumentations-node`, `dotenv`),
+- idempotency on a second `--apply` against an already-instrumented fixture,
+- lib-only-no-entry packages skipped cleanly,
+- the path-set restriction (apply writes only `package.json`, `otel-init.{js,ts}`, `.env.neat`),
+- dry-run output names the same file paths the apply phase would write.
+
+`it.todo` entries flip live as v0.3.6 lands.
+
+**Out of scope.**
+
+- **Python installer apply surface upgrade.** ADR-069 governs the Node installer. The Python installer keeps its v0.2.5 shape (requirements.txt append + Procfile prefix) for now; a successor ADR addresses the equivalent generated-file + entry-injection pattern for Python once the Node surface is in production.
+- **`npm install` execution.** ADR-046 + ADR-047 stand: NEAT prints the `npm install` reminder; the user owns the lockfile commit.
+- **Cross-package hoisted node_modules.** The installer treats each workspace package independently. Whether the host repo hoists `dotenv` / `@opentelemetry/*` at the root is the user's lockfile decision. The contract is per-package manifest correctness.
+- **TypeScript build pipeline integration.** Generated `otel-init.ts` files compile through whatever TS pipeline the host package already uses. NEAT does not adjust `tsconfig.json` or `tsup`/`tsc` invocations.
+
+**First application.** v0.3.6.
