@@ -1,30 +1,61 @@
 /**
- * Node / TypeScript SDK installer (ADR-047).
+ * Node / TypeScript SDK installer (ADR-047 + ADR-069).
  *
  * Detects services by the presence of a `package.json` carrying a `name`
  * field — same shape `extract/services.ts` uses to decide what counts as a
- * Node service. The plan adds three OTel packages to `dependencies` and, if
- * a `scripts.start` exists, prefixes it with the auto-instrumentation hook.
+ * Node service. The plan adds four OTel-adjacent packages to `dependencies`
+ * (api, sdk-node, auto-instrumentations-node, dotenv), writes a generated
+ * `otel-init.{js,ts}` adjacent to the resolved entry, and injects the
+ * require/import as the first non-shebang line of that entry. Per-package
+ * `.env.neat` carries `OTEL_SERVICE_NAME` (scope-preserved) so dashboards
+ * joining OBSERVED spans against the EXTRACTED graph use the same key.
  *
- * Lockfiles are never touched. After `--apply`, init prints "run npm install"
- * so the user owns the lockfile commit (ADR-047 — "Lockfiles never touched").
+ * Lockfiles are never touched (ADR-047 §4). The apply phase writes only to
+ * package.json, otel-init.{js,ts}, and .env.neat (ADR-069 §7). After
+ * `--apply`, init prints "run npm install" so the user owns the lockfile
+ * commit.
+ *
+ * Idempotency (ADR-069 §6): the generated otel-init's presence is the
+ * primary signal that a package is instrumented end-to-end — when it
+ * exists, the apply phase logs `already instrumented` and skips the file
+ * write and the entry-point injection together. Existing `.env.neat` files
+ * are preserved (never overwritten).
  */
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { DependencyEdit, EntrypointEdit, EnvEdit, Installer, InstallPlan } from './shared.js'
+import type {
+  ApplyResult,
+  DependencyEdit,
+  EntrypointEdit,
+  EnvEdit,
+  GeneratedFile,
+  Installer,
+  InstallPlan,
+} from './shared.js'
+import {
+  OTEL_INIT_CJS,
+  OTEL_INIT_ESM,
+  OTEL_INIT_HEADER,
+  OTEL_INIT_TS,
+  renderEnvNeat,
+} from './templates.js'
 
 const SDK_PACKAGES = [
   { name: '@opentelemetry/api', version: '^1.9.0' },
   { name: '@opentelemetry/sdk-node', version: '^0.57.0' },
   { name: '@opentelemetry/auto-instrumentations-node', version: '^0.55.0' },
+  // ADR-069 §5 — dotenv is the fourth dep. The generated otel-init loads
+  // .env.neat through it so OTEL_SERVICE_NAME and the endpoint are in scope
+  // before the auto-instrumentation hook attaches.
+  { name: 'dotenv', version: '^16.4.5' },
 ] as const
 
-const AUTO_INSTRUMENT_REQUIRE = '--require @opentelemetry/auto-instrumentations-node/register'
-
 const OTEL_ENV: EnvEdit = {
-  // null target — NEAT does not write `.env` itself; the user sets the env
-  // var in their orchestration layer.
+  // ADR-069 §4 — endpoint moves into the per-package .env.neat (written
+  // by the apply phase). The envEdits surface stays for the dry-run
+  // patch render: it documents the key/value the user can inspect in the
+  // generated .env.neat.
   file: null,
   key: 'OTEL_EXPORTER_OTLP_ENDPOINT',
   value: 'http://localhost:4318',
@@ -32,6 +63,9 @@ const OTEL_ENV: EnvEdit = {
 
 interface PackageJsonShape {
   name?: string
+  type?: string
+  main?: string
+  bin?: string | Record<string, string>
   scripts?: Record<string, string>
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
@@ -46,23 +80,112 @@ async function readPackageJson(serviceDir: string): Promise<PackageJsonShape | n
   }
 }
 
+async function exists(p: string): Promise<boolean> {
+  try {
+    await fs.stat(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function detect(serviceDir: string): Promise<boolean> {
   const pkg = await readPackageJson(serviceDir)
   return pkg !== null && typeof pkg.name === 'string'
 }
 
-function rewriteStartScript(start: string): string {
-  // Already wired via auto-instrumentation? Don't touch — idempotency
-  // (ADR-047 — "Re-running init --apply produces no diff").
-  if (start.includes(AUTO_INSTRUMENT_REQUIRE)) return start
-  // Most start scripts begin with `node …`. Keep the rest of the command and
-  // splice the require flag in. Non-`node` starts (e.g. `next start`,
-  // `tsx server.ts`) get the require flag prefixed via `node` since the
-  // OTel hook needs a Node entry to attach to.
-  if (/^\s*node\b/.test(start)) {
-    return start.replace(/^\s*node\b\s*/, `node ${AUTO_INSTRUMENT_REQUIRE} `)
+// ADR-069 §2 — entry resolution order: pkg.main → pkg.bin → index.{ts,tsx,js,mjs,cjs}.
+// Returns the absolute path to the resolved entry, or null when the package
+// is lib-only (no resolvable entry).
+const INDEX_CANDIDATES = ['index.ts', 'index.tsx', 'index.js', 'index.mjs', 'index.cjs']
+
+export async function resolveEntry(
+  serviceDir: string,
+  pkg: PackageJsonShape,
+): Promise<string | null> {
+  if (typeof pkg.main === 'string' && pkg.main.length > 0) {
+    const candidate = path.resolve(serviceDir, pkg.main)
+    if (await exists(candidate)) return candidate
+    // Some manifests point `main` at a compiled dist file that doesn't exist
+    // pre-build. The contract says we resolve the path the manifest names; if
+    // it isn't on disk we fall through to bin/index, because injection has to
+    // land in a file that exists.
   }
-  return `node ${AUTO_INSTRUMENT_REQUIRE} -- ${start}`
+  if (pkg.bin) {
+    let binEntry: string | undefined
+    if (typeof pkg.bin === 'string') {
+      binEntry = pkg.bin
+    } else if (pkg.name && typeof pkg.bin[pkg.name] === 'string') {
+      binEntry = pkg.bin[pkg.name]
+    } else {
+      // Map form, but no entry keyed on pkg.name. Take the first value.
+      const first = Object.values(pkg.bin)[0]
+      if (typeof first === 'string') binEntry = first
+    }
+    if (binEntry) {
+      const candidate = path.resolve(serviceDir, binEntry)
+      if (await exists(candidate)) return candidate
+    }
+  }
+  for (const name of INDEX_CANDIDATES) {
+    const candidate = path.join(serviceDir, name)
+    if (await exists(candidate)) return candidate
+  }
+  return null
+}
+
+// ADR-069 §1, §3 — dispatch by entry extension + pkg.type.
+type EntryFlavor = 'cjs' | 'esm' | 'ts'
+
+export function dispatchEntry(entryFile: string, pkg: PackageJsonShape): EntryFlavor {
+  const ext = path.extname(entryFile).toLowerCase()
+  if (ext === '.ts' || ext === '.tsx') return 'ts'
+  if (ext === '.mjs') return 'esm'
+  if (ext === '.cjs') return 'cjs'
+  // .js — disambiguate on pkg.type. "module" → ESM, anything else → CJS.
+  return pkg.type === 'module' ? 'esm' : 'cjs'
+}
+
+// Generated-file basename per flavor.
+function otelInitFilename(flavor: EntryFlavor): string {
+  if (flavor === 'ts') return 'otel-init.ts'
+  if (flavor === 'esm') return 'otel-init.mjs'
+  return 'otel-init.cjs'
+}
+
+function otelInitContents(flavor: EntryFlavor): string {
+  if (flavor === 'ts') return OTEL_INIT_TS
+  if (flavor === 'esm') return OTEL_INIT_ESM
+  return OTEL_INIT_CJS
+}
+
+// Build the injection line per flavor. The relative path is computed against
+// the entry's directory so the injection works regardless of the entry's
+// depth inside the package.
+export function injectionLine(
+  flavor: EntryFlavor,
+  entryFile: string,
+  otelInitFile: string,
+): string {
+  let rel = path.relative(path.dirname(entryFile), otelInitFile)
+  if (!rel.startsWith('.')) rel = `./${rel}`
+  // Normalize to forward slashes for cross-platform module specifiers.
+  rel = rel.split(path.sep).join('/')
+  if (flavor === 'cjs') return `require('${rel}')`
+  if (flavor === 'esm') return `import '${rel}'`
+  // TS: drop the .ts extension so the resolver doesn't choke on it under
+  // either tsc-output or runtime-loader pipelines.
+  const tsRel = rel.replace(/\.ts$/, '')
+  return `import '${tsRel}'`
+}
+
+// Detect whether a given line already matches an injection of our otel-init.
+// Used for the entry-point idempotency check (ADR-069 §6).
+function lineIsOtelInjection(line: string): boolean {
+  const trimmed = line.trim()
+  if (trimmed.length === 0) return false
+  // Match require('./otel-init…') and import './otel-init…' shapes.
+  return /(?:require\(|import\s+)['"]\.\/otel-init[^'"]*['"]/.test(trimmed)
 }
 
 async function plan(serviceDir: string): Promise<InstallPlan> {
@@ -74,9 +197,20 @@ async function plan(serviceDir: string): Promise<InstallPlan> {
     dependencyEdits: [],
     entrypointEdits: [],
     envEdits: [],
+    generatedFiles: [],
   }
   if (!pkg) return empty
 
+  // ADR-069 §2 — entry resolution before anything else. No entry → lib-only.
+  const entryFile = await resolveEntry(serviceDir, pkg)
+  if (!entryFile) {
+    return { ...empty, libOnly: true }
+  }
+  const flavor = dispatchEntry(entryFile, pkg)
+  const otelInitFile = path.join(path.dirname(entryFile), otelInitFilename(flavor))
+  const envNeatFile = path.join(serviceDir, '.env.neat')
+
+  // ── Dependency edits (four-deps invariant; ADR-069 §5). ────────────────
   const existingDeps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) }
   const dependencyEdits: DependencyEdit[] = []
   for (const sdk of SDK_PACKAGES) {
@@ -88,23 +222,56 @@ async function plan(serviceDir: string): Promise<InstallPlan> {
       version: sdk.version,
     })
   }
-  // SDK_PACKAGES is already in stable declaration order, so the slice above
-  // is deterministic across runs (ADR-047 #6).
 
+  // ── Entry-point injection edit (ADR-069 §3). ───────────────────────────
   const entrypointEdits: EntrypointEdit[] = []
-  const startScript = pkg.scripts?.start
-  if (typeof startScript === 'string' && startScript.trim().length > 0) {
-    const rewritten = rewriteStartScript(startScript)
-    if (rewritten !== startScript) {
-      entrypointEdits.push({ file: manifestPath, before: startScript, after: rewritten })
+  try {
+    const raw = await fs.readFile(entryFile, 'utf8')
+    const lines = raw.split(/\r?\n/)
+    // Preserve a shebang on line 1 and check line 2 (the first non-shebang
+    // line) for an existing injection.
+    const firstReal = lines[0]?.startsWith('#!') ? lines[1] ?? '' : lines[0] ?? ''
+    if (!lineIsOtelInjection(firstReal)) {
+      const inject = injectionLine(flavor, entryFile, otelInitFile)
+      // Use the existing first-real line as the `before` marker so the apply
+      // phase can splice the injection cleanly even if the file shifts.
+      entrypointEdits.push({
+        file: entryFile,
+        before: firstReal,
+        after: inject,
+      })
     }
+  } catch {
+    // Entry file disappeared between resolve and plan (rare). Treat as
+    // lib-only.
+    return { ...empty, libOnly: true }
   }
 
-  // Empty plan when nothing needs to change anywhere — that is, every SDK
-  // dep is present and the start script already wires the hook (or there's
-  // no start script to wire). Surfaces ADR-047 #5: "plan(dir) returns an
-  // empty plan when SDK is already installed."
-  if (dependencyEdits.length === 0 && entrypointEdits.length === 0) {
+  // ── Generated files (ADR-069 §1, §4). ──────────────────────────────────
+  const generatedFiles: GeneratedFile[] = []
+  if (!(await exists(otelInitFile))) {
+    generatedFiles.push({
+      file: otelInitFile,
+      contents: otelInitContents(flavor),
+      skipIfExists: true,
+    })
+  }
+  if (!(await exists(envNeatFile))) {
+    generatedFiles.push({
+      file: envNeatFile,
+      contents: renderEnvNeat(pkg.name ?? path.basename(serviceDir)),
+      skipIfExists: true,
+    })
+  }
+
+  // ── Idempotency check (ADR-069 §6). ────────────────────────────────────
+  // If the package is already instrumented end-to-end — deps present, entry
+  // already injected, generated files already there — return an empty plan.
+  if (
+    dependencyEdits.length === 0 &&
+    entrypointEdits.length === 0 &&
+    generatedFiles.length === 0
+  ) {
     return empty
   }
 
@@ -114,75 +281,181 @@ async function plan(serviceDir: string): Promise<InstallPlan> {
     dependencyEdits,
     entrypointEdits,
     envEdits: [OTEL_ENV],
+    generatedFiles,
+    entryFile,
+    libOnly: false,
   }
 }
 
-async function apply(installPlan: InstallPlan): Promise<void> {
-  const touched = new Set<string>()
-  for (const e of installPlan.dependencyEdits) touched.add(e.file)
-  for (const e of installPlan.entrypointEdits) touched.add(e.file)
-  if (touched.size === 0) return
+// ADR-069 §7 — allowed write paths. Anything outside this set inside an
+// installer's apply phase is a contract violation.
+function isAllowedWritePath(serviceDir: string, target: string): boolean {
+  const rel = path.relative(serviceDir, target)
+  if (rel.startsWith('..')) return false
+  const base = path.basename(target)
+  if (base === 'package.json') return true
+  if (base === '.env.neat') return true
+  if (/^otel-init\.(?:js|cjs|mjs|ts)$/.test(base)) return true
+  return false
+}
 
-  // Snapshot every file we're about to mutate so a partial failure can roll
-  // back the whole batch (ADR-047 #7). Missing files are intentionally not
-  // an early-exit: the per-file mutation loop will hit them, fail, and
-  // trigger rollback for the files we already wrote.
-  const originals = new Map<string, string>()
-  for (const file of touched) {
-    try {
-      originals.set(file, await fs.readFile(file, 'utf8'))
-    } catch {
-      // No snapshot for this file. Mutation will fail loudly below.
+async function writeAtomic(file: string, contents: string): Promise<void> {
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+  await fs.writeFile(tmp, contents, 'utf8')
+  await fs.rename(tmp, file)
+}
+
+async function apply(installPlan: InstallPlan): Promise<ApplyResult> {
+  const { serviceDir } = installPlan
+  if (installPlan.libOnly) {
+    return {
+      serviceDir,
+      outcome: 'lib-only',
+      reason: 'no resolvable entry point',
+      writtenFiles: [],
     }
   }
 
+  // Already-instrumented check: an empty plan means there's nothing to do.
+  if (
+    installPlan.dependencyEdits.length === 0 &&
+    installPlan.entrypointEdits.length === 0 &&
+    (installPlan.generatedFiles?.length ?? 0) === 0
+  ) {
+    return {
+      serviceDir,
+      outcome: 'already-instrumented',
+      writtenFiles: [],
+    }
+  }
+
+  // Validate every target we plan to touch against the allowed-path set.
+  // Bail out before any write if a violation slipped through.
+  const allTargets = new Set<string>()
+  for (const d of installPlan.dependencyEdits) allTargets.add(d.file)
+  for (const e of installPlan.entrypointEdits) allTargets.add(e.file)
+  for (const g of installPlan.generatedFiles ?? []) allTargets.add(g.file)
+  for (const target of allTargets) {
+    // Entry-point edits land in user source files, not the allowed set —
+    // they're explicitly carved out below.
+    const isEntryEdit = installPlan.entrypointEdits.some((e) => e.file === target)
+    if (isEntryEdit) continue
+    if (!isAllowedWritePath(serviceDir, target)) {
+      throw new Error(
+        `javascript installer: refusing to write outside the allowed path set (ADR-069 §7): ${target}`,
+      )
+    }
+  }
+
+  // Snapshot every file we may touch so a partial failure can roll back the
+  // batch (ADR-047 §7). Newly-generated files have no prior contents — they
+  // get tracked separately so rollback unlinks them instead of restoring.
+  const originals = new Map<string, string>()
+  const createdFiles: string[] = []
+  for (const target of allTargets) {
+    if (await exists(target)) {
+      try {
+        originals.set(target, await fs.readFile(target, 'utf8'))
+      } catch {
+        // Best-effort. The mutation loop below will throw if this matters.
+      }
+    }
+  }
+
+  const writtenFiles: string[] = []
   try {
-    for (const file of touched) {
-      const raw = originals.get(file) ?? ''
+    // ── 1. Manifest edits (package.json) ─────────────────────────────────
+    const manifestTargets = installPlan.dependencyEdits
+      .reduce<Set<string>>((acc, e) => {
+        acc.add(e.file)
+        return acc
+      }, new Set())
+    for (const file of manifestTargets) {
+      const raw = originals.get(file)
+      if (raw === undefined) {
+        throw new Error(`javascript installer: cannot read ${file} during apply`)
+      }
       const pkg = JSON.parse(raw) as PackageJsonShape
       pkg.dependencies = pkg.dependencies ?? {}
-
       for (const dep of installPlan.dependencyEdits) {
         if (dep.file !== file) continue
         if (dep.kind === 'add') {
-          pkg.dependencies[dep.name] = dep.version
+          if (!(dep.name in (pkg.dependencies ?? {}))) {
+            pkg.dependencies[dep.name] = dep.version
+          }
+          // No version bump on existing entries (ADR-069 §6).
         } else {
           delete pkg.dependencies[dep.name]
         }
       }
-
-      for (const ep of installPlan.entrypointEdits) {
-        if (ep.file !== file) continue
-        pkg.scripts = pkg.scripts ?? {}
-        if (pkg.scripts.start === ep.before) {
-          pkg.scripts.start = ep.after
-        }
-      }
-
-      // Match the most common npm formatting (two-space indent, trailing
-      // newline) so the diff stays minimal on review.
       const newRaw = JSON.stringify(pkg, null, 2) + '\n'
-      const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
-      await fs.writeFile(tmp, newRaw, 'utf8')
-      await fs.rename(tmp, file)
+      await writeAtomic(file, newRaw)
+      writtenFiles.push(file)
+    }
+
+    // ── 2. Generated files (otel-init, .env.neat) ────────────────────────
+    for (const gen of installPlan.generatedFiles ?? []) {
+      if (gen.skipIfExists && (await exists(gen.file))) {
+        // Skip silently; the contract treats this as part of the
+        // already-instrumented path.
+        continue
+      }
+      await writeAtomic(gen.file, gen.contents)
+      if (!originals.has(gen.file)) createdFiles.push(gen.file)
+      writtenFiles.push(gen.file)
+    }
+
+    // ── 3. Entry-point injection (require/import on first non-shebang line)
+    for (const ep of installPlan.entrypointEdits) {
+      const raw = originals.get(ep.file)
+      if (raw === undefined) {
+        throw new Error(`javascript installer: cannot read entry ${ep.file} during apply`)
+      }
+      const lines = raw.split(/\r?\n/)
+      const hasShebang = lines[0]?.startsWith('#!') ?? false
+      const insertAt = hasShebang ? 1 : 0
+      // Idempotency: if the first non-shebang line already matches our
+      // injection pattern, skip — never double-inject.
+      const firstReal = lines[insertAt] ?? ''
+      if (lineIsOtelInjection(firstReal)) continue
+      lines.splice(insertAt, 0, ep.after)
+      const newRaw = lines.join('\n')
+      await writeAtomic(ep.file, newRaw)
+      writtenFiles.push(ep.file)
     }
   } catch (err) {
-    await rollback(installPlan, originals)
+    await rollback(installPlan, originals, createdFiles)
     throw err
+  }
+
+  return {
+    serviceDir,
+    outcome: 'instrumented',
+    writtenFiles,
   }
 }
 
 async function rollback(
   installPlan: InstallPlan,
   originals: Map<string, string>,
+  createdFiles: string[],
 ): Promise<void> {
   const restored: string[] = []
+  const removed: string[] = []
   for (const [file, raw] of originals.entries()) {
     try {
       await fs.writeFile(file, raw, 'utf8')
       restored.push(file)
     } catch {
       // Best-effort: keep going so we restore as much as we can.
+    }
+  }
+  for (const file of createdFiles) {
+    try {
+      await fs.unlink(file)
+      removed.push(file)
+    } catch {
+      // Best-effort.
     }
   }
   const lines = [
@@ -192,6 +465,7 @@ async function rollback(
     '# Files listed below were restored to their pre-apply contents.',
     '',
     ...restored.map((f) => `restored: ${f}`),
+    ...removed.map((f) => `removed:  ${f}`),
     '',
   ]
   const rollbackPath = path.join(installPlan.serviceDir, 'neat-rollback.patch')
@@ -204,3 +478,6 @@ export const javascriptInstaller: Installer = {
   plan,
   apply,
 }
+
+// Re-exports used by the contract test surface.
+export { OTEL_INIT_HEADER }

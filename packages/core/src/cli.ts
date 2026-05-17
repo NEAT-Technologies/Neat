@@ -356,7 +356,10 @@ async function buildPatchSections(
     const installer = await pickInstaller(svc.dir)
     if (!installer) continue
     const plan: InstallPlan = await installer.plan(svc.dir)
-    if (isEmptyPlan(plan)) continue
+    // Lib-only packages keep a section so the dry-run patch documents the
+    // skip and the apply summary counts them (ADR-069 §2). Empty plans
+    // (already-instrumented end-to-end) drop out.
+    if (isEmptyPlan(plan) && !plan.libOnly) continue
     sections.push({ installer: installer.name, plan })
   }
   return sections
@@ -431,14 +434,28 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
   // ── Step 7: write or apply patch ─────────────────────────────────────
   if (!opts.noInstall) {
     if (opts.apply) {
+      let instrumented = 0
+      let alreadyInstrumented = 0
+      let libOnly = 0
       for (const section of sections) {
         const installer = INSTALLERS.find((i) => i.name === section.installer)
         if (!installer) continue
-        await installer.apply(section.plan)
+        const outcome = await installer.apply(section.plan)
+        if (outcome.outcome === 'instrumented') {
+          instrumented++
+          for (const f of outcome.writtenFiles) written.push(f)
+        } else if (outcome.outcome === 'already-instrumented') {
+          alreadyInstrumented++
+        } else if (outcome.outcome === 'lib-only') {
+          libOnly++
+        }
       }
       if (sections.length > 0) {
         console.log('')
-        console.log('patch applied. Run `npm install` (or your language equivalent) to refresh lockfiles.')
+        console.log(
+          `apply: instrumented ${instrumented}, already-instrumented ${alreadyInstrumented}, lib-only ${libOnly}`,
+        )
+        console.log('Run `npm install` (or your language equivalent) to refresh lockfiles.')
       }
     } else {
       await fs.writeFile(patchPath, patch, 'utf8')
