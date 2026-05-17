@@ -2410,3 +2410,47 @@ The SDK installer surface matures to the next layer: `neat init --apply` now wri
 - **TypeScript build pipeline integration.** Generated `otel-init.ts` files compile through whatever TS pipeline the host package already uses. NEAT does not adjust `tsconfig.json` or `tsup`/`tsc` invocations.
 
 **First application.** v0.3.6.
+
+---
+
+## ADR-072 — OTel span routing matches by service.name with token-aware fallback
+
+**Date:** 2026-05-17
+**Status:** Active. Amends ADR-049 (daemon contract).
+
+`routeSpanToProject` matures from a single-pass exact match to a three-pass match that recognises the monorepo-package shape `service.name` takes in real-world Node services. The pure-function signature stays unchanged.
+
+**Context.** ADR-049 §OTel routing codified routing by `service.name === entry.name`. Production OTel SDKs emit per-package service names — `brief-api`, `medusa-server`, `payments-worker` — while operators register the project under the repo's top-level name (`brief`, `medusa`, `payments`). The exact-match rule sends every cross-shape span to `DEFAULT_PROJECT`, where it lands on the FrontierNode auto-creation flow (ADR-033) — correct as a fallback, but the project that should have absorbed the span never gets a chance.
+
+**Decision.**
+
+1. **Three-pass match order.** Routing iterates the registered projects up to three times, returning on the first hit:
+
+   1. **Exact** — `entry.name === serviceName`. Preserves the v0.2.5 behaviour for callers that registered with the matching name.
+   2. **Token prefix** — `entry.name` is the leading hyphen/underscore-separated token of `serviceName`. `brief` matches `brief-api` and `brief_worker` but not `briefcase`. When multiple projects qualify, the longest project name wins (so `brief-api` outranks `brief` when both are registered and the span carries `brief-api-staging`).
+   3. **Token containment** — `entry.name` appears in `serviceName` as a separator-delimited token (`api` inside `brief-api-staging`). This last-resort match only fires when the prefix pass produced no candidate.
+
+2. **`paused` is still off-route.** The status filter from ADR-049 stands at every pass.
+
+3. **`DEFAULT_PROJECT` is still the fallback.** Unmatched spans (no project name resembles the service) flow to `default` for FrontierNode auto-creation per ADR-033.
+
+4. **Pure-function contract preserved.** Caller signature, return type, and side-effect properties (none) are unchanged. The function still consumes a registry snapshot; daemon callers still pass a snapshot.
+
+**Authority.** `packages/core/src/daemon.ts` — `routeSpanToProject` plus two private helpers (`isTokenPrefix`, `isTokenContained`).
+
+**Enforcement.** New `it`s under the existing `describe('Daemon contract (ADR-049)')` block:
+
+- Token-prefix match: `brief-api` routes to `brief` when `brief` is registered.
+- Token-prefix match with underscore: `brief_worker` routes to `brief`.
+- Longest-prefix wins: when `brief` and `brief-api` are both registered, `brief-api-staging` routes to `brief-api`.
+- Non-token substring rejection: `briefcase` does not route to `brief`.
+- Containment match: `api` inside `brief-api-staging` routes to `api` only when no project is a token-prefix.
+- Exact match still wins when present.
+
+**Out of scope.**
+
+- **ServiceNode-membership routing.** Looking up `serviceName` against each project's `ServiceNode` set is the next logical layer. This ADR stays at the registry/name layer because monorepo extraction is still warming up on the projects this milestone targets.
+- **OTel `service.namespace` parsing.** When real-world traces carry `service.namespace`, a future ADR can layer that on top of the three-pass match.
+- **User-configurable aliases.** No `aliases:` field on the registry entry. The token-aware match covers the cases this ADR can defend in the current corpus.
+
+**First application.** v0.3.6.

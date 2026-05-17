@@ -4171,6 +4171,116 @@ describe('Daemon contract (ADR-049)', () => {
     expect(routeSpanToProject(undefined, projects)).toBe(DEFAULT_PROJECT)
   })
 
+  // ── ADR-072 — token-aware service.name routing ──────────────────────────
+
+  it('ADR-072 — token-prefix match: brief-api routes to brief, brief_worker routes to brief', async () => {
+    const { routeSpanToProject } = await import('../../src/daemon.js')
+    const projects = [
+      {
+        name: 'brief',
+        path: '/tmp/brief',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'active' as const,
+      },
+    ]
+    expect(routeSpanToProject('brief-api', projects)).toBe('brief')
+    expect(routeSpanToProject('brief_worker', projects)).toBe('brief')
+  })
+
+  it('ADR-072 — longest token-prefix wins when multiple projects qualify', async () => {
+    const { routeSpanToProject } = await import('../../src/daemon.js')
+    const projects = [
+      {
+        name: 'brief',
+        path: '/tmp/brief',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'active' as const,
+      },
+      {
+        name: 'brief-api',
+        path: '/tmp/brief-api',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'active' as const,
+      },
+    ]
+    // Both `brief` and `brief-api` are token-prefixes of `brief-api-staging`.
+    // The longer one wins.
+    expect(routeSpanToProject('brief-api-staging', projects)).toBe('brief-api')
+  })
+
+  it('ADR-072 — non-token substring is rejected: briefcase does not route to brief', async () => {
+    const { routeSpanToProject } = await import('../../src/daemon.js')
+    const { DEFAULT_PROJECT } = await import('../../src/graph.js')
+    const projects = [
+      {
+        name: 'brief',
+        path: '/tmp/brief',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'active' as const,
+      },
+    ]
+    expect(routeSpanToProject('briefcase', projects)).toBe(DEFAULT_PROJECT)
+  })
+
+  it('ADR-072 — token-containment fires only when no prefix matches', async () => {
+    const { routeSpanToProject } = await import('../../src/daemon.js')
+    const projects = [
+      {
+        name: 'api',
+        path: '/tmp/api',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'active' as const,
+      },
+    ]
+    // `api` is a token inside `brief-api-staging` (separator-delimited).
+    expect(routeSpanToProject('brief-api-staging', projects)).toBe('api')
+  })
+
+  it('ADR-072 — exact match still wins ahead of token passes', async () => {
+    const { routeSpanToProject } = await import('../../src/daemon.js')
+    const projects = [
+      {
+        name: 'brief-api',
+        path: '/tmp/brief-api',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'active' as const,
+      },
+      {
+        name: 'brief',
+        path: '/tmp/brief',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'active' as const,
+      },
+    ]
+    // Exact match against `brief-api` wins before the token-prefix pass
+    // could surface `brief`.
+    expect(routeSpanToProject('brief-api', projects)).toBe('brief-api')
+  })
+
+  it('ADR-072 — paused entries are skipped at every pass', async () => {
+    const { routeSpanToProject } = await import('../../src/daemon.js')
+    const { DEFAULT_PROJECT } = await import('../../src/graph.js')
+    const projects = [
+      {
+        name: 'brief',
+        path: '/tmp/brief',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'paused' as const,
+      },
+    ]
+    // Paused entries don't qualify for any of the three passes.
+    expect(routeSpanToProject('brief-api', projects)).toBe(DEFAULT_PROJECT)
+    expect(routeSpanToProject('brief', projects)).toBe(DEFAULT_PROJECT)
+  })
+
   it('graceful degradation: missing registry → boot refuses with clear error (ADR-049 #6)', async () => {
     const os2 = await import('node:os')
     const fs2 = await import('node:fs/promises')

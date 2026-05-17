@@ -106,20 +106,70 @@ function neatHomeFor(opts: DaemonOptions): string {
  *
  * Pure function. Daemon callers pass a snapshot of the registry to avoid
  * per-span fs reads.
+ *
+ * Matching order (ADR-072 — real-world `service.name` rarely equals project
+ * name; monorepos publish per-package names like `brief-api` under a
+ * project named `brief`):
+ *
+ *   1. Exact: `entry.name === serviceName`.
+ *   2. Hyphen/underscore-separated prefix: `entry.name` is a leading token
+ *      of `serviceName` (`brief` matches `brief-api`, `brief_worker`).
+ *      Longest-match wins so `brief-api` beats `brief` when both are
+ *      registered.
+ *   3. Containment as a separator-delimited token (`api` inside
+ *      `brief-api-staging`).
+ *
+ * Paused entries never match. Active and broken both match — broken slots
+ * still need the span so the ingest-time recovery path (where applicable)
+ * can attempt to bring the project back online. Falls back to
+ * `DEFAULT_PROJECT` when nothing matches.
  */
 export function routeSpanToProject(
   serviceName: string | undefined,
   projects: ReadonlyArray<RegistryEntry>,
 ): string {
   if (!serviceName) return DEFAULT_PROJECT
+  // Pass 1 — exact match.
   for (const entry of projects) {
-    if (entry.status !== 'active') continue
-    if (entry.languages.length === 0) {
-      // No language data yet — still acceptable to match by name.
-    }
+    if (entry.status === 'paused') continue
     if (entry.name === serviceName) return entry.name
   }
+  // Pass 2 — hyphen/underscore-separated prefix. Longest project name wins
+  // so a registered `brief-api` outranks a registered `brief` when the
+  // span's service.name is `brief-api-staging`.
+  const candidates: RegistryEntry[] = []
+  for (const entry of projects) {
+    if (entry.status === 'paused') continue
+    if (isTokenPrefix(entry.name, serviceName)) candidates.push(entry)
+  }
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => b.name.length - a.name.length)
+    return candidates[0]!.name
+  }
+  // Pass 3 — containment as a separator-delimited token. Last-resort match
+  // for `api` inside `brief-api-staging` when only `api` is registered.
+  for (const entry of projects) {
+    if (entry.status === 'paused') continue
+    if (isTokenContained(entry.name, serviceName)) return entry.name
+  }
   return DEFAULT_PROJECT
+}
+
+// True when `prefix` matches the first hyphen/underscore-separated token(s)
+// of `full`. `brief` matches `brief-api`, `brief_worker`, but not `briefcase`.
+function isTokenPrefix(prefix: string, full: string): boolean {
+  if (prefix.length >= full.length) return false
+  if (!full.startsWith(prefix)) return false
+  const sep = full.charAt(prefix.length)
+  return sep === '-' || sep === '_'
+}
+
+// True when `needle` appears in `haystack` bordered by separators on both
+// sides (so it's a complete token, not a substring of a longer word).
+function isTokenContained(needle: string, haystack: string): boolean {
+  if (!haystack.includes(needle)) return false
+  const tokens = haystack.split(/[-_]/)
+  return tokens.includes(needle)
 }
 
 async function bootstrapProject(entry: RegistryEntry): Promise<ProjectSlot> {
