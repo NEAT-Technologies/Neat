@@ -1504,6 +1504,64 @@ describe('OTel ingest contract (ADR-033)', () => {
     expect(written[0].exceptionType).toBe('TimeoutError')
     expect(written[0].exceptionStacktrace).toBe('at fetch (a.js:1)')
   })
+
+  it('handleSpan errorMessage falls back to literal `unknown error`, never span.name (issue #285)', async () => {
+    const { handleSpan } = await import('../../src/ingest.js')
+    const { mkdtempSync, readFileSync: rfs } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+
+    const g: NeatGraph = new MultiDirectedGraph<GraphNode, GraphEdge>({ allowSelfLoops: false })
+    g.addNode('service:caller', {
+      id: 'service:caller',
+      type: NodeType.ServiceNode,
+      name: 'caller',
+      language: 'javascript',
+    })
+
+    const dir = mkdtempSync(join(tmpdir(), 'contract-test-'))
+    const errorsPath = join(dir, 'errors.ndjson')
+    await handleSpan(
+      { graph: g, errorsPath, now: () => Date.parse('2026-05-05T12:00:00.000Z') },
+      {
+        traceId: 't1',
+        spanId: 's1',
+        service: 'caller',
+        // span.name carries the HTTP method per OTel HTTP server semconv.
+        // It must not bleed into errorMessage at the incident surface.
+        name: 'GET',
+        statusCode: 2,
+        startTimeUnixNano: '0',
+        endTimeUnixNano: '0',
+        durationNanos: 0n,
+        attributes: {},
+        // No exception event recorded.
+      },
+    )
+
+    const written = rfs(errorsPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    expect(written).toHaveLength(1)
+    expect(written[0].errorMessage).toBe('unknown error')
+    expect(written[0].errorMessage).not.toBe('GET')
+  })
+
+  it('buildErrorEventForReceiver errorMessage falls back to literal `unknown error`, never span.name (issue #285)', async () => {
+    const { buildErrorEventForReceiver } = await import('../../src/ingest.js')
+
+    const ev = buildErrorEventForReceiver({
+      traceId: 't1',
+      spanId: 's1',
+      service: 'caller',
+      name: 'POST',
+      statusCode: 2,
+      startTimeUnixNano: '0',
+      endTimeUnixNano: '0',
+      durationNanos: 0n,
+      attributes: {},
+    })
+    expect(ev).not.toBeNull()
+    expect(ev!.errorMessage).toBe('unknown error')
+    expect(ev!.errorMessage).not.toBe('POST')
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────
