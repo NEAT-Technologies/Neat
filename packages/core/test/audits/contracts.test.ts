@@ -3088,7 +3088,7 @@ describe('SDK install contract (ADR-047)', () => {
     }
   })
 
-  it('Node installer plan adds @opentelemetry/sdk-node and modifies entrypoint (ADR-047 #2)', async () => {
+  it('Node installer plan adds the OTel dep set and prepares an entry-point injection (ADR-047 #2 + ADR-069 §2)', async () => {
     const fs2 = await import('node:fs/promises')
     const path2 = await import('node:path')
     const { dir, cleanup } = await makeNodeService()
@@ -3096,11 +3096,12 @@ describe('SDK install contract (ADR-047)', () => {
       await fs2.writeFile(
         path2.join(dir, 'package.json'),
         JSON.stringify(
-          { name: 'svc', version: '0.0.0', scripts: { start: 'node server.js' } },
+          { name: 'svc', version: '0.0.0', main: 'server.js' },
           null,
           2,
         ),
       )
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
       const { javascriptInstaller } = await import('../../src/installers/javascript.js')
       expect(await javascriptInstaller.detect(dir)).toBe(true)
       const plan = await javascriptInstaller.plan(dir)
@@ -3113,10 +3114,14 @@ describe('SDK install contract (ADR-047)', () => {
         expect(dep.kind).toBe('add')
         expect(dep.file).toBe(path2.join(dir, 'package.json'))
       }
+      // ADR-069 §3 — entry-point injection lines up against the resolved
+      // entry file, not scripts.start. The `after` is the bare require/
+      // import statement that the apply phase will splice as the first
+      // non-shebang line.
       expect(plan.entrypointEdits).toHaveLength(1)
       const ep = plan.entrypointEdits[0]!
-      expect(ep.before).toBe('node server.js')
-      expect(ep.after).toContain('@opentelemetry/auto-instrumentations-node/register')
+      expect(ep.file).toBe(path2.join(dir, 'server.js'))
+      expect(ep.after).toMatch(/require\(['"]\.\/otel-init/)
       expect(plan.envEdits.some((e) => e.key === 'OTEL_EXPORTER_OTLP_ENDPOINT')).toBe(true)
     } finally {
       await cleanup()
@@ -3218,7 +3223,7 @@ describe('SDK install contract (ADR-047)', () => {
     expect(offenders, offenders.join('\n')).toEqual([])
   })
 
-  it('plan(dir) returns an empty plan when SDK is already installed (ADR-047 #5)', async () => {
+  it('plan(dir) returns an empty plan when SDK is already installed (ADR-047 #5 + ADR-069 §6)', async () => {
     const fs2 = await import('node:fs/promises')
     const path2 = await import('node:path')
     const { dir, cleanup } = await makeNodeService()
@@ -3228,16 +3233,24 @@ describe('SDK install contract (ADR-047)', () => {
         JSON.stringify({
           name: 'svc',
           version: '0.0.0',
-          scripts: {
-            start: 'node --require @opentelemetry/auto-instrumentations-node/register server.js',
-          },
+          main: 'server.js',
           dependencies: {
             '@opentelemetry/api': '^1.9.0',
             '@opentelemetry/sdk-node': '^0.57.0',
             '@opentelemetry/auto-instrumentations-node': '^0.55.0',
+            dotenv: '^16.4.5',
           },
         }),
       )
+      // Entry already wires the injection on its first non-shebang line and
+      // the generated otel-init + .env.neat are present — that's the
+      // already-instrumented end-state.
+      await fs2.writeFile(
+        path2.join(dir, 'server.js'),
+        `require('./otel-init.cjs')\nconsole.log('hi')\n`,
+      )
+      await fs2.writeFile(path2.join(dir, 'otel-init.cjs'), '// generated\n')
+      await fs2.writeFile(path2.join(dir, '.env.neat'), 'OTEL_SERVICE_NAME=svc\n')
       const { javascriptInstaller, isEmptyPlan } = await import('../../src/installers/index.js')
       const plan = await javascriptInstaller.plan(dir)
       expect(isEmptyPlan(plan)).toBe(true)
@@ -3254,11 +3267,12 @@ describe('SDK install contract (ADR-047)', () => {
       await fs2.writeFile(
         path2.join(dir, 'package.json'),
         JSON.stringify(
-          { name: 'svc', version: '0.0.0', scripts: { start: 'node server.js' } },
+          { name: 'svc', version: '0.0.0', main: 'server.js' },
           null,
           2,
         ),
       )
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
       const { javascriptInstaller } = await import('../../src/installers/javascript.js')
       const a = await javascriptInstaller.plan(dir)
       const b = await javascriptInstaller.plan(dir)
@@ -3275,25 +3289,29 @@ describe('SDK install contract (ADR-047)', () => {
     try {
       const manifest = path2.join(dir, 'package.json')
       const original = JSON.stringify(
-        { name: 'svc', version: '0.0.0', scripts: { start: 'node server.js' } },
+        { name: 'svc', version: '0.0.0', main: 'server.js' },
         null,
         2,
       )
       await fs2.writeFile(manifest, original)
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
       const { javascriptInstaller } = await import('../../src/installers/javascript.js')
       // Construct a plan with a dependencyEdit pointing at a real manifest
       // (so apply reads originals OK) plus an entrypointEdit pointing at a
       // file that does not exist — the second pass crashes when reading
       // originals for that file. The contract: the rollback path triggers
       // and neat-rollback.patch lands on disk.
-      const ghost = path2.join(dir, 'does-not-exist', 'package.json')
+      const ghost = path2.join(dir, 'does-not-exist', 'server.js')
       await expect(
         javascriptInstaller.apply({
           language: 'javascript',
           serviceDir: dir,
-          dependencyEdits: [{ file: manifest, kind: 'add', name: 'x', version: '1.0.0' }],
+          dependencyEdits: [
+            { file: manifest, kind: 'add', name: '@opentelemetry/api', version: '^1.9.0' },
+          ],
           entrypointEdits: [{ file: ghost, before: 'a', after: 'b' }],
           envEdits: [],
+          generatedFiles: [],
         }),
       ).rejects.toBeInstanceOf(Error)
       // The real manifest was rolled back (still bears the original bytes).
@@ -3310,47 +3328,565 @@ describe('SDK install contract (ADR-047)', () => {
 })
 
 describe('SDK install — apply-side (ADR-069)', () => {
-  // The apply phase of the Node installer matures in v0.3.6 to write the
-  // generated SDK setup, inject the entry-point require/import, and configure
-  // per-package service naming. Assertions land as `it.todo` and flip live
-  // alongside the v0.3.6 implementation PR (#289). ADR-047 §4 (lockfiles
-  // never touched) and ADR-047 §5 (idempotency) stand; ADR-069 §7 extends
-  // the allowed-paths set to {package.json, otel-init.{js,ts}, .env.neat}.
+  async function makeNodeService(): Promise<{ dir: string; cleanup: () => Promise<void> }> {
+    const os2 = await import('node:os')
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const dir = await fs2.mkdtemp(path2.join(os2.tmpdir(), 'neat-installer-apply-'))
+    return {
+      dir: await fs2.realpath(dir),
+      cleanup: () => fs2.rm(dir, { recursive: true, force: true }),
+    }
+  }
 
-  it.todo('ADR-069 §2 — entry resolution: pkg.main wins when present')
-  it.todo('ADR-069 §2 — entry resolution: pkg.bin (string and map forms) used when pkg.main absent')
-  it.todo('ADR-069 §2 — entry resolution: index.{ts,tsx,js,mjs,cjs} heuristic when neither main nor bin')
-  it.todo('ADR-069 §2 — lib-only package (no resolvable entry) is skipped with reason "lib-only"')
+  async function writePkg(dir: string, pkg: Record<string, unknown>): Promise<void> {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    await fs2.writeFile(path2.join(dir, 'package.json'), JSON.stringify(pkg, null, 2))
+  }
 
-  it.todo('ADR-069 §1 — generated otel-init.{js,ts} lands adjacent to the resolved entry')
-  it.todo('ADR-069 §1 — generated otel-init imports @opentelemetry/auto-instrumentations-node/register')
-  it.todo('ADR-069 §1 — generated otel-init loads .env.neat via dotenv before the auto-instrumentation hook runs')
+  // ── §2 — entry resolution ───────────────────────────────────────────────
 
-  it.todo('ADR-069 §1, §3 — ESM dispatch on pkg.type === "module" (inserts `import` form)')
-  it.todo('ADR-069 §1, §3 — ESM dispatch on .mjs entry extension')
-  it.todo('ADR-069 §1, §3 — CJS dispatch otherwise (inserts `require` form)')
-  it.todo('ADR-069 §1 — TS template chosen when entry ends in .ts/.tsx')
+  it('§2 — entry resolution: pkg.main wins when present', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'dist/server.js' })
+      await fs2.mkdir(path2.join(dir, 'dist'), { recursive: true })
+      await fs2.writeFile(path2.join(dir, 'dist/server.js'), `console.log('hi')\n`)
+      await fs2.writeFile(path2.join(dir, 'index.js'), `console.log('decoy')\n`)
+      const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+      const plan = await javascriptInstaller.plan(dir)
+      expect(plan.entryFile).toBe(path2.join(dir, 'dist/server.js'))
+    } finally {
+      await cleanup()
+    }
+  })
 
-  it.todo('ADR-069 §3 — injection lands as the first non-shebang line of the entry')
-  it.todo('ADR-069 §3 — shebang on line 1 is preserved; init line inserted on line 2')
-  it.todo('ADR-069 §6 — re-running --apply when otel-init exists is a no-op (logs "already instrumented")')
-  it.todo('ADR-069 §6 — re-running --apply when first non-shebang line matches injection pattern is a no-op for injection')
+  it('§2 — entry resolution: pkg.bin (string and map forms) used when pkg.main absent', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
 
-  it.todo('ADR-069 §4 — .env.neat written to <package-dir> with OTEL_SERVICE_NAME=<pkg.name>')
-  it.todo('ADR-069 §4 — scoped names (e.g. @medusajs/auth) preserved verbatim, scope not stripped')
-  it.todo('ADR-069 §4 — .env.neat also carries OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318')
-  it.todo('ADR-069 §6 — existing .env.neat is never overwritten')
+    // String form
+    {
+      const { dir, cleanup } = await makeNodeService()
+      try {
+        await writePkg(dir, { name: 'svc', bin: 'cli.js' })
+        await fs2.writeFile(path2.join(dir, 'cli.js'), `console.log('hi')\n`)
+        const plan = await javascriptInstaller.plan(dir)
+        expect(plan.entryFile).toBe(path2.join(dir, 'cli.js'))
+      } finally {
+        await cleanup()
+      }
+    }
+    // Map form keyed on pkg.name
+    {
+      const { dir, cleanup } = await makeNodeService()
+      try {
+        await writePkg(dir, { name: 'svc', bin: { svc: 'bin/svc.js' } })
+        await fs2.mkdir(path2.join(dir, 'bin'), { recursive: true })
+        await fs2.writeFile(path2.join(dir, 'bin/svc.js'), `console.log('hi')\n`)
+        const plan = await javascriptInstaller.plan(dir)
+        expect(plan.entryFile).toBe(path2.join(dir, 'bin/svc.js'))
+      } finally {
+        await cleanup()
+      }
+    }
+  })
 
-  it.todo('ADR-069 §5 — Node installer plan includes dotenv as the fourth dependency')
-  it.todo('ADR-069 §5 — four-deps invariant: api + sdk-node + auto-instrumentations-node + dotenv')
+  it('§2 — entry resolution: index.{ts,tsx,js,mjs,cjs} heuristic when neither main nor bin', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const cases = ['index.ts', 'index.tsx', 'index.js', 'index.mjs', 'index.cjs']
+    for (const name of cases) {
+      const { dir, cleanup } = await makeNodeService()
+      try {
+        await writePkg(dir, { name: 'svc' })
+        await fs2.writeFile(path2.join(dir, name), `console.log('hi')\n`)
+        const plan = await javascriptInstaller.plan(dir)
+        expect(plan.entryFile).toBe(path2.join(dir, name))
+      } finally {
+        await cleanup()
+      }
+    }
+  })
 
-  it.todo('ADR-069 §7 — apply writes only package.json, otel-init.{js,ts}, .env.neat (no other paths)')
-  it.todo('ADR-069 §7 — lockfiles still never written (ADR-047 §4 holds through the apply-side extension)')
+  it('§2 — lib-only package (no resolvable entry) is skipped with reason "lib-only"', async () => {
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'lib-only-svc' })
+      const plan = await javascriptInstaller.plan(dir)
+      expect(plan.libOnly).toBe(true)
+      expect(plan.entryFile).toBeUndefined()
+      const outcome = await javascriptInstaller.apply(plan)
+      expect(outcome.outcome).toBe('lib-only')
+      expect(outcome.reason).toContain('no resolvable entry')
+      expect(outcome.writtenFiles).toEqual([])
+    } finally {
+      await cleanup()
+    }
+  })
 
-  it.todo('ADR-069 §8 — dry-run output names the same file paths the apply phase would write')
-  it.todo('ADR-069 §8 — dry-run output includes the exact lines that would land in each file')
+  // ── §1 — generated otel-init contents ───────────────────────────────────
 
-  it.todo('ADR-069 §9 — apply summary returns { instrumented, alreadyInstrumented, libOnly } per package')
+  it('§1 — generated otel-init.{js,ts} lands adjacent to the resolved entry', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'src/server.js' })
+      await fs2.mkdir(path2.join(dir, 'src'), { recursive: true })
+      await fs2.writeFile(path2.join(dir, 'src/server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      const outcome = await javascriptInstaller.apply(plan)
+      expect(outcome.outcome).toBe('instrumented')
+      // Adjacent to the entry — i.e. in src/, not the package root.
+      const adjacent = path2.join(dir, 'src/otel-init.cjs')
+      const stat = await fs2.stat(adjacent)
+      expect(stat.isFile()).toBe(true)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§1 — generated otel-init imports @opentelemetry/auto-instrumentations-node/register', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      await javascriptInstaller.apply(plan)
+      const contents = await fs2.readFile(path2.join(dir, 'otel-init.cjs'), 'utf8')
+      expect(contents).toContain('@opentelemetry/auto-instrumentations-node/register')
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§1 — generated otel-init loads .env.neat via dotenv before the auto-instrumentation hook runs', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      await javascriptInstaller.apply(plan)
+      const contents = await fs2.readFile(path2.join(dir, 'otel-init.cjs'), 'utf8')
+      // dotenv invocation comes before the auto-instrumentation require.
+      const dotenvIdx = contents.indexOf('dotenv')
+      const registerIdx = contents.indexOf('auto-instrumentations-node/register')
+      expect(dotenvIdx).toBeGreaterThan(-1)
+      expect(registerIdx).toBeGreaterThan(-1)
+      expect(dotenvIdx).toBeLessThan(registerIdx)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── §1, §3 — ESM / CJS / TS dispatch ────────────────────────────────────
+
+  it('§1, §3 — ESM dispatch on pkg.type === "module" (inserts `import` form)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', type: 'module', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      expect(plan.entrypointEdits[0]?.after).toMatch(/^import\s+['"]\.\/otel-init/)
+      await javascriptInstaller.apply(plan)
+      // Generated file is the .mjs flavor.
+      const stat = await fs2.stat(path2.join(dir, 'otel-init.mjs'))
+      expect(stat.isFile()).toBe(true)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§1, §3 — ESM dispatch on .mjs entry extension', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.mjs' })
+      await fs2.writeFile(path2.join(dir, 'server.mjs'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      expect(plan.entrypointEdits[0]?.after).toMatch(/^import\s+['"]\.\/otel-init/)
+      await javascriptInstaller.apply(plan)
+      const stat = await fs2.stat(path2.join(dir, 'otel-init.mjs'))
+      expect(stat.isFile()).toBe(true)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§1, §3 — CJS dispatch otherwise (inserts `require` form)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      expect(plan.entrypointEdits[0]?.after).toMatch(/^require\(['"]\.\/otel-init/)
+      await javascriptInstaller.apply(plan)
+      const stat = await fs2.stat(path2.join(dir, 'otel-init.cjs'))
+      expect(stat.isFile()).toBe(true)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§1 — TS template chosen when entry ends in .ts/.tsx', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'src/server.ts' })
+      await fs2.mkdir(path2.join(dir, 'src'), { recursive: true })
+      await fs2.writeFile(path2.join(dir, 'src/server.ts'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      // Injection drops the .ts extension so the TS resolver picks it up.
+      expect(plan.entrypointEdits[0]?.after).toMatch(/^import\s+['"]\.\/otel-init['"]/)
+      await javascriptInstaller.apply(plan)
+      const stat = await fs2.stat(path2.join(dir, 'src/otel-init.ts'))
+      expect(stat.isFile()).toBe(true)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── §3 — entry injection + shebang preservation ─────────────────────────
+
+  it('§3 — injection lands as the first non-shebang line of the entry', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      const before = `console.log('original first line')\nconsole.log('second')\n`
+      await fs2.writeFile(path2.join(dir, 'server.js'), before)
+      const plan = await javascriptInstaller.plan(dir)
+      await javascriptInstaller.apply(plan)
+      const after = await fs2.readFile(path2.join(dir, 'server.js'), 'utf8')
+      const lines = after.split('\n')
+      expect(lines[0]).toMatch(/require\(['"]\.\/otel-init/)
+      expect(lines[1]).toBe(`console.log('original first line')`)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§3 — shebang on line 1 is preserved; init line inserted on line 2', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'cli.js' })
+      const before = `#!/usr/bin/env node\nconsole.log('original')\n`
+      await fs2.writeFile(path2.join(dir, 'cli.js'), before)
+      const plan = await javascriptInstaller.plan(dir)
+      await javascriptInstaller.apply(plan)
+      const after = await fs2.readFile(path2.join(dir, 'cli.js'), 'utf8')
+      const lines = after.split('\n')
+      expect(lines[0]).toBe('#!/usr/bin/env node')
+      expect(lines[1]).toMatch(/require\(['"]\.\/otel-init/)
+      expect(lines[2]).toBe(`console.log('original')`)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§6 — re-running --apply when otel-init exists is a no-op (logs "already instrumented")', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const planA = await javascriptInstaller.plan(dir)
+      const outcomeA = await javascriptInstaller.apply(planA)
+      expect(outcomeA.outcome).toBe('instrumented')
+      // Second pass — plan empties out and apply reports already-instrumented.
+      const planB = await javascriptInstaller.plan(dir)
+      const { isEmptyPlan } = await import('../../src/installers/index.js')
+      expect(isEmptyPlan(planB)).toBe(true)
+      const outcomeB = await javascriptInstaller.apply(planB)
+      expect(outcomeB.outcome).toBe('already-instrumented')
+      expect(outcomeB.writtenFiles).toEqual([])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§6 — re-running --apply when first non-shebang line matches injection pattern is a no-op for injection', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      // User pre-instrumented by hand; first line already matches the
+      // injection pattern.
+      await fs2.writeFile(
+        path2.join(dir, 'server.js'),
+        `require('./otel-init.cjs')\nconsole.log('hi')\n`,
+      )
+      const plan = await javascriptInstaller.plan(dir)
+      expect(plan.entrypointEdits).toEqual([])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── §4 — per-service OTEL_SERVICE_NAME in .env.neat ─────────────────────
+
+  it('§4 — .env.neat written to <package-dir> with OTEL_SERVICE_NAME=<pkg.name>', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'checkout-svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      await javascriptInstaller.apply(plan)
+      const env = await fs2.readFile(path2.join(dir, '.env.neat'), 'utf8')
+      expect(env).toContain('OTEL_SERVICE_NAME=checkout-svc')
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§4 — scoped names (e.g. @medusajs/auth) preserved verbatim, scope not stripped', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: '@medusajs/auth', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      await javascriptInstaller.apply(plan)
+      const env = await fs2.readFile(path2.join(dir, '.env.neat'), 'utf8')
+      expect(env).toContain('OTEL_SERVICE_NAME=@medusajs/auth')
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§4 — .env.neat also carries OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      await javascriptInstaller.apply(plan)
+      const env = await fs2.readFile(path2.join(dir, '.env.neat'), 'utf8')
+      expect(env).toContain('OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318')
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§6 — existing .env.neat is never overwritten', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const userEnvNeat = `OTEL_SERVICE_NAME=user-set-name\nUSER_KEY=keep-me\n`
+      await fs2.writeFile(path2.join(dir, '.env.neat'), userEnvNeat)
+      const plan = await javascriptInstaller.plan(dir)
+      await javascriptInstaller.apply(plan)
+      const env = await fs2.readFile(path2.join(dir, '.env.neat'), 'utf8')
+      expect(env).toBe(userEnvNeat)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── §5 — four-deps invariant ────────────────────────────────────────────
+
+  it('§5 — Node installer plan includes dotenv as the fourth dependency', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      const depNames = plan.dependencyEdits.map((d) => d.name)
+      expect(depNames).toContain('dotenv')
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§5 — four-deps invariant: api + sdk-node + auto-instrumentations-node + dotenv', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      const depNames = new Set(plan.dependencyEdits.map((d) => d.name))
+      expect(depNames).toEqual(
+        new Set([
+          '@opentelemetry/api',
+          '@opentelemetry/sdk-node',
+          '@opentelemetry/auto-instrumentations-node',
+          'dotenv',
+        ]),
+      )
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── §7 — allowed write paths ────────────────────────────────────────────
+
+  it('§7 — apply writes only package.json, otel-init.{js,ts}, .env.neat (no other paths)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      const outcome = await javascriptInstaller.apply(plan)
+      // Allowed: package.json, otel-init.{cjs,mjs,ts}, .env.neat — plus the
+      // entry file itself (carved out for the injection edit).
+      const allowed = /(?:package\.json|otel-init\.(?:js|cjs|mjs|ts)|\.env\.neat|server\.js)$/
+      for (const f of outcome.writtenFiles) {
+        expect(f).toMatch(allowed)
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§7 — lockfiles still never written (ADR-047 §4 holds through the apply-side extension)', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const lockBefore = '{ "lockfileVersion": 3 }'
+      await fs2.writeFile(path2.join(dir, 'package-lock.json'), lockBefore)
+      const plan = await javascriptInstaller.plan(dir)
+      const outcome = await javascriptInstaller.apply(plan)
+      for (const f of outcome.writtenFiles) {
+        expect(path2.basename(f)).not.toBe('package-lock.json')
+      }
+      const lockAfter = await fs2.readFile(path2.join(dir, 'package-lock.json'), 'utf8')
+      expect(lockAfter).toBe(lockBefore)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── §8 — dry-run / apply parity ─────────────────────────────────────────
+
+  it('§8 — dry-run output names the same file paths the apply phase would write', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller, renderPatch } = await import('../../src/installers/index.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      const patch = renderPatch([{ installer: 'javascript', plan }])
+      expect(patch).toContain(path2.join(dir, 'package.json'))
+      expect(patch).toContain(path2.join(dir, 'otel-init.cjs'))
+      expect(patch).toContain(path2.join(dir, '.env.neat'))
+      expect(patch).toContain(path2.join(dir, 'server.js'))
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§8 — dry-run output includes the exact lines that would land in each file', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller, renderPatch } = await import('../../src/installers/index.js')
+    const { dir, cleanup } = await makeNodeService()
+    try {
+      await writePkg(dir, { name: 'svc', main: 'server.js' })
+      await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+      const plan = await javascriptInstaller.plan(dir)
+      const patch = renderPatch([{ installer: 'javascript', plan }])
+      // The auto-instrumentation hook line from the generated otel-init shows
+      // up in the dry-run output.
+      expect(patch).toContain('@opentelemetry/auto-instrumentations-node/register')
+      // The injection line shows up too.
+      expect(patch).toMatch(/require\(['"]\.\/otel-init/)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('§9 — apply summary returns { instrumented, alreadyInstrumented, libOnly } per package', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { javascriptInstaller } = await import('../../src/installers/javascript.js')
+
+    // Instrumented case.
+    {
+      const { dir, cleanup } = await makeNodeService()
+      try {
+        await writePkg(dir, { name: 'svc', main: 'server.js' })
+        await fs2.writeFile(path2.join(dir, 'server.js'), `console.log('hi')\n`)
+        const plan = await javascriptInstaller.plan(dir)
+        const outcome = await javascriptInstaller.apply(plan)
+        expect(outcome.outcome).toBe('instrumented')
+        expect(outcome.writtenFiles.length).toBeGreaterThan(0)
+      } finally {
+        await cleanup()
+      }
+    }
+    // Lib-only case.
+    {
+      const { dir, cleanup } = await makeNodeService()
+      try {
+        await writePkg(dir, { name: 'lib-only' })
+        const plan = await javascriptInstaller.plan(dir)
+        const outcome = await javascriptInstaller.apply(plan)
+        expect(outcome.outcome).toBe('lib-only')
+      } finally {
+        await cleanup()
+      }
+    }
+  })
 })
 
 describe('Machine-level project registry contract (ADR-048)', () => {

@@ -35,6 +35,19 @@ export interface EnvEdit {
   value: string
 }
 
+// Files the installer generates from scratch (ADR-069 §1). The generated
+// `otel-init.{js,ts}` for the Node installer rides here, along with the
+// per-package `.env.neat` (ADR-069 §4). Treated as additive writes — the
+// apply phase skips any file already present (ADR-069 §6).
+export interface GeneratedFile {
+  file: string
+  contents: string
+  // When true, write only if the file does not already exist. The apply
+  // phase logs an `already instrumented` / `already present` notice instead
+  // of overwriting (ADR-069 §6).
+  skipIfExists?: boolean
+}
+
 export interface InstallPlan {
   // Free-form language tag matching the service node's language: `'javascript'`,
   // `'python'`, …
@@ -44,6 +57,33 @@ export interface InstallPlan {
   dependencyEdits: DependencyEdit[]
   entrypointEdits: EntrypointEdit[]
   envEdits: EnvEdit[]
+  // ADR-069 §1, §4 — generated files (otel-init, .env.neat). Optional so
+  // installers that don't generate files (the Python installer at MVP) can
+  // omit it.
+  generatedFiles?: GeneratedFile[]
+  // ADR-069 §2 — flagged when entry-point resolution found nothing.
+  // The apply phase records this in the summary and skips all file writes
+  // for the package.
+  libOnly?: boolean
+  // ADR-069 §2 — resolved entry-point path (absolute). Present when the
+  // installer is going to inject the require/import. Absent for libOnly
+  // packages and for the Python installer.
+  entryFile?: string
+}
+
+// ADR-069 §9 — apply outcome per service. The CLI surfaces these counts
+// at the end of `neat init --apply`.
+export type ApplyOutcome = 'instrumented' | 'already-instrumented' | 'lib-only' | 'failed'
+
+export interface ApplyResult {
+  serviceDir: string
+  outcome: ApplyOutcome
+  // Free-form reason string for `lib-only` / `failed` outcomes. Surfaced
+  // in the CLI summary so the user knows why a package was skipped.
+  reason?: string
+  // Absolute paths the apply phase actually wrote to. Used by the contract
+  // test that asserts the allowed-path-set restriction (ADR-069 §7).
+  writtenFiles: string[]
 }
 
 export interface Installer {
@@ -57,14 +97,16 @@ export interface Installer {
   // the SDK is already installed and there is nothing to do.
   plan(serviceDir: string): InstallPlan | Promise<InstallPlan>
   // Apply a previously-produced plan. Mutates files in place. On failure,
-  // produces `<serviceDir>/neat-rollback.patch` per ADR-047 #7.
-  apply(plan: InstallPlan): Promise<void>
+  // produces `<serviceDir>/neat-rollback.patch` per ADR-047 #7. Returns a
+  // structured outcome so the CLI can surface coverage (ADR-069 §9).
+  apply(plan: InstallPlan): Promise<ApplyResult>
 }
 
 export function isEmptyPlan(plan: InstallPlan): boolean {
   return (
     plan.dependencyEdits.length === 0 &&
     plan.entrypointEdits.length === 0 &&
-    plan.envEdits.length === 0
+    plan.envEdits.length === 0 &&
+    (plan.generatedFiles?.length ?? 0) === 0
   )
 }

@@ -20,7 +20,14 @@
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { DependencyEdit, EntrypointEdit, EnvEdit, Installer, InstallPlan } from './shared.js'
+import type {
+  ApplyResult,
+  DependencyEdit,
+  EntrypointEdit,
+  EnvEdit,
+  Installer,
+  InstallPlan,
+} from './shared.js'
 
 const SDK_PACKAGES = [
   { name: 'opentelemetry-distro', version: '>=0.49b0' },
@@ -164,11 +171,14 @@ async function applyProcfile(
   await fs.rename(tmp, procfile)
 }
 
-async function apply(installPlan: InstallPlan): Promise<void> {
+async function apply(installPlan: InstallPlan): Promise<ApplyResult> {
+  const { serviceDir } = installPlan
   const touched = new Set<string>()
   for (const e of installPlan.dependencyEdits) touched.add(e.file)
   for (const e of installPlan.entrypointEdits) touched.add(e.file)
-  if (touched.size === 0) return
+  if (touched.size === 0) {
+    return { serviceDir, outcome: 'already-instrumented', writtenFiles: [] }
+  }
 
   const originals = new Map<string, string>()
   for (const file of touched) {
@@ -179,6 +189,7 @@ async function apply(installPlan: InstallPlan): Promise<void> {
     }
   }
 
+  const writtenFiles: string[] = []
   try {
     for (const file of touched) {
       const raw = originals.get(file)
@@ -188,10 +199,16 @@ async function apply(installPlan: InstallPlan): Promise<void> {
       const base = path.basename(file)
       if (base === 'requirements.txt') {
         const edits = installPlan.dependencyEdits.filter((e) => e.file === file)
-        if (edits.length > 0) await applyRequirementsTxt(file, edits, raw)
+        if (edits.length > 0) {
+          await applyRequirementsTxt(file, edits, raw)
+          writtenFiles.push(file)
+        }
       } else if (base === 'Procfile') {
         const edits = installPlan.entrypointEdits.filter((e) => e.file === file)
-        if (edits.length > 0) await applyProcfile(file, edits, raw)
+        if (edits.length > 0) {
+          await applyProcfile(file, edits, raw)
+          writtenFiles.push(file)
+        }
       }
       // pyproject.toml / setup.py: MVP no-op as planned above.
     }
@@ -199,6 +216,8 @@ async function apply(installPlan: InstallPlan): Promise<void> {
     await rollback(installPlan, originals)
     throw err
   }
+
+  return { serviceDir, outcome: 'instrumented', writtenFiles }
 }
 
 async function rollback(

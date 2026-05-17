@@ -10,9 +10,12 @@ export { isEmptyPlan } from './shared.js'
 export { javascriptInstaller } from './javascript.js'
 export { pythonInstaller } from './python.js'
 export type {
+  ApplyOutcome,
+  ApplyResult,
   DependencyEdit,
   EntrypointEdit,
   EnvEdit,
+  GeneratedFile,
   Installer,
   InstallPlan,
 } from './shared.js'
@@ -82,8 +85,23 @@ export function renderPatch(sections: PatchSection[]): string {
     lines.push(`## ${installer} (${plan.language}) — ${plan.serviceDir}`)
     lines.push('')
 
+    if (plan.libOnly) {
+      lines.push('### skipped — no resolvable entry point (lib-only)')
+      lines.push('')
+      continue
+    }
+
+    if (plan.entryFile) {
+      lines.push(`entry: ${plan.entryFile}`)
+      lines.push('')
+    }
+
     if (plan.dependencyEdits.length > 0) {
       lines.push('### dependencies')
+      // Group by manifest file so each section names the path the apply phase
+      // will write, satisfying the dry-run/apply path-parity contract
+      // (ADR-069 §8).
+      const byFile = new Map<string, typeof plan.dependencyEdits>()
       for (const dep of plan.dependencyEdits) {
         // Hard-fail rather than render a patch that could mislead the user
         // into thinking NEAT touches lockfiles.
@@ -94,26 +112,44 @@ export function renderPatch(sections: PatchSection[]): string {
               `lockfiles must never be touched (ADR-047).`,
           )
         }
-        lines.push(`- ${dep.kind} ${dep.name}@${dep.version} in ${dep.file}`)
+        const existing = byFile.get(dep.file) ?? []
+        existing.push(dep)
+        byFile.set(dep.file, existing)
+      }
+      for (const [file, deps] of byFile) {
+        lines.push(`--- ${file}`)
+        for (const dep of deps) {
+          lines.push(`+ "${dep.name}": "${dep.version}"`)
+        }
+      }
+      lines.push('')
+    }
+
+    if (plan.generatedFiles && plan.generatedFiles.length > 0) {
+      lines.push('### generated files')
+      for (const gen of plan.generatedFiles) {
+        lines.push(`--- (new file) ${gen.file}`)
+        for (const ln of gen.contents.split(/\r?\n/)) {
+          lines.push(`+ ${ln}`)
+        }
       }
       lines.push('')
     }
 
     if (plan.entrypointEdits.length > 0) {
-      lines.push('### entrypoint')
+      lines.push('### entry-point injection')
       for (const e of plan.entrypointEdits) {
-        lines.push(`- ${e.file}`)
-        lines.push(`    - before: ${e.before}`)
-        lines.push(`    - after:  ${e.after}`)
+        lines.push(`--- ${e.file}`)
+        lines.push(`+ ${e.after}`)
+        lines.push(`  ${e.before}`)
       }
       lines.push('')
     }
 
     if (plan.envEdits.length > 0) {
-      lines.push('### env')
+      lines.push('### env (written to <package-dir>/.env.neat)')
       for (const env of plan.envEdits) {
-        const target = env.file ?? '(set in your orchestration layer)'
-        lines.push(`- ${env.key}=${env.value} → ${target}`)
+        lines.push(`- ${env.key}=${env.value}`)
       }
       lines.push('')
     }
