@@ -2410,3 +2410,45 @@ The SDK installer surface matures to the next layer: `neat init --apply` now wri
 - **TypeScript build pipeline integration.** Generated `otel-init.ts` files compile through whatever TS pipeline the host package already uses. NEAT does not adjust `tsconfig.json` or `tsup`/`tsc` invocations.
 
 **First application.** v0.3.6.
+
+---
+
+## ADR-071 — Broken project slots are recoverable on ingest and on SIGHUP
+
+**Date:** 2026-05-17
+**Status:** Active. Amends ADR-049 (daemon contract).
+
+The daemon treats `broken` as a recoverable, observable state. Spans for broken projects either lift the slot back to `active` through an inline re-bootstrap or get dropped with a rate-limited, actionable warning. SIGHUP reload also re-bootstraps any broken slot it finds. The per-project isolation property (ADR-049) is preserved.
+
+**Context.** ADR-049 codified `broken` as the status a project's slot takes when bootstrap fails — typically a missing path. The status is durable across the registry, but the daemon's ingest path historically rejected broken slots as routing targets and dropped their spans silently. In real-world use (the brief project on the v0.3.6 pre-launch milestone is the load-bearing example), a transient path issue at daemon start leaves the slot broken; subsequent spans then never reach the project and the operator has no surface to diagnose from. ADR-071 extends the daemon to treat `broken` as a state worth attempting recovery from, every time a span arrives or the operator sends SIGHUP.
+
+**Decision.**
+
+1. **Routing eligibility extends to broken slots.** `routeSpanToProject(serviceName, projects)` matches any registered project with status `active` or `broken` by name. `paused` is still skipped — that's the operator's explicit "don't route here." Unknown service names continue to fall through to `DEFAULT_PROJECT` per ADR-033.
+
+2. **Ingest-time recovery.** When the OTel receiver resolves a span to a broken slot, the daemon calls `bootstrapProject(entry)` inline as a single recovery attempt before delivering the span. Success → the slot transitions to `active`, the registry is updated via `setStatus`, the span lands. Failure → the slot stays `broken` and the receiver drops the span with a rate-limited warning.
+
+3. **Rate-limited drop log.** The warning is `[neatd] dropping span for project "<name>" — project status: broken (<reason>). Run \`neatd reload\` to retry bootstrap.` Rate-limited to one line per project per 60 seconds via an in-memory `Map<name, ms>`. The error reason from the original bootstrap is carried verbatim so the operator can reason about the cause without grepping startup logs.
+
+4. **SIGHUP shortcut fix.** `loadAll` (run on SIGHUP) iterates the registry. For each entry that already has a slot, it now checks the slot status: if `broken`, it re-bootstraps the entry. Already-`active` slots are left in place, preserving the SIGHUP-is-cheap property. The operator's mental model for `reload` is "look at the world again," which includes giving broken slots a second chance.
+
+5. **No automatic respawn.** ADR-049's no-self-restart rule holds at the daemon process level. The recovery this ADR codifies is per-project slot recovery within an otherwise-running daemon. If the daemon process itself crashes, the supervisor restarts it per ADR-049.
+
+6. **Per-project isolation preserved.** A failed recovery attempt for one project does not stop, retry, or affect any other project's slot. The recovery runs the same `bootstrapProject` path used at daemon start, so any invariant the bootstrap path maintains (mutation authority via `ingest.ts` per ADR-030, graph reset via `resetGraph`, persist loop start) is preserved on recovery.
+
+**Authority.** `packages/core/src/daemon.ts` — `routeSpanToProject`, the new `tryRecoverSlot`, `warnDroppedSpan`, and the resolve-target-slot helper wired into both `onSpan` and `onErrorSpanSync`. `loadAll` extended to call `tryRecoverSlot` for slots already present in `broken`.
+
+**Enforcement.** New `it`s under the existing `describe('Daemon contract (ADR-049)')` block:
+
+- `routeSpanToProject` returns broken project name when service.name matches (paused still skipped).
+- Span arriving for a broken slot triggers an inline recovery attempt; success transitions to `active` and the span lands.
+- Span arriving for a still-broken slot after a failed recovery emits the rate-limited drop log; the second span within 60s does not re-log.
+- SIGHUP/`reload` re-bootstraps a slot currently in `broken` and lifts it to `active` when the path is now reachable.
+
+**Out of scope.**
+
+- **Time-based auto-retry of broken slots.** No background retry loop. The trigger is either a span or a SIGHUP. Background retries are a successor ADR if real-world traffic patterns show recovery needs to happen without ingest.
+- **Multi-attempt recovery on a single span.** One inline attempt per span. If recovery fails, the span drops; the next arriving span triggers a fresh attempt. This bounds the receiver's per-span work.
+- **Backoff between recovery attempts.** The 60s rate limit on the warning is the user-visible backoff. Internal recovery work is gated only by the next span's arrival.
+
+**First application.** v0.3.6.

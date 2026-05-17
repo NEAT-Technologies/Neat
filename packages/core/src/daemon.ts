@@ -106,6 +106,16 @@ function neatHomeFor(opts: DaemonOptions): string {
  *
  * Pure function. Daemon callers pass a snapshot of the registry to avoid
  * per-span fs reads.
+ *
+ * Routing eligibility:
+ * - `active` matches by name (the steady-state path).
+ * - `broken` also matches by name — the daemon needs the span to reach
+ *   the broken slot so the ingest-time auto-recover path can attempt a
+ *   bootstrap and lift the project back to `active`. The router only
+ *   chooses the target; whether the span actually lands is the ingest
+ *   handler's decision.
+ * - `paused` is intentionally not routed; the operator paused it on
+ *   purpose, so the span falls through to the default-project flow.
  */
 export function routeSpanToProject(
   serviceName: string | undefined,
@@ -113,10 +123,7 @@ export function routeSpanToProject(
 ): string {
   if (!serviceName) return DEFAULT_PROJECT
   for (const entry of projects) {
-    if (entry.status !== 'active') continue
-    if (entry.languages.length === 0) {
-      // No language data yet — still acceptable to match by name.
-    }
+    if (entry.status === 'paused') continue
     if (entry.name === serviceName) return entry.name
   }
   return DEFAULT_PROJECT
@@ -217,6 +224,22 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   // reads from this; we keep it in sync as slots come and go.
   const registry = new Projects()
 
+  // Rate-limit the dropped-span warning to one log line per project per
+  // 60 seconds. OTel exporters retry on a tight cadence; without this we
+  // flood the console with the same line per batch when a broken project
+  // is sitting in the registry.
+  const DROP_WARN_INTERVAL_MS = 60_000
+  const lastDropWarnAt = new Map<string, number>()
+  function warnDroppedSpan(project: string, reason: string): void {
+    const now = Date.now()
+    const prev = lastDropWarnAt.get(project) ?? 0
+    if (now - prev < DROP_WARN_INTERVAL_MS) return
+    lastDropWarnAt.set(project, now)
+    console.warn(
+      `[neatd] dropping span for project "${project}" — project status: broken (${reason}). Run \`neatd reload\` to retry bootstrap.`,
+    )
+  }
+
   function upsertRegistryFromSlot(slot: ProjectSlot): void {
     if (slot.status !== 'active') return
     registry.set(slot.entry.name, {
@@ -226,12 +249,46 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     })
   }
 
+  // Attempt to bring a broken slot back online. Used both on SIGHUP reload
+  // and inline on ingest when a span arrives for a broken project. Returns
+  // the new slot status so callers can decide whether to deliver the span.
+  async function tryRecoverSlot(entry: RegistryEntry): Promise<ProjectSlot> {
+    try {
+      const fresh = await bootstrapProject(entry)
+      slots.set(entry.name, fresh)
+      upsertRegistryFromSlot(fresh)
+      if (fresh.status === 'active') {
+        await setStatus(entry.name, 'active').catch(() => {})
+        console.log(
+          `neatd: project "${entry.name}" recovered from broken — active`,
+        )
+      }
+      return fresh
+    } catch (err) {
+      console.warn(
+        `neatd: project "${entry.name}" still broken after recovery attempt — ${(err as Error).message}`,
+      )
+      // Leave the existing broken slot in place; nothing changed.
+      return slots.get(entry.name)!
+    }
+  }
+
   async function loadAll(): Promise<void> {
     const projects = await listProjects()
     const seen = new Set<string>()
     for (const entry of projects) {
       seen.add(entry.name)
-      if (slots.has(entry.name)) continue
+      const existing = slots.get(entry.name)
+      if (existing) {
+        // SIGHUP shortcut: re-bootstrap any slot currently in `broken`. The
+        // operator's mental model for `neatd reload` is "look at the world
+        // again," so a broken slot that became reachable between boots gets
+        // a second chance.
+        if (existing.status === 'broken') {
+          await tryRecoverSlot(entry)
+        }
+        continue
+      }
       try {
         const slot = await bootstrapProject(entry)
         slots.set(entry.name, slot)
@@ -300,16 +357,40 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       )
     }
 
+    // Resolve a span's target slot — running the broken-state recovery
+    // when the routed slot is currently broken. Returns null when the span
+    // can't be delivered after the recovery attempt; the caller drops with
+    // a rate-limited warning.
+    async function resolveTargetSlot(
+      serviceName: string | undefined,
+    ): Promise<ProjectSlot | null> {
+      const liveEntries = await listProjects().catch(() => [])
+      const target = routeSpanToProject(serviceName, liveEntries)
+      let slot = slots.get(target) ?? slots.get(DEFAULT_PROJECT)
+      if (!slot) return null
+      if (slot.status === 'broken') {
+        const entry = liveEntries.find((e) => e.name === slot!.entry.name)
+        if (entry) {
+          slot = await tryRecoverSlot(entry)
+        }
+        if (slot.status !== 'active') {
+          warnDroppedSpan(slot.entry.name, slot.errorReason ?? 'unknown')
+          return null
+        }
+      }
+      return slot.status === 'active' ? slot : null
+    }
+
     try {
       otlpApp = await buildOtelReceiver({
         onSpan: async (span) => {
-          // ADR-049 OTel routing — dispatch by service.name across active
-          // registry entries. Unknown services route to DEFAULT_PROJECT so
-          // the FrontierNode auto-creation flow keeps working (ADR-033).
-          const liveEntries = await listProjects().catch(() => [])
-          const target = routeSpanToProject(span.service, liveEntries)
-          const slot = slots.get(target) ?? slots.get(DEFAULT_PROJECT)
-          if (!slot || slot.status !== 'active') return
+          // ADR-049 OTel routing — dispatch by service.name. Broken slots
+          // get a single inline recovery attempt before the span is dropped
+          // with a rate-limited log line. Unknown services route to
+          // DEFAULT_PROJECT so the FrontierNode auto-creation flow keeps
+          // working (ADR-033).
+          const slot = await resolveTargetSlot(span.service)
+          if (!slot) return
           await handleSpan(
             {
               graph: slot.graph,
@@ -322,10 +403,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
           )
         },
         onErrorSpanSync: async (span) => {
-          const liveEntries = await listProjects().catch(() => [])
-          const target = routeSpanToProject(span.service, liveEntries)
-          const slot = slots.get(target) ?? slots.get(DEFAULT_PROJECT)
-          if (!slot || slot.status !== 'active') return
+          const slot = await resolveTargetSlot(span.service)
+          if (!slot) return
           await makeErrorSpanWriter(slot.paths.errorsPath)(span)
         },
       })

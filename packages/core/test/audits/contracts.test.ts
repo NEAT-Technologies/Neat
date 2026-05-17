@@ -4356,6 +4356,229 @@ describe('Daemon contract (ADR-049)', () => {
       await cleanup()
     }
   })
+
+  // ── ADR-071 — broken-slot recoverability ────────────────────────────────
+
+  it('ADR-071 — routeSpanToProject returns broken project name when service.name matches', async () => {
+    const { routeSpanToProject } = await import('../../src/daemon.js')
+    const { DEFAULT_PROJECT } = await import('../../src/graph.js')
+    const projects = [
+      {
+        name: 'brief',
+        path: '/tmp/brief',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: ['javascript'],
+        status: 'broken' as const,
+      },
+      {
+        name: 'paused-svc',
+        path: '/tmp/paused-svc',
+        registeredAt: '2026-05-17T00:00:00.000Z',
+        languages: [],
+        status: 'paused' as const,
+      },
+    ]
+    // Broken matches by name so the daemon can attempt ingest-time recovery.
+    expect(routeSpanToProject('brief', projects)).toBe('brief')
+    // Paused stays off-route — the operator paused on purpose.
+    expect(routeSpanToProject('paused-svc', projects)).toBe(DEFAULT_PROJECT)
+  })
+
+  it('ADR-071 — span arriving for a broken slot lifts it back to active on inline recovery', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { home, addedPaths, cleanup } = await setupDaemonSandbox({
+      projects: [
+        // Start broken — path is missing.
+        { name: 'recoverable', missingPath: true },
+      ],
+    })
+    const prevWarn = console.warn
+    const prevLog = console.log
+    console.warn = () => {}
+    console.log = () => {}
+    try {
+      const { startDaemon } = await import('../../src/daemon.js')
+      const handle = await startDaemon()
+      try {
+        // Slot starts broken because the path was yanked.
+        expect(handle.slots.get('recoverable')?.status).toBe('broken')
+
+        // Re-create the path so the next bootstrap attempt succeeds.
+        const recoveredPath = addedPaths.get('recoverable')!
+        await fs2.mkdir(recoveredPath, { recursive: true })
+        await fs2.writeFile(
+          path2.join(recoveredPath, 'package.json'),
+          JSON.stringify({ name: 'recoverable', version: '0.0.0' }),
+        )
+
+        // Hit /v1/traces on the bound OTLP listener with a span carrying the
+        // matching service.name. The receiver routes to the broken slot,
+        // attempts recovery, succeeds, and lands the span.
+        const res = await fetch(`${handle.otlpAddress}/v1/traces`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            resourceSpans: [
+              {
+                resource: {
+                  attributes: [
+                    { key: 'service.name', value: { stringValue: 'recoverable' } },
+                  ],
+                },
+                scopeSpans: [
+                  {
+                    spans: [
+                      {
+                        traceId: 'aabbccddeeff00112233445566778899',
+                        spanId: '1111111111111111',
+                        name: 'op',
+                        startTimeUnixNano: '0',
+                        endTimeUnixNano: '0',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }),
+        })
+        expect(res.status).toBe(200)
+
+        // Drain the receiver queue, then assert the slot is active.
+        const otlpFlush = (handle as unknown as {
+          slots: Map<string, unknown>
+        })
+        void otlpFlush
+        // The slots map records the slot transition.
+        // Poll briefly — the recovery runs inline, but the assertion after
+        // the 200 still races with the queue drain on slower runners.
+        const deadline = Date.now() + 2000
+        while (Date.now() < deadline) {
+          if (handle.slots.get('recoverable')?.status === 'active') break
+          await new Promise((r) => setTimeout(r, 25))
+        }
+        expect(handle.slots.get('recoverable')?.status).toBe('active')
+      } finally {
+        await handle.stop()
+      }
+      void home
+    } finally {
+      console.warn = prevWarn
+      console.log = prevLog
+      await cleanup()
+    }
+  })
+
+  it('ADR-071 — span for a still-broken slot emits the rate-limited drop log once per minute', async () => {
+    const { home, cleanup } = await setupDaemonSandbox({
+      projects: [{ name: 'unrecoverable', missingPath: true }],
+    })
+    const prevWarn = console.warn
+    const prevLog = console.log
+    const warnings: string[] = []
+    console.warn = (msg?: unknown) => {
+      if (typeof msg === 'string') warnings.push(msg)
+    }
+    console.log = () => {}
+    try {
+      const { startDaemon } = await import('../../src/daemon.js')
+      const handle = await startDaemon()
+      try {
+        async function postSpan(): Promise<void> {
+          await fetch(`${handle.otlpAddress}/v1/traces`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              resourceSpans: [
+                {
+                  resource: {
+                    attributes: [
+                      {
+                        key: 'service.name',
+                        value: { stringValue: 'unrecoverable' },
+                      },
+                    ],
+                  },
+                  scopeSpans: [
+                    {
+                      spans: [
+                        {
+                          traceId: 'aabbccddeeff00112233445566778899',
+                          spanId: '2222222222222222',
+                          name: 'op',
+                          startTimeUnixNano: '0',
+                          endTimeUnixNano: '0',
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            }),
+          })
+        }
+        // Two spans within the rate-limit window. Recovery fails both times
+        // (path is still missing), so the warning surfaces once for the
+        // first span and is suppressed for the second.
+        await postSpan()
+        await postSpan()
+        // Drain.
+        await new Promise((r) => setTimeout(r, 100))
+
+        const dropWarnings = warnings.filter((w) =>
+          /dropping span for project "unrecoverable"/.test(w),
+        )
+        expect(dropWarnings.length).toBe(1)
+        expect(dropWarnings[0]).toMatch(/neatd reload/)
+      } finally {
+        await handle.stop()
+      }
+      void home
+    } finally {
+      console.warn = prevWarn
+      console.log = prevLog
+      await cleanup()
+    }
+  })
+
+  it('ADR-071 — SIGHUP reload re-bootstraps a broken slot when the path is now reachable', async () => {
+    const fs2 = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const { home, addedPaths, cleanup } = await setupDaemonSandbox({
+      projects: [{ name: 'sighup-recoverable', missingPath: true }],
+    })
+    const prevWarn = console.warn
+    const prevLog = console.log
+    console.warn = () => {}
+    console.log = () => {}
+    try {
+      const { startDaemon } = await import('../../src/daemon.js')
+      const handle = await startDaemon()
+      try {
+        expect(handle.slots.get('sighup-recoverable')?.status).toBe('broken')
+
+        // Re-create the path, then trigger the reload directly via the
+        // handle (equivalent to SIGHUP — both call into the same reload()).
+        const recoveredPath = addedPaths.get('sighup-recoverable')!
+        await fs2.mkdir(recoveredPath, { recursive: true })
+        await fs2.writeFile(
+          path2.join(recoveredPath, 'package.json'),
+          JSON.stringify({ name: 'sighup-recoverable', version: '0.0.0' }),
+        )
+
+        await handle.reload()
+        expect(handle.slots.get('sighup-recoverable')?.status).toBe('active')
+      } finally {
+        await handle.stop()
+      }
+      void home
+    } finally {
+      console.warn = prevWarn
+      console.log = prevLog
+      await cleanup()
+    }
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────

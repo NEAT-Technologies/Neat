@@ -8,7 +8,7 @@ governs:
   - "packages/core/src/ingest.ts"
   - "packages/core/src/extract/index.ts"
   - "packages/core/src/persist.ts"
-adr: [ADR-049, ADR-063, ADR-048, ADR-026, ADR-027]
+adr: [ADR-049, ADR-063, ADR-048, ADR-026, ADR-027, ADR-071]
 ---
 
 # Daemon contract
@@ -61,11 +61,31 @@ The OTLP/gRPC receiver on `:4317` stays opt-in via `NEAT_OTLP_GRPC=true` per the
 
 Spans route to a project by `service.name` lookup across registered projects. Spans for unknown services route to a fallback `'default'` project for FrontierNode auto-creation per ADR-033.
 
+Routing eligibility by status:
+
+- `active` matches by `service.name` (steady state).
+- `broken` also matches by name. The router selects the broken slot so the ingest-time recovery path (below) can attempt a single re-bootstrap before the span is dropped. If recovery fails, the span is dropped with a rate-limited warning that points at `neatd reload`.
+- `paused` never matches — the operator paused the project on purpose. The span falls through to the `default` project's FrontierNode flow.
+
+## Ingest-time recovery for broken projects (ADR-071)
+
+A broken project slot is recoverable territory. When a span arrives for a project whose slot is `broken`, the daemon attempts a single inline re-bootstrap via `bootstrapProject(entry)`:
+
+- Success → the slot transitions to `active`, its `status` updates in the registry via `setStatus`, the span lands as a normal OBSERVED edge.
+- Failure → the slot stays `broken`, the span is dropped, and the receiver logs a single warning per project per 60 seconds carrying the original error reason and the `neatd reload` hint.
+
+Per-project recovery never affects other slots. The recovery attempt runs the same `bootstrapProject` path used at daemon start, so any rule that holds at bootstrap holds on recovery.
+
+## SIGHUP rebuilds broken slots
+
+`neatd reload` re-reads the registry. New entries get bootstrapped, removed ones get their persist loops stopped, **and any slot currently in `broken` is re-bootstrapped** — the operator's mental model for `reload` is "look at the world again," which includes giving broken slots a second chance against the current disk state. Already-`active` slots are left in place.
+
 ## Graceful degradation
 
 - Registry file missing → daemon refuses to boot with a clear error.
-- Project path missing → mark `status: 'broken'`, continue with others.
+- Project path missing → mark `status: 'broken'`, continue with others. The ingest-time recovery path retries on the next span; SIGHUP reload also retries.
 - OTel ingest overwhelmed → backpressure via the queue (ADR-033 #1); spans drop, never block.
+- Span arrives for a broken project, recovery still fails → drop with a rate-limited warning (1 line per project per 60s) carrying the broken-state reason and the `neatd reload` hint. Never silent.
 
 ## No automatic restart on crash
 
